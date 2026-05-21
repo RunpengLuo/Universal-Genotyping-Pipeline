@@ -139,14 +139,7 @@ if assay_type in SPATIAL_ASSAYS:
         f"Retaining {100.0 * np.mean(ind_sufficient_expressed_genes):.3f}% of genes with sufficient expression across spots ({100.0 * count_ratio:.2f}% of total UMIs) @ {min_frac_barcodes} fraction of barcodes."
     )
 
-regions = read_region_file(sm.input["region_bed"])[["#CHR", "START", "END"]]
-regions["region_id"] = (
-    regions["#CHR"].astype(str)
-    + ":"
-    + regions["START"].astype(str)
-    + "-"
-    + regions["END"].astype(str)
-)
+regions = read_region_file(sm.input["region_bed"])[["#CHR", "START", "END", "region_id"]]
 adata = feature_to_blocks(adata, regions, assay_type)
 
 chs = sort_chroms(adata.var["#CHR"].unique().tolist())

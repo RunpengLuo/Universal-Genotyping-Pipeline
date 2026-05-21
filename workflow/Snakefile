@@ -13,12 +13,11 @@ from const import (
     NONBULK_ASSAYS,
     BULK_ASSAYS,
     ALLOWED_ASSAY_TYPES,
-    ALLOWED_REFVERS,
+    REFVERS,
     ASSAY_TYPE2MODALITY,
     ASSAY_TYPE2FEATURE_TYPE,
-    get_eagle_gmap_path,
-    get_shapeit_gmap_path,
     get_phasing_panel_path,
+    get_genetic_map_path,
 )
 
 _run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -164,24 +163,23 @@ if _has_config:
 
     ##################################################
     # parse phase_snps inputs
-    refvers = config["reference_version"]
-    assert refvers in ALLOWED_REFVERS, f"unsupported reference version: {refvers}"
+    refvers = config.get("reference_version")
+    if refvers not in REFVERS:
+        print(
+            f"WARNING: reference_version={refvers!r} is not natively supported: {REFVERS}; "
+            "proceeding anyway — ensure gmap_path, phasing_panel, region_bed, and "
+            "window_bed are all provided for this reference."
+        )
 
     phaser = config.get("phaser", "undefined")
 
     # population-based phasing required to estimate switchprobs
     require_genetic_map = run_genotype_snps and phaser not in ["longphase"]
     if run_genotype_snps:
-        phaser_dir = config.get("phaser_dir")
         if phaser in ["eagle", "shapeit"]:
-            assert phaser_dir is not None, f"phaser_dir required for {phaser}"
-            gmap_dir, get_genetic_map = {
-                "eagle": get_eagle_gmap_path,
-                "shapeit": get_shapeit_gmap_path,
-            }[phaser](phaser_dir, refvers)
-            assert os.path.isdir(
-                gmap_dir
-            ), f"failed to locate gmap directory: {gmap_dir}"
+            gmap_path = config.get("gmap_path")
+            assert gmap_path, f"gmap_path required for {phaser}"
+            get_genetic_map = get_genetic_map_path(gmap_path)
             missing_gmaps = [
                 get_genetic_map(c)
                 for c in config["chromosomes"]

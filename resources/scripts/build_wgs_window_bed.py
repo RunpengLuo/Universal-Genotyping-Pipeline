@@ -109,7 +109,7 @@ def parse_args():
     parser.add_argument(
         "--reference_version",
         required=True,
-        help="Reference genome version (hg19, hg38, chm13v2).",
+        help="Reference genome version (hg19, hg38, chm13v2, mm10).",
     )
     parser.add_argument(
         "--reference",

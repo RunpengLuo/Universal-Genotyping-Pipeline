@@ -97,13 +97,6 @@ adata.var["END"] = (
 )
 
 regions = read_region_file(sm.input["region_bed"])
-regions["region_id"] = (
-    regions["#CHR"].astype(str)
-    + ":"
-    + regions["START"].astype(str)
-    + "-"
-    + regions["END"].astype(str)
-)
 adata = feature_to_blocks(adata, regions, assay_type)
 
 assert adata.var_names.is_unique, "var_names is not unique!"

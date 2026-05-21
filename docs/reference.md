@@ -41,7 +41,7 @@ Defaults live in `config/config.yaml`. A starting template for user runs is at `
 | `snp_targets` | Bulk genotyping | Per-chromosome position files; build via `resources/scripts/build_snp_targets.sh`. |
 | `phasing_panel` | eagle/shapeit | Per-chromosome BCF reference panel directory. |
 | `phaser` | Genotyping | `eagle` \| `shapeit` \| `longphase`. |
-| `phaser_dir` | eagle/shapeit | Path to phaser install root (must contain bundled genetic maps). |
+| `gmap_path` | eagle/shapeit | Full gmap path; use `{chrname}` placeholder for per-chrom files (SHAPEIT5) or a literal path for the single-file case (Eagle2). |
 | `het_snp_vcf` | copytyping_preprocess | Pre-computed phased het SNP VCF (e.g. from a prior bulk run). |
 | `bb_file` | copytyping_preprocess | Pre-computed BB block annotations TSV. |
 

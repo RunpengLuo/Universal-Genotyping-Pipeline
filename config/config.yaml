@@ -76,7 +76,9 @@ params_annotate_snps:
 # Phasing
 # eagle | shapeit | longphase
 phaser: "eagle"
-phaser_dir: null
+# Full gmap path; use {chrname} placeholder for SHAPEIT5 (per-chrom files),
+# or a literal path for Eagle2 (single file across all chroms).
+gmap_path: null
 params_longphase:
   min_mapq: 20
   # --pb (PacBio) | --ont (ONT)

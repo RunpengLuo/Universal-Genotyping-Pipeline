@@ -114,33 +114,26 @@ def read_VCF(
 
 
 def read_region_file(region_bed_file: str, addchr=True):
-    """Read the first three columns of a BED file into a DataFrame.
-
-    Parameters
-    ----------
-    region_bed_file : str
-        Path to a BED file.
-    addchr : bool
-        If True, prefix chromosome names with ``chr`` when missing.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with ``#CHR``, ``START``, ``END`` (and legacy aliases ``Chromosome``, ``Start``, ``End``).
+    """Read a BED file. An optional 4th column is taken as ``region_id``;
+    rows without it (or with empty value) fall back to ``CHR:START-END``.
     """
     regions = pd.read_table(
-        region_bed_file,
-        sep="\t",
-        header=None,
-        usecols=[0, 1, 2],
-        names=["Chromosome", "Start", "End"],
-        dtype={0: "string"},
+        region_bed_file, sep="\t", header=None, dtype={0: "string"}
     )
+    assert len(regions.columns) >= 3, "invalid regions BED format"
+    columns = ["Chromosome", "Start", "End"]
+    if len(regions.columns) > 3:
+        regions = regions.iloc[:,:4].copy()
+        columns += ["region_id"]
+    regions.columns = columns
     if not str(regions["Chromosome"].iloc[0]).startswith("chr") and addchr:
         regions["Chromosome"] = "chr" + regions["Chromosome"].astype(str)
     regions["#CHR"] = regions["Chromosome"]
     regions["START"] = regions["Start"]
     regions["END"] = regions["End"]
+
+    if "region_id" not in regions.columns:
+        regions["region_id"] = regions["#CHR"] + ":" + regions["START"].astype(str) + "-" + regions["END"].astype(str)
     return regions
 
 

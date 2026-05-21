@@ -8,6 +8,9 @@ ALLOWED_ASSAY_TYPES = list(BULK_ASSAYS) + list(NONBULK_ASSAYS)
 SPATIAL_ASSAYS = {"VISIUM", "VISIUM3prime"}
 CHROM_ORDER = [f"chr{c}" for c in list(range(1, 23)) + ["X", "Y"]]
 
+# Reference genome versions that natively supported
+REFVERS = ["hg19", "hg38", "chm13v2", "mm10"]
+
 ASSAY_TYPE2MODALITY = {
     "bulkWGS": "DNA",
     "bulkWGS-lr": "DNA",
@@ -28,8 +31,6 @@ ASSAY_TYPE2FEATURE_TYPE = {
     "VISIUM3prime": "gene",
 }
 
-ALLOWED_REFVERS = ["hg19", "hg38", "chm13v2"]
-
 GTF_COLUMNS = [
     "seqname",
     "source",
@@ -43,28 +44,16 @@ GTF_COLUMNS = [
 ]
 
 
-def get_eagle_gmap_path(phaser_dir, refvers):
-    """Return the genetic map path for Eagle2."""
-    gmap_dir = os.path.join(phaser_dir, "tables")
-    return gmap_dir, lambda chrname: os.path.join(
-        gmap_dir, f"genetic_map_{refvers}_withX.txt.gz"
-    )
-
-
-def get_shapeit_gmap_path(phaser_dir, refvers):
-    """Return the genetic map directory and per-chromosome path function for SHAPEIT5."""
-    _gmap_patterns = {
-        "hg19": ("b37", "b37/chr{chrname}.b37.gmap.gz"),
-        "hg38": ("b38", "b38/chr{chrname}.b38.gmap.gz"),
-        "chm13v2": ("chm13v2", "chm13v2/chr{chrname}.t2t.scaled.gmap.gz"),
-    }
-    subdir, pattern = _gmap_patterns[refvers]
-    gmap_dir = os.path.join(phaser_dir, "resources/maps", subdir)
-    return gmap_dir, lambda chrname: os.path.join(
-        phaser_dir, "resources/maps", pattern.format(chrname=chrname)
-    )
-
-
 def get_phasing_panel_path(phasing_panel):
     """Return a per-chromosome phasing panel path function."""
     return lambda chrname: os.path.join(phasing_panel, f"chr{chrname}.genotypes.bcf")
+
+
+def get_genetic_map_path(gmap_path):
+    """Return a per-chromosome genetic map path function.
+
+    ``gmap_path`` is a full path with optional ``{chrname}`` placeholder:
+      SHAPEIT5: ``/path/to/maps/chr{chrname}.mm10.gmap.gz``
+      Eagle2:   ``/path/to/tables/genetic_map_mm10_withX.txt.gz`` (no placeholder)
+    """
+    return lambda chrname: gmap_path.format(chrname=chrname)

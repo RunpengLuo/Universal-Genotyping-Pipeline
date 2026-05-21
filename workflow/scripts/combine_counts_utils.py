@@ -356,7 +356,8 @@ def assign_snp_bounderies(
     """
     divide regions into [START, END) subregions, each subregion has one SNP.
     If a SNP is out-of-region, its START and END will be 0 and region_id will be "".
-    region_id is a string in "CHR:START-END" format matching the enclosing region.
+    region_id is taken from regions["region_id"] (4th-column seg_id, with
+    per-row fallback to "CHR:START-END" handled by read_region_file).
     """
     snps["START"] = 0
     snps["END"] = 0
@@ -375,8 +376,7 @@ def assign_snp_bounderies(
             reg_snp_positions = reg_snps["POS0"].to_numpy()
             reg_snp_indices = reg_snps.index.to_numpy()
 
-            region_id = f"{chrom}:{reg_start}-{reg_end}"
-            snps.loc[reg_snp_indices, colname] = region_id
+            snps.loc[reg_snp_indices, colname] = region["region_id"]
 
             if len(reg_snps) == 1:
                 snps.loc[reg_snp_indices, "START"] = reg_start

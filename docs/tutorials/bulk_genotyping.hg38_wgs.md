@@ -79,18 +79,20 @@ phasing_panel: /path/to/phasing_panel
 
 Pick one of Eagle2 or SHAPEIT5. Both require a genetic map (gmap) bundled with the tool distribution. SHAPEIT5 is recommended.
 
-**Eagle2** — set `phaser_dir` to the extracted Eagle2 directory. The pipeline looks for the gmap at `{phaser_dir}/tables/genetic_map_hg38_withX.txt.gz`.
+One config key, `gmap_path`, locates the gmap. Use `{chrname}` as a placeholder for SHAPEIT5 (per-chrom files); for Eagle2 (single file) use a literal path.
+
+**Eagle2** — gmap shipped at `{Eagle2_dir}/tables/genetic_map_hg38_withX.txt.gz`.
 
 ```yaml
 phaser: "eagle"
-phaser_dir: /path/to/Eagle_v2.4.1
+gmap_path: "/path/to/Eagle_v2.4.1/tables/genetic_map_hg38_withX.txt.gz"
 ```
 
-**SHAPEIT5** — set `phaser_dir` to the SHAPEIT5 repository root. The pipeline looks for per-chromosome gmaps at `{phaser_dir}/resources/maps/b38/chr{chrname}.b38.gmap.gz`.
+**SHAPEIT5** — gmap shipped at `{shapeit5_dir}/resources/maps/b38/chr{N}.b38.gmap.gz`.
 
 ```yaml
 phaser: "shapeit"
-phaser_dir: /path/to/shapeit5
+gmap_path: "/path/to/shapeit5/resources/maps/b38/chr{chrname}.b38.gmap.gz"
 ```
 
 ### Count reads

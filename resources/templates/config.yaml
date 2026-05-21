@@ -50,7 +50,12 @@ phasing_panel: /path/to/phasing_panel
 # Phasing
 # eagle | shapeit | longphase
 phaser: "shapeit"
-phaser_dir: /path/to/shapeit5
+# Genetic map (required for eagle / shapeit).
+#   SHAPEIT5 (per-chrom files, with {chrname} placeholder):
+#     gmap_path: "/path/to/shapeit5/resources/maps/b38/chr{chrname}.b38.gmap.gz"
+#   Eagle2 (single file, literal path):
+#     gmap_path: "/path/to/Eagle_v2.4.1/tables/genetic_map_hg38_withX.txt.gz"
+gmap_path: "/path/to/shapeit5/resources/maps/b38/chr{chrname}.b38.gmap.gz"
 
 # longphase only (PacBio: "--pb", ONT: "--ont")
 # params_longphase:

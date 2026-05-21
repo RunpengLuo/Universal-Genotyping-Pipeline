@@ -18,8 +18,8 @@ from pybedtools import BedTool
 # Constants
 # ---------------------------------------------------------------------------
 
-ALLOWED_REFVERS = ("hg19", "hg38", "chm13v2")
-CHR_STYLE_REFVERS = ("hg19", "hg38", "chm13v2")
+ALLOWED_REFVERS = ("hg19", "hg38", "chm13v2", "mm10")
+CHR_STYLE_REFVERS = ("hg19", "hg38", "chm13v2", "mm10")
 REPLISEQ_REFVERS = ("hg19", "hg38")
 
 CHROM_ORDER = [f"chr{c}" for c in list(range(1, 23)) + ["X", "Y"]]
@@ -162,16 +162,24 @@ def subtract_blacklist(windows, blacklist_bed_file):
 def assign_region_id(windows, region_bed_file):
     """Assign region_id to each window by mapping midpoints to region intervals.
 
-    Returns region_id as strings in ``CHR:START-END`` format, or NaN.
+    Uses the BED's 4th column as ``region_id`` when present; otherwise falls
+    back to ``CHR:START-END``.
     """
-    regions = _read_bed3(region_bed_file)
-    regions["region_id"] = (
-        regions["#CHR"].astype(str)
-        + ":"
-        + regions["START"].astype(str)
-        + "-"
-        + regions["END"].astype(str)
+    regions = pd.read_csv(
+        region_bed_file, sep="\t", header=None, comment="#", dtype={0: str}
     )
+    assert len(regions.columns) >= 3, "invalid regions BED format"
+    columns = ["#CHR", "START", "END"]
+    if len(regions.columns) > 3:
+        regions = regions.iloc[:, :4].copy()
+        columns += ["region_id"]
+    regions.columns = columns
+    regions[["START", "END"]] = regions[["START", "END"]].astype(np.int64)
+    if "region_id" not in regions.columns:
+        regions["region_id"] = (
+            regions["#CHR"] + ":" + regions["START"].astype(str)
+            + "-" + regions["END"].astype(str)
+        )
 
     mids = (windows["START"] + windows["END"]) // 2
     result = pd.Series(pd.NA, index=windows.index, dtype="object")

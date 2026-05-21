@@ -90,12 +90,12 @@ Set `phaser` in config to one of:
 
 | Phaser | Config keys needed |
 |--------|--------------------|
-| `eagle` | `phaser_dir` — path to Eagle2 directory (must contain `tables/` with genetic map files) |
-| `shapeit` | `phaser_dir` — path to SHAPEIT5 directory (must contain `resources/maps/` for hg19/hg38) |
+| `eagle` | `gmap_path` — full path to Eagle2 single gmap file (e.g., `genetic_map_hg38_withX.txt.gz`) |
+| `shapeit` | `gmap_path` — full path with `{chrname}` placeholder (e.g., `.../chr{chrname}.b38.gmap.gz`) |
 | `longphase` | `params_longphase` — `min_mapq`, `extra_params` (e.g., `"--pb"` for PacBio) |
 
-Eagle and shapeit require a phasing reference panel (`phasing_panel` in config). Longphase does not use a genetic map or phasing panel.
+Eagle and shapeit also require a phasing reference panel (`phasing_panel` in config). Longphase doesn't.
 
-**CHM13v2.0 (T2T):** Download [T2T-native scaled maps](https://github.com/JosephLalli/phasing_T2T/tree/main/resources/recombination_maps/t2t_native_scaled_maps) and place them under `{phaser_dir}`. For SHAPEIT5: `{phaser_dir}/resources/maps/chm13v2/`. For Eagle2: convert with `resources/scripts/convert_gmap_to_eagle.py` and place at `{phaser_dir}/tables/genetic_map_chm13v2_withX.txt.gz`. See [resources/README.md](../resources/README.md) for details.
+See [resources/README.md](../resources/README.md) for per-reference gmap sources (hg38 / chm13v2 / mm10).
 
-Supported `reference_version` values: `hg19`, `hg38`, `chm13v2`.
+Supported `reference_version` values: `hg19`, `hg38`, `chm13v2`, `mm10`.
