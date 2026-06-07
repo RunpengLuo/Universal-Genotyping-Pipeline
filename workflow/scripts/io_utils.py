@@ -101,7 +101,16 @@ def read_VCF(
         fmt_wide = fmt_long.pivot_table(
             index="row", columns="key", values="val", aggfunc="first"
         )
-        snps = snps.drop(columns=["FORMAT", "SAMPLE"]).join(fmt_wide)
+        snps = snps.drop(columns=["FORMAT", "SAMPLE"])
+        # A key can appear in both INFO and FORMAT (e.g. AD/DP when a phaser
+        # such as longphase preserves the input INFO and FORMAT fields). Detect
+        # any such overlap and let the per-sample FORMAT value take precedence,
+        # dropping the INFO-derived duplicate to avoid a "columns overlap" join
+        # error. No overlap (eagle/shapeit emit only GT) -> no-op.
+        dup_cols = snps.columns.intersection(fmt_wide.columns)
+        if len(dup_cols):
+            snps = snps.drop(columns=dup_cols)
+        snps = snps.join(fmt_wide)
 
     if addkey:
         snps["KEY"] = snps["#CHROM"].astype(str) + "_" + snps["POS"].astype(str)
