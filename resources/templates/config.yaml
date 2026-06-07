@@ -57,66 +57,15 @@ phaser: "shapeit"
 #     gmap_path: "/path/to/Eagle_v2.4.1/tables/genetic_map_hg38_withX.txt.gz"
 gmap_path: "/path/to/shapeit5/resources/maps/b38/chr{chrname}.b38.gmap.gz"
 
-# longphase only (PacBio: "--pb", ONT: "--ont")
-# params_longphase:
-#   min_mapq: 20
-#   extra_params: "--pb"
-
-##################################################
-# cellsnp-lite (single_cell_genotyping pseudobulk + all per-rep pileups)
-# params_cellsnp_lite:
-#   UMItag: "Auto"        # Auto | None | <tag>
-#   cellTAG: "CB"         # CB | None | <tag>
-#   minMAF_genotype: 0
-#   minCOUNT_genotype: 2
-#   minMAF_pileup: 0
-#   minCOUNT_pileup: 1
-
-# bcftools (bulk_genotyping)
-# params_bcftools:
-#   min_mapq: 20
-#   min_baseq: 20
-#   min_dp: 5
-#   max_depth: 1000
-#   min_qual: 30
-
-# Pseudobulk SNP annotation (single_cell_genotyping)
-# params_annotate_snps:
-#   min_het_reads: 2
-#   min_hom_dp: 10
-#   min_vaf_thres: 0.1
-#   filter_nz_OTH: false
-#   filter_hom_ALT: false
-
-##################################################
-# AnnData construction (scRNA / scATAC / VISIUM)
-# params_process_anndata:
-#   gene_id_colname: gene_ids
-#   min_frac_barcodes: 5e-3
-#   tile_width: 200000
-
 ##################################################
 # SNP filtering / phase merging
 params_phase_and_concat:
   min_depth: 1
-  # gamma: 0.05
-  # exon_only: false
 
 ##################################################
-# mosdepth (bulk only)
-# params_mosdepth:
-#   read_quality: 11
-#   extra_params: "--no-per-base --fast-mode"
-
 # Bias correction (bulk only)
 params_count_reads:
   gc_correct: true
-  # gc_correct_method: "median"   # lowess | median
-  # rt_correct: true
-  # samplesize: 50000
-  # routlier: 0.01
-  # doutlier: 0.001
-  # min_mappability: 0.9
 
 ##################################################
 # Adaptive binning
@@ -126,14 +75,6 @@ params_combine_counts:
   phase_flip_test: true
   # true = median-center (ignore matched normal)
   median_normalization: false
-  # min_switchprob: 1e-6
-  # nu: 1
-  # switchprob_ps: 5e-2
-  # nsnp_multi: 2                  # single-cell only
-  # max_blocksize: 500000          # bulk only
-  # rdr_outlier_quantile: 0.002    # bulk only
-  # phase_flip_epsilon: 0.05
-  # phase_flip_alpha: 0.05
 
 ##################################################
 threads:

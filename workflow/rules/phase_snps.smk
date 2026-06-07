@@ -95,6 +95,7 @@ if config["phaser"] == "longphase":
                 --out-prefix={params.out_prefix} \
                 --threads={threads} \
                 {params.extra_params} > {log} 2>&1
+            bgzip -f "{params.out_prefix}.vcf"
             tabix -f -p vcf "{output.phased_file}"
             """
 
