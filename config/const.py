@@ -11,6 +11,15 @@ CHROM_ORDER = [f"chr{c}" for c in list(range(1, 23)) + ["X", "Y"]]
 # Reference genome versions that natively supported
 REFVERS = ["hg19", "hg38", "chm13v2", "mm10"]
 
+# Sex chromosomes -> their integer label in an Eagle map (X/Y follow the
+# autosomes: human X=23,Y=24; mm10 X=20,Y=21). See parse_genetic_map.py.
+REFVER2SEXCHROM = {
+    "hg19": {"X": 23, "Y": 24},
+    "hg38": {"X": 23, "Y": 24},
+    "chm13v2": {"X": 23, "Y": 24},
+    "mm10": {"X": 20, "Y": 21},
+}
+
 ASSAY_TYPE2MODALITY = {
     "bulkWGS": "DNA",
     "bulkWGS-lr": "DNA",

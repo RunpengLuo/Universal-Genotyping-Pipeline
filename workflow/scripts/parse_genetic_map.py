@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from utils import sort_df_chr
+from const import REFVER2SEXCHROM
 
 ##################################################
 """
@@ -28,41 +29,85 @@ logging.basicConfig(
 gmap_files = list(sm.input["gmap_files"])
 chrnames = list(sm.params["chrnames"])
 phaser = sm.params["phaser"]
+reference_version = sm.params["reference_version"]
 
-logging.info(f"parse genetic map files, phaser={phaser}")
+logging.info(
+    f"parse genetic map files, phaser={phaser}, "
+    f"reference_version={reference_version}"
+)
 
 required_columns = ["#CHR", "POS", "cM"]
 if phaser == "eagle":
-    if len(set(gmap_files)) == 1:
-        genetic_map = pd.read_table(gmap_files[0], sep=" ", index_col=None, dtype={"chr": str}).rename(
-            columns={
-                "chr": "#CHR",
-                "position": "POS",
-                "COMBINED_rate(cM/Mb)": "recomb_rate",
-                "Genetic_Map(cM)": "cM",
-            }
-        )
-    else:
-        genetic_maps = []
-        for chrname, gmap_file in zip(chrnames, gmap_files):
-            genetic_map = pd.read_table(gmap_file, sep=" ", index_col=None, dtype={"chr": str}).rename(
-                columns={
-                    "chr": "#CHR",
-                    "position": "POS",
-                    "COMBINED_rate(cM/Mb)": "recomb_rate",
-                    "Genetic_Map(cM)": "cM",
-                }
+    # Eagle map(s): whitespace-delimited; one file for all chroms or one per chrom.
+    rename_cols = {
+        "chr": "#CHR",
+        "position": "POS",
+        "COMBINED_rate(cM/Mb)": "recomb_rate",
+        "Genetic_Map(cM)": "cM",
+    }
+    files = [gmap_files[0]] if len(set(gmap_files)) == 1 else gmap_files
+    genetic_map = pd.concat(
+        [
+            pd.read_table(f, sep=" ", index_col=None, dtype={"chr": str}).rename(
+                columns=rename_cols
             )
-            genetic_maps.append(genetic_map)
-        genetic_map = pd.concat(genetic_maps, ignore_index=True)
+            for f in files
+        ],
+        ignore_index=True,
+    )
+    missing = [c for c in required_columns if c not in genetic_map.columns]
+    assert not missing, (
+        f"eagle gmap missing expected columns {missing}; "
+        f"got {list(genetic_map.columns)}"
+    )
 
-    genetic_map["#CHR"] = genetic_map["#CHR"].astype(str)
-    genetic_map.loc[genetic_map["#CHR"] == "23", "#CHR"] = "X"
-    if not str(genetic_map["#CHR"].loc[0]).startswith("chr"):
-        genetic_map["#CHR"] = "chr" + genetic_map["#CHR"].astype(str)
-    genetic_map = genetic_map[
-        genetic_map["#CHR"].isin({f"chr{c}" for c in chrnames})
-    ].reset_index(drop=True)
+    # Strip any 'chr' prefix, filter to requested chroms (as bare strings), re-add.
+    wanted = {str(c) for c in chrnames}
+    genetic_map["#CHR"] = (
+        genetic_map["#CHR"].astype(str).str.replace(r"^chr", "", regex=True)
+    )
+    # Relabel numeric sex chroms to letters: via REFVER2SEXCHROM for a known
+    # reference, else the "largest non-autosome int is X" heuristic. Labels are
+    # strings, so compare by int (key=int).
+    labels = set(genetic_map["#CHR"])
+    sexmap = REFVER2SEXCHROM.get(reference_version)
+    if sexmap is not None:
+        for sex_name, sex_num in sexmap.items():
+            if sex_name not in wanted or sex_name in labels:
+                continue
+            if str(sex_num) in labels:
+                genetic_map.loc[genetic_map["#CHR"] == str(sex_num), "#CHR"] = sex_name
+                logging.info(
+                    f"eagle: relabeled chromosome {sex_num} as {sex_name} "
+                    f"(reference_version={reference_version})"
+                )
+            else:
+                logging.warning(
+                    f"eagle: {sex_name} requested but chromosome {sex_num} absent "
+                    f"in gmap (reference_version={reference_version})"
+                )
+    elif "X" in wanted and "X" not in labels:
+        autosomes = {c for c in wanted if c.isdigit()}
+        cand = [c for c in labels if c.isdigit() and c not in autosomes]
+        if cand:
+            x_label = max(cand, key=int)
+            genetic_map.loc[genetic_map["#CHR"] == x_label, "#CHR"] = "X"
+            logging.info(
+                f"eagle: relabeled largest int chromosome '{x_label}' as 'X' "
+                f"(heuristic; reference_version={reference_version!r})"
+            )
+        else:
+            logging.warning(
+                f"eagle: X requested but no X-like chromosome found in gmap "
+                f"(reference_version={reference_version!r})"
+            )
+
+    genetic_map = genetic_map[genetic_map["#CHR"].isin(wanted)].reset_index(drop=True)
+    assert len(genetic_map) > 0, (
+        f"no eagle gmap rows match requested chromosomes {sorted(wanted)}; "
+        f"map chromosome labels were {sorted(labels)}"
+    )
+    genetic_map["#CHR"] = "chr" + genetic_map["#CHR"]
     genetic_map = sort_df_chr(genetic_map, ch="#CHR", pos="POS")
     logging.info(
         f"eagle: #rows={len(genetic_map)}, "

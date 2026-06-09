@@ -145,6 +145,7 @@ rule parse_genetic_map:
     params:
         chrnames=config["chromosomes"],
         phaser=config["phaser"],
+        reference_version=config["reference_version"],
     threads: 1
     conda:
         "../envs/base.yaml"
