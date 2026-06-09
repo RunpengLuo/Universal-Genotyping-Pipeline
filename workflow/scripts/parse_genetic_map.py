@@ -11,8 +11,7 @@ os.environ["NUMEXPR_NUM_THREADS"] = str(t)
 import numpy as np
 import pandas as pd
 
-from utils import sort_df_chr
-from const import REFVER2SEXCHROM
+from utils import sort_df_chr, REFVER2SEXCHROM
 
 ##################################################
 """
