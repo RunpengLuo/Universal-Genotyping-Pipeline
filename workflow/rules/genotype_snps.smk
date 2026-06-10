@@ -12,9 +12,7 @@ if workflow_mode == "bulk_genotyping":
 
     rule genotype_snps_bulk:
         input:
-            bams=lambda wc: branch(
-                len(normal_bams) > 0, then=normal_bams[0], otherwise=tumor_bams[0]
-            ),
+            bams=lambda wc: normal_bams if len(normal_bams) > 0 else tumor_bams,
             target_pos=lambda wc: config["snp_targets"] + "/target.chr{chrname}.pos.gz",
             reference=config["reference"],
         output:
@@ -46,6 +44,12 @@ if workflow_mode == "bulk_genotyping":
                 -T {input.target_pos} \
             | bcftools call -m \
                 -Oz -o {output.unfiltered_vcf} 2> {log}
+
+            NSAMPLE=$(bcftools query -l {output.unfiltered_vcf} | wc -l | tr -d ' ')
+            if [ "$NSAMPLE" -ne 1 ]; then
+                echo "ERROR: joint genotyping produced $NSAMPLE samples; all input BAMs must share one @RG SM sample name to be pooled" >> {log}
+                exit 1
+            fi
 
             TOTAL=$(bcftools view -H {output.unfiltered_vcf} | wc -l | tr -d ' ')
 

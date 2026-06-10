@@ -12,6 +12,9 @@ sys.path.insert(0, os.path.join(workflow.basedir, "../config"))
 from const import (
     NONBULK_ASSAYS,
     BULK_ASSAYS,
+    LONGREAD_ASSAYS,
+    LONGREAD_PHASER,
+    PANEL_PHASER,
     ALLOWED_ASSAY_TYPES,
     REFVERS,
     ASSAY_TYPE2MODALITY,
@@ -74,16 +77,13 @@ if _has_config:
     uniq_sample_types = sample_df["sample_type"].unique().tolist()
     assert all(st in ["normal", "tumor"] for st in uniq_sample_types)
     sample_df["modality"] = sample_df["assay_type"].map(ASSAY_TYPE2MODALITY)
+    sample_df["is_lr"] = sample_df["assay_type"].isin(LONGREAD_ASSAYS)
 
     if workflow_mode == "bulk_genotyping":
         sample_df = sample_df.loc[
             sample_df["assay_type"].isin(BULK_ASSAYS), :
         ].reset_index(drop=True)
         assert len(sample_df) > 0, "no samples for bulk_genotyping mode"
-        assert sample_df["assay_type"].nunique() == 1, (
-            "bulk_genotyping mode requires all samples to have the same assay_type, "
-            f"got: {sample_df['assay_type'].unique().tolist()}"
-        )
         assert sample_df["REP_ID"].nunique() == len(
             sample_df
         ), "bulk mode must have no duplicated replicate IDs"
@@ -127,6 +127,12 @@ if _has_config:
     ].to_list()
     tumor_bams = sample_df.loc[
         sample_df["sample_type"] == "tumor", "PATH_to_bam"
+    ].to_list()
+    lr_normal_bams = sample_df.loc[
+        (sample_df["sample_type"] == "normal") & sample_df["is_lr"], "PATH_to_bam"
+    ].to_list()
+    lr_tumor_bams = sample_df.loc[
+        (sample_df["sample_type"] == "tumor") & sample_df["is_lr"], "PATH_to_bam"
     ].to_list()
 
     modality2bams = {}
@@ -172,11 +178,11 @@ if _has_config:
         )
 
     phaser = config.get("phaser", "undefined")
-
     # population-based phasing required to estimate switchprobs
-    require_genetic_map = run_genotype_snps and phaser not in ["longphase"]
+    require_genetic_map = run_genotype_snps and phaser in PANEL_PHASER
     if run_genotype_snps:
-        if phaser in ["eagle", "shapeit"]:
+        if phaser in PANEL_PHASER:
+            # population-based phasing required to estimate switchprobs
             gmap_path = config.get("gmap_path")
             assert gmap_path, f"gmap_path required for {phaser}"
             get_genetic_map = get_genetic_map_path(gmap_path)
@@ -201,8 +207,11 @@ if _has_config:
             assert (
                 not missing_panels
             ), f"failed to locate panel files: {missing_panels[:3]}"
-        elif phaser == "longphase":
-            pass  # no genetic map needed
+        elif phaser in LONGREAD_PHASER:
+            assert lr_normal_bams or lr_tumor_bams, (
+                f"phaser={phaser} requires at least one long-read bulk assay "
+                f"({sorted(LONGREAD_ASSAYS)}) in the sample sheet for sample_id={SAMPLE_ID}"
+            )
         else:
             raise ValueError(f"unknown phaser: {phaser}")
 

@@ -4,9 +4,17 @@ import os
 
 NONBULK_ASSAYS = {"scATAC", "scRNA", "VISIUM", "VISIUM3prime"}
 BULK_ASSAYS = {"bulkWGS", "bulkWGS-lr", "bulkWES"}
+# Long-read bulk assays (identified by the "-lr" suffix convention).
+LONGREAD_ASSAYS = {"bulkWGS-lr"}
 ALLOWED_ASSAY_TYPES = list(BULK_ASSAYS) + list(NONBULK_ASSAYS)
 SPATIAL_ASSAYS = {"VISIUM", "VISIUM3prime"}
 CHROM_ORDER = [f"chr{c}" for c in list(range(1, 23)) + ["X", "Y"]]
+
+# Phasers grouped by the evidence they consume. Panel-based phasers need a
+# population reference panel + genetic map; the long-read phaser instead reads
+# haplotype evidence directly from a long-read BAM.
+LONGREAD_PHASER = {"longphase"}
+PANEL_PHASER = {"eagle", "shapeit"}
 
 # Reference genome versions that natively supported
 REFVERS = ["hg19", "hg38", "chm13v2", "mm10"]
