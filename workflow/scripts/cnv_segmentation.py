@@ -7,9 +7,8 @@ import os
 import logging
 import shutil
 
-from snakemake.script import snakemake as sm
 
-t = int(getattr(sm, "threads", 1))
+t = int(getattr(snakemake, "threads", 1))
 os.environ["OMP_NUM_THREADS"] = str(t)
 os.environ["OPENBLAS_NUM_THREADS"] = str(t)
 os.environ["MKL_NUM_THREADS"] = str(t)
@@ -39,29 +38,29 @@ def _sparsity(X):
     return 1.0 - nnz / size
 
 
-setup_logging(sm.log[0])
+setup_logging(snakemake.log[0])
 
-snp_info = sm.input["snp_info"]
-tot_mtx_snp = sm.input["tot_mtx_snp"]
-a_mtx_snp = sm.input["a_mtx_snp"]
-b_mtx_snp = sm.input["b_mtx_snp"]
-h5ad_file = sm.input["h5ad_file"]
+snp_info = snakemake.input["snp_info"]
+tot_mtx_snp = snakemake.input["tot_mtx_snp"]
+a_mtx_snp = snakemake.input["a_mtx_snp"]
+b_mtx_snp = snakemake.input["b_mtx_snp"]
+h5ad_file = snakemake.input["h5ad_file"]
 
-all_barcodes = sm.input["all_barcodes"]
-barcodes_full_path = sm.input["barcodes_full"]
-qc_dir = sm.params["qc_dir"]
+all_barcodes = snakemake.input["all_barcodes"]
+barcodes_full_path = snakemake.input["barcodes_full"]
+qc_dir = snakemake.params["qc_dir"]
 os.makedirs(qc_dir, exist_ok=True)
-run_id = getattr(sm.params, "run_id", "")
+run_id = getattr(snakemake.params, "run_id", "")
 
-region_bed = sm.input["region_bed"]
-genome_size = sm.input["genome_size"]
-gtf_file = maybe_path(sm.input["gtf_file"])
+region_bed = snakemake.input["region_bed"]
+genome_size = snakemake.input["genome_size"]
+gtf_file = maybe_path(snakemake.input["gtf_file"])
 
-sample_name = sm.params["sample_name"]
-assay_type = sm.params["assay_type"]
-feature_type = sm.params["feature_type"]
+sample_name = snakemake.params["sample_name"]
+assay_type = snakemake.params["assay_type"]
+feature_type = snakemake.params["feature_type"]
 
-sample_df = pd.read_table(sm.input["sample_file"])
+sample_df = pd.read_table(snakemake.input["sample_file"])
 rep_ids = sample_df["REP_ID"].tolist()
 
 is_bulk_assay = assay_type in BULK_ASSAYS
@@ -84,7 +83,7 @@ else:
     a_mtx = load_npz(a_mtx_snp)
     b_mtx = load_npz(b_mtx_snp)
 
-bb_df = pd.read_table(sm.input["bb_file"], sep="\t")
+bb_df = pd.read_table(snakemake.input["bb_file"], sep="\t")
 bb_df = sort_df_chr(bb_df, pos="START")
 bb_df["bb_id"] = np.arange(len(bb_df))
 num_bbs = len(bb_df)
@@ -176,16 +175,16 @@ if not is_bulk_assay:
     )
 
 if not is_bulk_assay:
-    save_npz(sm.output["x_count"], x_count.astype(COUNT_DTYPE))
-    save_npz(sm.output["tot_mtx_bb"], tot_mtx_bb.astype(COUNT_DTYPE))
-    save_npz(sm.output["a_mtx_bb"], a_mtx_bb.astype(COUNT_DTYPE))
-    save_npz(sm.output["b_mtx_bb"], b_mtx_bb.astype(COUNT_DTYPE))
+    save_npz(snakemake.output["x_count"], x_count.astype(COUNT_DTYPE))
+    save_npz(snakemake.output["tot_mtx_bb"], tot_mtx_bb.astype(COUNT_DTYPE))
+    save_npz(snakemake.output["a_mtx_bb"], a_mtx_bb.astype(COUNT_DTYPE))
+    save_npz(snakemake.output["b_mtx_bb"], b_mtx_bb.astype(COUNT_DTYPE))
 else:
-    np.savez_compressed(sm.output["tot_mtx_bb"], mat=tot_mtx_bb.astype(COUNT_DTYPE))
-    np.savez_compressed(sm.output["a_mtx_bb"], mat=a_mtx_bb.astype(COUNT_DTYPE))
-    np.savez_compressed(sm.output["b_mtx_bb"], mat=b_mtx_bb.astype(COUNT_DTYPE))
-bb_df.to_csv(sm.output["cnv_segments"], header=True, sep="\t", index=False)
-shutil.copy2(all_barcodes, sm.output["barcodes_out"])
-shutil.copy2(barcodes_full_path, sm.output["barcodes_full_out"])
-shutil.copy2(sm.input["sample_file"], sm.output["sample_file"])
+    np.savez_compressed(snakemake.output["tot_mtx_bb"], mat=tot_mtx_bb.astype(COUNT_DTYPE))
+    np.savez_compressed(snakemake.output["a_mtx_bb"], mat=a_mtx_bb.astype(COUNT_DTYPE))
+    np.savez_compressed(snakemake.output["b_mtx_bb"], mat=b_mtx_bb.astype(COUNT_DTYPE))
+bb_df.to_csv(snakemake.output["cnv_segments"], header=True, sep="\t", index=False)
+shutil.copy2(all_barcodes, snakemake.output["barcodes_out"])
+shutil.copy2(barcodes_full_path, snakemake.output["barcodes_full_out"])
+shutil.copy2(snakemake.input["sample_file"], snakemake.output["sample_file"])
 logging.info("finished.")

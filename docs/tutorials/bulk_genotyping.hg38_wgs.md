@@ -4,7 +4,7 @@ This tutorial walks through running the `bulk_genotyping` pipeline on paired nor
 
 ## 1. Prerequisites
 
-Install [conda](https://github.com/conda-forge/miniforge) and [Snakemake](https://snakemake.readthedocs.io/) (>= 7.0). We recommend using the [libmamba solver](https://www.anaconda.com/blog/a-faster-conda-for-a-growing-community) for faster dependency resolution (`conda config --set solver libmamba`).
+Install [conda](https://github.com/conda-forge/miniforge) and [Snakemake](https://snakemake.readthedocs.io/) (>= 9). We recommend using the [libmamba solver](https://www.anaconda.com/blog/a-faster-conda-for-a-growing-community) for faster dependency resolution (`conda config --set solver libmamba`).
 
 ## 2. Sample sheet
 

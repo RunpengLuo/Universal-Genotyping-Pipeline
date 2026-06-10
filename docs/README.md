@@ -2,7 +2,7 @@
 
 ## Installation
 
-Requires [conda](https://docs.conda.io/en/latest/) and [Snakemake](https://snakemake.readthedocs.io/) >= 7.0.
+Requires [conda](https://docs.conda.io/en/latest/) and [Snakemake](https://snakemake.readthedocs.io/) >= 9.
 
 All tool dependencies are managed via conda environments under `workflow/envs/`:
 

@@ -9,9 +9,8 @@ Combines:
 import os
 import shutil
 import logging
-from snakemake.script import snakemake as sm
 
-t = int(getattr(sm, "threads", 1))
+t = int(getattr(snakemake, "threads", 1))
 os.environ["OMP_NUM_THREADS"] = str(t)
 os.environ["OPENBLAS_NUM_THREADS"] = str(t)
 os.environ["MKL_NUM_THREADS"] = str(t)
@@ -36,31 +35,31 @@ from switchprobs import (
     estimate_switchprobs_PS,
 )
 
-setup_logging(sm.log[0])
+setup_logging(snakemake.log[0])
 
-snp_info = sm.input["snp_info"]
-tot_mtx_snp = sm.input["tot_mtx_snp"]
-a_mtx_snp = sm.input["a_mtx_snp"]
-b_mtx_snp = sm.input["b_mtx_snp"]
-dp_corrected = sm.input["dp_corrected"]
-window_df_file = sm.input["window_df"]
+snp_info = snakemake.input["snp_info"]
+tot_mtx_snp = snakemake.input["tot_mtx_snp"]
+a_mtx_snp = snakemake.input["a_mtx_snp"]
+b_mtx_snp = snakemake.input["b_mtx_snp"]
+dp_corrected = snakemake.input["dp_corrected"]
+window_df_file = snakemake.input["window_df"]
 
-gmap_file = maybe_path(sm.input["gmap_file"])
-region_bed = sm.input["region_bed"]
-blacklist_bed = maybe_path(sm.input.get("blacklist_bed", None))
-genome_size = sm.input["genome_size"]
-gtf_file = maybe_path(sm.input["gtf_file"])
+gmap_file = maybe_path(snakemake.input["gmap_file"])
+region_bed = snakemake.input["region_bed"]
+blacklist_bed = maybe_path(snakemake.input.get("blacklist_bed", None))
+genome_size = snakemake.input["genome_size"]
+gtf_file = maybe_path(snakemake.input["gtf_file"])
 
-qc_dir = sm.params["qc_dir"]
+qc_dir = snakemake.params["qc_dir"]
 os.makedirs(qc_dir, exist_ok=True)
-run_id = getattr(sm.params, "run_id", "")
+run_id = getattr(snakemake.params, "run_id", "")
 
-sample_df = pd.read_table(sm.input["sample_file"])
+sample_df = pd.read_table(snakemake.input["sample_file"])
 sample_name = sample_df["SAMPLE"].iloc[0]
 rep_ids = sample_df["REP_ID"].tolist()
 sample_types = sample_df["sample_type"].tolist()
-assay_type = sm.params["assay_type"]
-chromosomes = sm.params["chromosomes"]
+assay_type = snakemake.params["assay_type"]
+chromosomes = snakemake.params["chromosomes"]
 
 has_normal = "normal" in sample_types
 tumor_sidx = 1 if has_normal else 0
@@ -94,7 +93,7 @@ num_phaseset = snps["PS"].nunique()
 logging.info(f"#phaseset={num_phaseset}")
 grp_cols.append("PS")
 
-phase_flip_test = bool(sm.params["phase_flip_test"])
+phase_flip_test = bool(snakemake.params["phase_flip_test"])
 if phase_flip_test:
     snps["phase_group"] = detect_phase_flips(
         snps,
@@ -102,8 +101,8 @@ if phase_flip_test:
         b_mtx,
         grp_cols=grp_cols,
         tumor_sidx=tumor_sidx,
-        epsilon=float(sm.params["phase_flip_epsilon"]),
-        alpha=float(sm.params["phase_flip_alpha"]),
+        epsilon=float(snakemake.params["phase_flip_epsilon"]),
+        alpha=float(snakemake.params["phase_flip_alpha"]),
     )
     grp_cols.append("phase_group")
 
@@ -138,13 +137,13 @@ if phase_flip_test:
     if window_df["phase_group"].isna().any():
         window_df["phase_group"] = window_df["phase_group"].ffill()
 
-max_blocksize = int(sm.params["max_blocksize"])
+max_blocksize = int(snakemake.params["max_blocksize"])
 bbs, snps = adaptive_binning_windows(
     window_df,
     snps,
     tot_mtx,
-    int(sm.params["min_snp_reads"]),
-    int(sm.params["min_snp_per_block"]),
+    int(snakemake.params["min_snp_reads"]),
+    int(snakemake.params["min_snp_per_block"]),
     grp_cols=grp_cols,
     tumor_sidx=tumor_sidx,
     max_blocksize=max_blocksize,
@@ -184,7 +183,7 @@ for s in range(nsamples):
     with np.errstate(invalid="ignore"):
         bb_dp[:, s] = weighted_sums / total_len_per_bin
 
-median_normalization = bool(getattr(sm.params, "median_normalization", False))
+median_normalization = bool(getattr(snakemake.params, "median_normalization", False))
 use_normal = has_normal and not median_normalization
 logging.info(f"compute bb RDR, use_normal={use_normal}")
 
@@ -212,7 +211,7 @@ else:
             with np.errstate(invalid="ignore", divide="ignore"):
                 bb_rdr[valid_i, i] = col[valid_i] / med
 
-rdr_outlier_quantile = float(sm.params["rdr_outlier_quantile"])
+rdr_outlier_quantile = float(snakemake.params["rdr_outlier_quantile"])
 if rdr_outlier_quantile > 0:
     rdr_upper = np.nanquantile(bb_rdr, 1 - rdr_outlier_quantile)
     n_outlier = int(np.nansum(bb_rdr > rdr_upper))
@@ -297,21 +296,21 @@ if gmap_file is not None:
     dist_cms = interp_cM_blocks(bbs, snps_valid, genetic_map, block_id_col="bb_id")
     bbs["switchprobs"] = estimate_switchprobs_cM(
         dist_cms,
-        nu=float(sm.params["nu"]),
-        min_switchprob=float(sm.params["min_switchprob"]),
+        nu=float(snakemake.params["nu"]),
+        min_switchprob=float(snakemake.params["min_switchprob"]),
     )
 else:
-    switchprob_ps = float(sm.params["switchprob_ps"])
+    switchprob_ps = float(snakemake.params["switchprob_ps"])
     bbs["switchprobs"] = estimate_switchprobs_PS(bbs, switchprob_ps)
 
 bbs[["#CHR", "START", "END", "#SNPS", "region_id", "switchprobs"]].to_csv(
-    sm.output["bb_file"], sep="\t", header=True, index=False
+    snakemake.output["bb_file"], sep="\t", header=True, index=False
 )
-np.savez_compressed(sm.output["tot_mtx_bb"], mat=tot_mtx_bb)
-np.savez_compressed(sm.output["a_mtx_bb"], mat=a_mtx_bb)
-np.savez_compressed(sm.output["b_mtx_bb"], mat=b_mtx_bb)
-np.savez_compressed(sm.output["baf_mtx_bb"], mat=baf_mtx_bb)
-np.savez_compressed(sm.output["dp_mtx_bb"], mat=bb_dp)
-np.savez_compressed(sm.output["rdr_mtx_bb"], mat=bb_rdr)
-shutil.copy2(sm.input["sample_file"], sm.output["sample_file"])
+np.savez_compressed(snakemake.output["tot_mtx_bb"], mat=tot_mtx_bb)
+np.savez_compressed(snakemake.output["a_mtx_bb"], mat=a_mtx_bb)
+np.savez_compressed(snakemake.output["b_mtx_bb"], mat=b_mtx_bb)
+np.savez_compressed(snakemake.output["baf_mtx_bb"], mat=baf_mtx_bb)
+np.savez_compressed(snakemake.output["dp_mtx_bb"], mat=bb_dp)
+np.savez_compressed(snakemake.output["rdr_mtx_bb"], mat=bb_rdr)
+shutil.copy2(snakemake.input["sample_file"], snakemake.output["sample_file"])
 logging.info("finished combine_counts.")

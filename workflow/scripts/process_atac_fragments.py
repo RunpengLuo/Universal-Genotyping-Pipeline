@@ -1,7 +1,6 @@
 import os, logging
-from snakemake.script import snakemake as sm
 
-t = int(getattr(sm, "threads", 1))
+t = int(getattr(snakemake, "threads", 1))
 os.environ["OMP_NUM_THREADS"] = str(t)
 os.environ["OPENBLAS_NUM_THREADS"] = str(t)
 os.environ["MKL_NUM_THREADS"] = str(t)
@@ -29,14 +28,14 @@ Input:
 Output:
 single h5ad matrix covers all replicates with position columns
 """
-setup_logging(sm.log[0])
+setup_logging(snakemake.log[0])
 
-barcode_files = sm.input["barcodes"]
-ranger_dirs = sm.input["ranger_dirs"]
-assay_type = sm.params["assay_type"]
-rep_ids = sm.params["rep_ids"]
-chrom_sizes = get_chr_sizes(sm.input["genome_size"])
-tile_width = int(sm.params["tile_width"])
+barcode_files = snakemake.input["barcodes"]
+ranger_dirs = snakemake.input["ranger_dirs"]
+assay_type = snakemake.params["assay_type"]
+rep_ids = snakemake.params["rep_ids"]
+chrom_sizes = get_chr_sizes(snakemake.input["genome_size"])
+tile_width = int(snakemake.params["tile_width"])
 logging.info(f"prepare atac anndata, assay_type={assay_type}, rep_ids={rep_ids}")
 logging.info(f"tile_width={tile_width}bp")
 
@@ -60,13 +59,13 @@ for idx, rep_id in enumerate(rep_ids):
         min_num_fragments=0,
         sorted_by_barcode=False,
         tempdir=None,
-        n_jobs=int(sm.threads),
+        n_jobs=int(snakemake.threads),
     )
     adata.obs_names = adata.obs_names.astype(str) + f"_{rep_id}"
     snap.pp.add_tile_matrix(
         adata,
         bin_size=tile_width,
-        n_jobs=int(sm.threads),
+        n_jobs=int(snakemake.threads),
     )
     adatas[rep_id] = adata
     logging.info(f"#barcodes={adata.n_obs}, #features={adata.n_vars}")
@@ -96,7 +95,7 @@ adata.var["END"] = (
     adata.var_names.str.split(":").str[1].str.split("-").str[1].astype(int)
 )
 
-regions = read_region_file(sm.input["region_bed"])
+regions = read_region_file(snakemake.input["region_bed"])
 adata = feature_to_blocks(adata, regions, assay_type)
 
 assert adata.var_names.is_unique, "var_names is not unique!"
@@ -106,7 +105,7 @@ adata = adata[:, sort_index].copy()
 adata.obsm.clear()
 adata.uns.clear()
 
-adata.write_h5ad(sm.output["h5ad_file"], compression="gzip")
+adata.write_h5ad(snakemake.output["h5ad_file"], compression="gzip")
 
 logging.info(f"final processed {assay_type} AnnData")
 logging.info(f"final #obs={adata.n_obs}, #vars={adata.n_vars}")

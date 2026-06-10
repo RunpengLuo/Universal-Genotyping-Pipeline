@@ -1,8 +1,7 @@
 import os, logging, shutil
-from snakemake.script import snakemake as sm
 
 
-t = int(getattr(sm, "threads", 1))
+t = int(getattr(snakemake, "threads", 1))
 os.environ["OMP_NUM_THREADS"] = str(t)
 os.environ["OPENBLAS_NUM_THREADS"] = str(t)
 os.environ["MKL_NUM_THREADS"] = str(t)
@@ -27,28 +26,28 @@ from switchprobs import *
 Adaptive binning by MSR and MSPB for non-bulk assays.
 Input for HATCHet3 and CalicoST.
 """
-setup_logging(sm.log[0])
+setup_logging(snakemake.log[0])
 
-snp_info = sm.input["snp_info"]
-tot_mtx_snp = sm.input["tot_mtx_snp"]
-a_mtx_snp = sm.input["a_mtx_snp"]
-b_mtx_snp = sm.input["b_mtx_snp"]
+snp_info = snakemake.input["snp_info"]
+tot_mtx_snp = snakemake.input["tot_mtx_snp"]
+a_mtx_snp = snakemake.input["a_mtx_snp"]
+b_mtx_snp = snakemake.input["b_mtx_snp"]
 
-gmap_file = maybe_path(sm.input["gmap_file"])
-all_barcodes = maybe_path(sm.input["all_barcodes"])
-barcodes_full_path = maybe_path(sm.input["barcodes_full"])
-qc_dir = sm.params["qc_dir"]
+gmap_file = maybe_path(snakemake.input["gmap_file"])
+all_barcodes = maybe_path(snakemake.input["all_barcodes"])
+barcodes_full_path = maybe_path(snakemake.input["barcodes_full"])
+qc_dir = snakemake.params["qc_dir"]
 os.makedirs(qc_dir, exist_ok=True)
-run_id = getattr(sm.params, "run_id", "")
+run_id = getattr(snakemake.params, "run_id", "")
 
-region_bed = sm.input["region_bed"]
-genome_size = sm.input["genome_size"]
-gtf_file = maybe_path(sm.input["gtf_file"])
+region_bed = snakemake.input["region_bed"]
+genome_size = snakemake.input["genome_size"]
+gtf_file = maybe_path(snakemake.input["gtf_file"])
 
-sample_df = pd.read_table(sm.input["sample_file"])
+sample_df = pd.read_table(snakemake.input["sample_file"])
 sample_name = sample_df["SAMPLE"].iloc[0]
 rep_ids = sample_df["REP_ID"].tolist()
-assay_type = sm.params["assay_type"]
+assay_type = snakemake.params["assay_type"]
 
 cell_rep_idx = (
     cell_rep_idx_from_mapping(read_full_barcodes(barcodes_full_path), rep_ids)
@@ -80,7 +79,7 @@ grp_cols.append("PS")
 multi_snps = adaptive_binning(
     snps,
     0,
-    int(sm.params["nsnp_multi"]),
+    int(snakemake.params["nsnp_multi"]),
     tot_mtx,
     ["region_id"],
     colname="multi_id",
@@ -111,21 +110,21 @@ if gmap_file is not None:
     )
     multi_snps["switchprobs"] = estimate_switchprobs_cM(
         dist_cms_multi,
-        nu=float(sm.params["nu"]),
-        min_switchprob=float(sm.params["min_switchprob"]),
+        nu=float(snakemake.params["nu"]),
+        min_switchprob=float(snakemake.params["min_switchprob"]),
     )
 else:
-    switchprob_ps = float(sm.params["switchprob_ps"])
+    switchprob_ps = float(snakemake.params["switchprob_ps"])
     multi_snps["switchprobs"] = estimate_switchprobs_PS(multi_snps, switchprob_ps)
-multi_snps.to_csv(sm.output["multi_snp_file"], sep="\t", header=True, index=False)
-save_npz(sm.output["tot_mtx_multi"], tot_mtx_multi)
-save_npz(sm.output["a_mtx_multi"], a_mtx_multi)
-save_npz(sm.output["b_mtx_multi"], b_mtx_multi)
+multi_snps.to_csv(snakemake.output["multi_snp_file"], sep="\t", header=True, index=False)
+save_npz(snakemake.output["tot_mtx_multi"], tot_mtx_multi)
+save_npz(snakemake.output["a_mtx_multi"], a_mtx_multi)
+save_npz(snakemake.output["b_mtx_multi"], b_mtx_multi)
 
 bbs = adaptive_binning(
     snps,
-    int(sm.params["min_snp_reads"]),
-    int(sm.params["min_snp_per_block"]),
+    int(snakemake.params["min_snp_reads"]),
+    int(snakemake.params["min_snp_per_block"]),
     tot_mtx,
     grp_cols,
     colname="bb_id",
@@ -158,25 +157,25 @@ if gmap_file is not None:
     dist_cms = interp_cM_blocks(bbs, snps, genetic_map, block_id_col="bb_id")
     bbs["switchprobs"] = estimate_switchprobs_cM(
         dist_cms,
-        nu=float(sm.params["nu"]),
-        min_switchprob=float(sm.params["min_switchprob"]),
+        nu=float(snakemake.params["nu"]),
+        min_switchprob=float(snakemake.params["min_switchprob"]),
     )
 else:
     bbs["switchprobs"] = estimate_switchprobs_PS(bbs, switchprob_ps)
 
 bbs[["#CHR", "START", "END", "#SNPS", "region_id", "switchprobs"]].to_csv(
-    sm.output["bb_file"], sep="\t", header=True, index=False
+    snakemake.output["bb_file"], sep="\t", header=True, index=False
 )
-save_npz(sm.output["tot_mtx_bb"], tot_mtx_bb)
-save_npz(sm.output["a_mtx_bb"], a_mtx_bb)
-save_npz(sm.output["b_mtx_bb"], b_mtx_bb)
-save_npz(sm.output["baf_mtx_bb"], csr_matrix((0, 0), dtype=np.float32))
+save_npz(snakemake.output["tot_mtx_bb"], tot_mtx_bb)
+save_npz(snakemake.output["a_mtx_bb"], a_mtx_bb)
+save_npz(snakemake.output["b_mtx_bb"], b_mtx_bb)
+save_npz(snakemake.output["baf_mtx_bb"], csr_matrix((0, 0), dtype=np.float32))
 if all_barcodes is not None:
-    bb_out_dir = os.path.dirname(sm.output["bb_file"])
+    bb_out_dir = os.path.dirname(snakemake.output["bb_file"])
     shutil.copy2(all_barcodes, os.path.join(bb_out_dir, "barcodes.tsv.gz"))
     if barcodes_full_path is not None:
         shutil.copy2(
             barcodes_full_path, os.path.join(bb_out_dir, "barcodes.full.tsv.gz")
         )
-shutil.copy2(sm.input["sample_file"], sm.output["sample_file"])
+shutil.copy2(snakemake.input["sample_file"], snakemake.output["sample_file"])
 logging.info("finished.")

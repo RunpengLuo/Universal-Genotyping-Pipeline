@@ -1,35 +1,18 @@
-# Monolithic environment for manual/development installs.
-# For production runs, use `snakemake --use-conda` which activates
-# per-rule environments from workflow/envs/*.yaml automatically.
+# Runner environment: installs only Snakemake (the workflow engine).
+#
+# All tool and Python dependencies are declared per-rule in workflow/envs/*.yaml
+# and built automatically because the profile sets `use-conda: true`. Create this
+# env, then run with `--profile profile/` (or pass `--use-conda` yourself).
+#
+#   conda env create -f environment.yaml
+#   conda activate genotyping-env
+#   snakemake --profile profile/ --conda-create-envs-only --cores 1 ...
 name: genotyping-env
 channels:
   - conda-forge
   - bioconda
 dependencies:
-  - python>=3.10
-  - snakemake
-  - cellsnp-lite>=1.2
-  - bcftools>=1.19
-  - samtools>=1.19
-  - mosdepth>=0.3
-  - scipy>=1.7
-  - pandas>=1.5
-  - numpy>=1.21
-  - tabix
-  - pip
-
-  - matplotlib-base>=3.5
-  - statsmodels>=0.13
-  - pybedtools>=0.9
-  - squidpy>=1.2
-  - scanpy>=1.9
-  - snapatac2>=2.3
-  - numba>=0.56
-  - anndata>=0.8
-  # Optional: only needed for resources/scripts/convert_bam_visium3prime.py
-  # - pysam
-  # Optional: only needed for resources/scripts/build_window_bed.py --repliseq
-  # - ucsc-liftover
-  # - ucsc-bigwigtobedgraph
-  # Optional: convert WES target bigBed to BED
-  # - ucsc-bigbedtobed
+  # >=9 required: rules use the branch() input helper (added in 8.4) and the
+  # injected `snakemake` script global (the old `from snakemake.script import
+  # snakemake` import was removed in 9.x). Project standardizes on Snakemake 9+.
+  - snakemake>=9

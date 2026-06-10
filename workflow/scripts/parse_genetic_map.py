@@ -1,7 +1,6 @@
 import os, logging
-from snakemake.script import snakemake as sm
 
-t = int(getattr(sm, "threads", 1))
+t = int(getattr(snakemake, "threads", 1))
 os.environ["OMP_NUM_THREADS"] = str(t)
 os.environ["OPENBLAS_NUM_THREADS"] = str(t)
 os.environ["MKL_NUM_THREADS"] = str(t)
@@ -20,15 +19,15 @@ chr-prefix will always be added to comply with other tools.
 """
 
 logging.basicConfig(
-    filename=sm.log[0],
+    filename=snakemake.log[0],
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
 )
 
-gmap_files = list(sm.input["gmap_files"])
-chrnames = list(sm.params["chrnames"])
-phaser = sm.params["phaser"]
-reference_version = sm.params["reference_version"]
+gmap_files = list(snakemake.input["gmap_files"])
+chrnames = list(snakemake.params["chrnames"])
+phaser = snakemake.params["phaser"]
+reference_version = snakemake.params["reference_version"]
 
 logging.info(
     f"parse genetic map files, phaser={phaser}, "
@@ -114,7 +113,7 @@ if phaser == "eagle":
         f"cM range=[{genetic_map['cM'].min():.4f}, {genetic_map['cM'].max():.4f}]"
     )
     genetic_map[required_columns].to_csv(
-        sm.output["gmap_tsv"], sep="\t", header=True, index=False
+        snakemake.output["gmap_tsv"], sep="\t", header=True, index=False
     )
 
 if phaser == "shapeit":
@@ -141,5 +140,5 @@ if phaser == "shapeit":
         f"cM range=[{genetic_map['cM'].min():.4f}, {genetic_map['cM'].max():.4f}]"
     )
     genetic_map[required_columns].to_csv(
-        sm.output["gmap_tsv"], sep="\t", header=True, index=False
+        snakemake.output["gmap_tsv"], sep="\t", header=True, index=False
     )

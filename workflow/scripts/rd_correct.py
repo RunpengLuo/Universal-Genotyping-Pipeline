@@ -10,9 +10,8 @@ The window BED is expected to be pre-filtered by region and blacklist
 
 import os
 import logging
-from snakemake.script import snakemake as sm
 
-t = int(getattr(sm, "threads", 1))
+t = int(getattr(snakemake, "threads", 1))
 os.environ["OMP_NUM_THREADS"] = str(t)
 os.environ["OPENBLAS_NUM_THREADS"] = str(t)
 os.environ["MKL_NUM_THREADS"] = str(t)
@@ -36,27 +35,27 @@ import matplotlib
 matplotlib.use("Agg")
 from matplotlib.backends.backend_pdf import PdfPages
 
-setup_logging(sm.log[0])
+setup_logging(snakemake.log[0])
 
-sample_file = sm.input["sample_file"]
-window_bed_file = sm.input["window_bed"]
-genome_size = sm.input["genome_size"]
-region_bed = sm.input["region_bed"] or None
-blacklist_bed = maybe_path(sm.input.get("blacklist_bed", None))
-assay_type = str(sm.params["assay_type"])
+sample_file = snakemake.input["sample_file"]
+window_bed_file = snakemake.input["window_bed"]
+genome_size = snakemake.input["genome_size"]
+region_bed = snakemake.input["region_bed"] or None
+blacklist_bed = maybe_path(snakemake.input.get("blacklist_bed", None))
+assay_type = str(snakemake.params["assay_type"])
 
-mosdepth_dir = sm.params["mosdepth_dir"]
-chromosomes = sm.params["chromosomes"]
-samplesize = int(sm.params["samplesize"])
-routlier = float(sm.params["routlier"])
-doutlier = float(sm.params["doutlier"])
-min_mappability = float(sm.params["min_mappability"])
-gc_correct = bool(sm.params["gc_correct"])
-gc_correct_method = str(sm.params.get("gc_correct_method", "median"))
-rt_correct = bool(sm.params["rt_correct"])
-qc_dir = sm.params["qc_dir"]
+mosdepth_dir = snakemake.params["mosdepth_dir"]
+chromosomes = snakemake.params["chromosomes"]
+samplesize = int(snakemake.params["samplesize"])
+routlier = float(snakemake.params["routlier"])
+doutlier = float(snakemake.params["doutlier"])
+min_mappability = float(snakemake.params["min_mappability"])
+gc_correct = bool(snakemake.params["gc_correct"])
+gc_correct_method = str(snakemake.params.get("gc_correct_method", "median"))
+rt_correct = bool(snakemake.params["rt_correct"])
+qc_dir = snakemake.params["qc_dir"]
 os.makedirs(qc_dir, exist_ok=True)
-run_id = getattr(sm.params, "run_id", "")
+run_id = getattr(snakemake.params, "run_id", "")
 
 sample_df = pd.read_table(sample_file, sep="\t")
 rep_ids = sample_df["REP_ID"].astype(str).tolist()
@@ -99,17 +98,17 @@ for i, mos_df in enumerate(mos_dfs):
 
 sample_ids = sample_df["SAMPLE"].astype(str).tolist()
 depth_stats = compute_depth_statistics(dp_raw, win_df, sample_ids)
-depth_stats.to_csv(sm.output["depth_stats"], sep="\t", index=False)
-logging.info(f"wrote depth statistics to {sm.output['depth_stats']}")
+depth_stats.to_csv(snakemake.output["depth_stats"], sep="\t", index=False)
+logging.info(f"wrote depth statistics to {snakemake.output['depth_stats']}")
 for _, row in depth_stats[depth_stats["#CHR"] == "TOTAL"].iterrows():
     logging.info(
         f"  {row['SAMPLE']}: mean={row['mean_depth']:.2f}, median={row['median_depth']:.2f}"
     )
 
-snps = pd.read_table(sm.input["snp_info"], sep="\t")
-tot_mtx_snp = np.load(sm.input["tot_mtx_snp"])["mat"].astype(np.int32)
-a_mtx_snp = np.load(sm.input["a_mtx_snp"])["mat"].astype(np.int32)
-b_mtx_snp = np.load(sm.input["b_mtx_snp"])["mat"].astype(np.int32)
+snps = pd.read_table(snakemake.input["snp_info"], sep="\t")
+tot_mtx_snp = np.load(snakemake.input["tot_mtx_snp"])["mat"].astype(np.int32)
+a_mtx_snp = np.load(snakemake.input["a_mtx_snp"])["mat"].astype(np.int32)
+b_mtx_snp = np.load(snakemake.input["b_mtx_snp"])["mat"].astype(np.int32)
 logging.info(f"loaded {len(snps)} SNPs, allele matrices shape={tot_mtx_snp.shape}")
 
 gc_vals = win_df["GC"].to_numpy()
@@ -210,7 +209,7 @@ if n_nan_rows > 0:
     dp_corrected = dp_corrected[valid]
     win_df = win_df.loc[valid].reset_index(drop=True)
 
-np.savez_compressed(sm.output["dp_corrected"], mat=dp_corrected)
+np.savez_compressed(snakemake.output["dp_corrected"], mat=dp_corrected)
 
 out_cols = ["#CHR", "START", "END", "region_id", "GC"]
 if "MAP" in win_df.columns:
@@ -218,7 +217,7 @@ if "MAP" in win_df.columns:
 if "REPLI" in win_df.columns:
     out_cols.append("REPLI")
 win_df[out_cols].to_csv(
-    sm.output["window_df"],
+    snakemake.output["window_df"],
     sep="\t",
     header=True,
     index=False,

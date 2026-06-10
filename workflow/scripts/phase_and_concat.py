@@ -1,7 +1,6 @@
 import os, logging
-from snakemake.script import snakemake as sm
 
-t = int(getattr(sm, "threads", 1))
+t = int(getattr(snakemake, "threads", 1))
 os.environ["OMP_NUM_THREADS"] = str(t)
 os.environ["OPENBLAS_NUM_THREADS"] = str(t)
 os.environ["MKL_NUM_THREADS"] = str(t)
@@ -62,27 +61,27 @@ def annotate_feature_type(snps, gtf_file):
 
 
 ##################################################
-setup_logging(sm.log[0])
+setup_logging(snakemake.log[0])
 logging.info("phase and concat allele-level count matrices")
 
-vcf_files = sm.input["vcfs"]
-sample_tsvs = sm.input["sample_tsvs"]
-tot_mtx_files = sm.input["tot_mtxs"]
-ad_mtx_files = sm.input["ad_mtxs"]
-snp_vcf = sm.input["snp_vcf"]
-qc_dir = sm.params["qc_dir"]
+vcf_files = snakemake.input["vcfs"]
+sample_tsvs = snakemake.input["sample_tsvs"]
+tot_mtx_files = snakemake.input["tot_mtxs"]
+ad_mtx_files = snakemake.input["ad_mtxs"]
+snp_vcf = snakemake.input["snp_vcf"]
+qc_dir = snakemake.params["qc_dir"]
 os.makedirs(qc_dir, exist_ok=True)
-run_id = getattr(sm.params, "run_id", "")
+run_id = getattr(snakemake.params, "run_id", "")
 
-region_bed = sm.input["region_bed"]
-genome_size = sm.input["genome_size"]
-gtf_file = maybe_path(sm.input["gtf_file"])
-blacklist_bed = maybe_path(sm.input["blacklist_bed"])
+region_bed = snakemake.input["region_bed"]
+genome_size = snakemake.input["genome_size"]
+gtf_file = maybe_path(snakemake.input["gtf_file"])
+blacklist_bed = maybe_path(snakemake.input["blacklist_bed"])
 
-sample_name = sm.params["sample_name"]
-assay_type = sm.params["assay_type"]
-rep_ids = sm.params["rep_ids"]
-sample_types = sm.params["sample_types"]
+sample_name = snakemake.params["sample_name"]
+assay_type = snakemake.params["assay_type"]
+rep_ids = snakemake.params["rep_ids"]
+sample_types = snakemake.params["sample_types"]
 
 is_bulk_assay = assay_type in BULK_ASSAYS
 
@@ -188,18 +187,18 @@ if is_bulk_assay:
     snps.drop(columns=["gene_idx"], inplace=True, errors="ignore")
 
     snp_mask &= get_mask_by_depth(
-        snps, tot_mtx, min_dp=max(int(sm.params["min_depth"]), 1)
+        snps, tot_mtx, min_dp=max(int(snakemake.params["min_depth"]), 1)
     )
     if has_normal:
         normal_mask = get_mask_by_het_balanced(
-            snps, ref_mtx, alt_mtx, float(sm.params["gamma"]), normal_idx=0
+            snps, ref_mtx, alt_mtx, float(snakemake.params["gamma"]), normal_idx=0
         )
         snp_mask &= normal_mask
 else:
     snps.drop(columns=["gene_idx"], inplace=True, errors="ignore")
 
     logging.info("annotate SNPs with feature_id")
-    adata: sc.AnnData = sc.read_h5ad(sm.input["h5ad_file"])
+    adata: sc.AnnData = sc.read_h5ad(snakemake.input["h5ad_file"])
     feature_df = adata.var.reset_index(drop=False).rename(
         columns={"index": "feature_id"}
     )
@@ -216,7 +215,7 @@ _n_exon = int((snps["feature_type"] == "exon").sum())
 _n_total = len(snps)
 logging.info(f"#exonic SNPs: {_n_exon}/{_n_total} ({_n_exon / max(_n_total, 1):.3%})")
 
-if sm.params["exon_only"]:
+if snakemake.params["exon_only"]:
     exon_mask = (snps["feature_type"] == "exon").to_numpy()
     logging.info(f"exon filter: {np.sum(exon_mask)}/{len(snps)} SNPs passed")
     snp_mask &= exon_mask
@@ -308,27 +307,27 @@ snps[
         "feature_id",
         "feature_type",
     ]
-].to_csv(sm.output["snp_info"], sep="\t", header=True, index=False)
+].to_csv(snakemake.output["snp_info"], sep="\t", header=True, index=False)
 if is_bulk_assay:
-    np.savez_compressed(sm.output["tot_mtx_snp"], mat=tot_mtx)
-    np.savez_compressed(sm.output["a_mtx_snp"], mat=a_mtx)
-    np.savez_compressed(sm.output["b_mtx_snp"], mat=b_mtx)
+    np.savez_compressed(snakemake.output["tot_mtx_snp"], mat=tot_mtx)
+    np.savez_compressed(snakemake.output["a_mtx_snp"], mat=a_mtx)
+    np.savez_compressed(snakemake.output["b_mtx_snp"], mat=b_mtx)
 else:
-    save_npz(sm.output["tot_mtx_snp"], tot_mtx)
-    save_npz(sm.output["a_mtx_snp"], a_mtx)
-    save_npz(sm.output["b_mtx_snp"], b_mtx)
+    save_npz(snakemake.output["tot_mtx_snp"], tot_mtx)
+    save_npz(snakemake.output["a_mtx_snp"], a_mtx)
+    save_npz(snakemake.output["b_mtx_snp"], b_mtx)
     snp_ids = snps["#CHR"].astype(str) + "_" + snps["POS"].astype(str)
-    np.save(sm.output["unique_snp_ids"], snp_ids.to_numpy())
-    save_npz(sm.output["cell_snp_Aallele"], a_mtx)
-    save_npz(sm.output["cell_snp_Ballele"], b_mtx)
-all_barcodes.to_csv(sm.output["all_barcodes"], sep="\t", header=False, index=False)
+    np.save(snakemake.output["unique_snp_ids"], snp_ids.to_numpy())
+    save_npz(snakemake.output["cell_snp_Aallele"], a_mtx)
+    save_npz(snakemake.output["cell_snp_Ballele"], b_mtx)
+all_barcodes.to_csv(snakemake.output["all_barcodes"], sep="\t", header=False, index=False)
 if barcodes_full is not None:
     barcodes_full.to_csv(
-        sm.output["barcodes_full"], sep="\t", header=True, index=False
+        snakemake.output["barcodes_full"], sep="\t", header=True, index=False
     )
 sample_df = pd.DataFrame({"SAMPLE": [f"{sample_name}_{rep_id}" for rep_id in rep_ids]})
 sample_df["SAMPLE_NAME"] = sample_name
 sample_df["REP_ID"] = rep_ids
 sample_df["sample_type"] = sample_types
-sample_df.to_csv(sm.output["sample_file"], sep="\t", header=True, index=False)
+sample_df.to_csv(snakemake.output["sample_file"], sep="\t", header=True, index=False)
 logging.info("finished.")

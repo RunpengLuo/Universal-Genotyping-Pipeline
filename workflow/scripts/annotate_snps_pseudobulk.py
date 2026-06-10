@@ -1,7 +1,6 @@
 import os, gzip, logging, subprocess
-from snakemake.script import snakemake as sm
 
-t = int(getattr(sm, "threads", 1))
+t = int(getattr(snakemake, "threads", 1))
 os.environ["OMP_NUM_THREADS"] = str(t)
 os.environ["OPENBLAS_NUM_THREADS"] = str(t)
 os.environ["MKL_NUM_THREADS"] = str(t)
@@ -19,17 +18,17 @@ Given cellsnp-lite results from multiple replicates.
 After annotation, only unique bi-allelic Het or Hom-Alt SNPs are kept.
 """
 logging.basicConfig(
-    filename=sm.log[0],
+    filename=snakemake.log[0],
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
 )
 
-chroms = sm.config["chromosomes"]
-filter_nz_OTH = sm.params["filter_nz_OTH"]
-filter_hom_ALT = sm.params["filter_hom_ALT"]
-min_het_reads = int(sm.params["min_het_reads"])
-min_hom_dp = int(sm.params["min_hom_dp"])
-min_vaf_thres = float(sm.params["min_vaf_thres"])
+chroms = snakemake.config["chromosomes"]
+filter_nz_OTH = snakemake.params["filter_nz_OTH"]
+filter_hom_ALT = snakemake.params["filter_hom_ALT"]
+min_het_reads = int(snakemake.params["min_het_reads"])
+min_hom_dp = int(snakemake.params["min_hom_dp"])
+min_vaf_thres = float(snakemake.params["min_vaf_thres"])
 
 logging.info(
     f"start annotate_snps_pseudobulk, filter_nz_OTH={filter_nz_OTH}, filter_hom_ALT={filter_hom_ALT}"
@@ -63,8 +62,8 @@ def get_genotype(row):
 
 KEY = ["#CHROM", "POS", "REF", "ALT"]
 CNT = ["DP", "AD", "OTH"]
-modalities = list(sm.params["modalities"])
-raw_snp_vcfs = list(sm.input["raw_snp_vcfs"])
+modalities = list(snakemake.params["modalities"])
+raw_snp_vcfs = list(snakemake.input["raw_snp_vcfs"])
 raw_snps_list = []
 for idx, modality in enumerate(modalities):
     raw_snps = read_VCF(raw_snp_vcfs[idx], addkey=True)
@@ -138,7 +137,7 @@ base_snps["is_hom_ref"] = (base_snps["AD"] == 0) & (base_snps["DP"] >= min_hom_d
 
 base_snps["SAMPLE"] = base_snps.apply(get_genotype, axis=1)
 
-chrom_sizes = get_chr_sizes(sm.input["genome_size"])
+chrom_sizes = get_chr_sizes(snakemake.input["genome_size"])
 snp_stats = compute_snp_statistics(
     raw_snps_list,
     modalities,
@@ -146,8 +145,8 @@ snp_stats = compute_snp_statistics(
     chrom_sizes,
     chroms,
 )
-snp_stats.to_csv(sm.output["snp_stats"], sep="\t", index=False)
-logging.info(f"wrote SNP statistics to {sm.output['snp_stats']}")
+snp_stats.to_csv(snakemake.output["snp_stats"], sep="\t", index=False)
+logging.info(f"wrote SNP statistics to {snakemake.output['snp_stats']}")
 
 keep_gts = ["0/1"]
 if not filter_hom_ALT:
@@ -196,7 +195,7 @@ cols = [
 final_snps = final_snps[cols]
 
 final_snps_chs = final_snps.groupby("#CHROM", sort=False)
-for chrname, out_snp_vcf in zip(chroms, sm.output["snp_vcfs"]):
+for chrname, out_snp_vcf in zip(chroms, snakemake.output["snp_vcfs"]):
     chrom = f"chr{chrname}"
     chrom_length = chrom_sizes[chrom]
     with open(out_snp_vcf[:-3], "w") as fd:
