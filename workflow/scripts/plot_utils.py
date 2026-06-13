@@ -725,6 +725,8 @@ def plot_allele_freqs(
         Optional BED files for background shading.
     """
     per_rep_pseudobulk = apply_pseudobulk and cell_rep_idx is not None
+    # B allele is phased -> label as BAF; ref allele is unphased -> AF.
+    val_type = "BAF" if allele == "B" else "AF"
     logging.info(
         f"QC analysis - plot {allele}-{unit} allele frequency, "
         f"apply_pseudobulk={apply_pseudobulk}, per_rep_pseudobulk={per_rep_pseudobulk}"
@@ -741,7 +743,7 @@ def plot_allele_freqs(
             genome_size,
             plot_file,
             unit=unit,
-            val_type="AF",
+            val_type=val_type,
             mask=snp_mask,
             region_bed=region_bed,
             blacklist_bed=blacklist_bed,
@@ -767,7 +769,7 @@ def plot_allele_freqs(
         genome_size,
         plot_file,
         unit=unit,
-        val_type="AF",
+        val_type=val_type,
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         pdf=pdf,
