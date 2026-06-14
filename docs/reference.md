@@ -100,14 +100,14 @@ One subdirectory per `{assay_type}_{rep_id}` with cellsnp-lite output.
 
 - `{assay_type}.h5ad` — AnnData with cells x features (single-cell only; produced by `process_anndata`).
 
-### Final Bins (`bb_dir/{assay_type}/`)
+### Final Bins (bulk: `bb_dir/bulkWGS/`, or `bb_dir/bulkWES/` for a WES-only run; single-cell/copytyping: `bb_dir/{assay_type}/`)
 
 Common outputs across all modes:
-- `sample_ids.tsv` — sample metadata.
+- `sample_ids.tsv` — sample metadata. For bulk this carries an `assay_type` column and its row order matches the matrix columns.
 
-**Bulk (`bulk_genotyping`):**
-- `bb.tsv.gz` — bin annotations.
-- `bb.{Tallele,Aallele,Ballele,baf,depth,rdr}.npz` — allele, depth, and RDR matrices.
+**Bulk (`bulk_genotyping`):** all bulk assays are jointly segmented on one shared bin grid under `bb_dir/bulkWGS/` (WGS family) or `bb_dir/bulkWES/` (WES-only).
+- `bb.tsv.gz` — bin annotations (one shared grid for all bulk assays).
+- `bb.{Tallele,Aallele,Ballele,baf,depth,rdr}.npz` — allele, depth, and RDR matrices. Columns concatenate all bulk samples (per assay, normal first); `rdr` holds the tumor columns only, normalized per assay against that assay's own normal.
 
 **Single-cell (`single_cell_genotyping`):**
 - `bb.tsv.gz` — bin annotations.
@@ -121,7 +121,7 @@ Common outputs across all modes:
 - `bb.{Xcount,Tallele,Aallele,Ballele}.npz` — per-block count matrices.
 - `barcodes.tsv.gz`, `barcodes.full.tsv.gz` — copied from `allele_dir`.
 
-### QC (`qc_dir/{assay_type}/`)
+### QC (bulk: `qc_dir/bulkWGS/` or `qc_dir/bulkWES/`; single-cell/copytyping: `qc_dir/{assay_type}/`)
 
 Plots from bias correction, phasing, and binning steps:
 - `rd_correct.{run_id}.pdf` — read depth bias correction (bulk WGS/WES). One page per sample with before/after correction genome-wide RD scatter, followed by GC correction diagnostic pages.

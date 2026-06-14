@@ -283,7 +283,7 @@ def _bin_windows_numba(
     return bin_ids, bin_id
 
 
-def adaptive_binning_windows(
+def adaptive_segmentation(
     windows: pd.DataFrame,
     snps: pd.DataFrame,
     tot_mtx: np.ndarray,
@@ -324,7 +324,7 @@ def adaptive_binning_windows(
     from scipy.sparse import issparse
 
     logging.info(
-        f"adaptive_binning_windows: min_snp_reads={min_snp_reads}, "
+        f"adaptive_segmentation: min_snp_reads={min_snp_reads}, "
         f"min_snp_per_block={min_snp_per_block}, "
         f"max_blocksize={max_blocksize}"
     )
@@ -426,7 +426,7 @@ def adaptive_binning_windows(
     num_bbs = len(bbs)
     bin_sizes = bbs["#SNPS"].to_numpy()
     block_sizes = bbs["BLOCKSIZE"].to_numpy()
-    logging.info("adaptive_binning_windows summary")
+    logging.info("adaptive_segmentation summary")
     logging.info(f"#SNPs={len(snps)}, #windows={W}, #bins={num_bbs}")
     logging.info(
         "snps per bin: min=%.0f  median=%.0f  max=%.0f",

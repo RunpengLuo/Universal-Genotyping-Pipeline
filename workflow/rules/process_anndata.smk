@@ -14,7 +14,7 @@ rule process_rna_anndata:
         region_bed=lambda wc: config["region_bed"],
         genome_size=lambda wc: config["genome_size"],
         gene_blacklist_file=lambda wc: branch(
-            config.get("gene_blacklist_file") is None,
+            config["gene_blacklist_file"] is None,
             then=[],
             otherwise=config["gene_blacklist_file"],
         ),
@@ -50,7 +50,7 @@ rule process_atac_fragments:
         region_bed=lambda wc: config["region_bed"],
         genome_size=lambda wc: config["genome_size"],
         gene_blacklist_file=lambda wc: branch(
-            config.get("gene_blacklist_file") is None,
+            config["gene_blacklist_file"] is None,
             then=[],
             otherwise=config["gene_blacklist_file"],
         ),

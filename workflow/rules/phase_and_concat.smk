@@ -28,7 +28,7 @@ rule phase_and_concat_bulk:
         genome_size=lambda wc: config["genome_size"],
         gtf_file=lambda wc: config["gtf_file"],
         blacklist_bed=lambda wc: branch(
-            config.get("blacklist_bed") is None,
+            config["blacklist_bed"] is None,
             then=[],
             otherwise=config["blacklist_bed"],
         ),
@@ -90,7 +90,7 @@ rule phase_and_concat_single_cell:
         genome_size=lambda wc: config["genome_size"],
         gtf_file=lambda wc: config["gtf_file"],
         blacklist_bed=lambda wc: branch(
-            config.get("blacklist_bed") is None,
+            config["blacklist_bed"] is None,
             then=[],
             otherwise=config["blacklist_bed"],
         ),

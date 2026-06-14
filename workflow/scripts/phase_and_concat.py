@@ -97,18 +97,6 @@ assert not parent_keys.duplicated().any(), "invalid bi-allelic SNP VCF file"
 
 if is_bulk_assay:
     has_normal = "normal" in sample_types
-    if has_normal:
-        normal_idx = list(sample_types).index("normal")
-        rep_ids[0], rep_ids[normal_idx] = rep_ids[normal_idx], rep_ids[0]
-        vcf_files[0], vcf_files[normal_idx] = vcf_files[normal_idx], vcf_files[0]
-        tot_mtx_files[0], tot_mtx_files[normal_idx] = (
-            tot_mtx_files[normal_idx],
-            tot_mtx_files[0],
-        )
-        ad_mtx_files[0], ad_mtx_files[normal_idx] = (
-            ad_mtx_files[normal_idx],
-            ad_mtx_files[0],
-        )
 
 barcodes_list = []
 tot_mtx_list = []

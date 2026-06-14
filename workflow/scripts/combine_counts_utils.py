@@ -77,6 +77,16 @@ def canon_mat_one_replicate(
     return tot_canon, ad_canon
 
 
+def scatter_counts_to_shared_snps(dst, src, shared_rows, col_offset):
+    """Write an assay's ``(n_local, n_col)`` counts into a shared matrix in place.
+
+    ``src`` rows are placed at ``shared_rows`` and columns at
+    ``[col_offset, col_offset + n_col)`` of ``dst`` (the ``(n_shared, n_total)``
+    destination). SNPs absent from the assay keep ``dst``'s existing values.
+    """
+    dst[shared_rows, col_offset : col_offset + src.shape[1]] = src
+
+
 def merge_mats(tot_list: list, ad_list: list):
     """Horizontally stack per-replicate total and alt-count matrices.
 

@@ -87,6 +87,9 @@ if _has_config:
         assert sample_df["REP_ID"].nunique() == len(
             sample_df
         ), "bulk mode must have no duplicated replicate IDs"
+        present_bulk = set(sample_df["assay_type"])
+        if "bulkWES" in present_bulk:
+            assert present_bulk == {"bulkWES"}, "bulkWES genotyping cannot mix with other types"
         run_genotype_snps = True
     elif workflow_mode == "single_cell_genotyping":
         sample_df = sample_df.loc[
@@ -142,6 +145,11 @@ if _has_config:
     assay2rep_ids = {}
     assay2sample_types = {}
     for assay_type, rows in sample_df.groupby("assay_type", sort=False):
+        # bulk assays ordered normal-first so column 0 is the matched normal
+        if assay_type in BULK_ASSAYS:
+            rows = rows.sort_values(
+                "sample_type", key=lambda s: s != "normal", kind="stable"
+            )
         assay2rep_ids[assay_type] = rows["REP_ID"].tolist()
         assay2sample_types[assay_type] = rows["sample_type"].tolist()
 
@@ -149,6 +157,9 @@ if _has_config:
         if assay_type not in assay2rep_ids:
             assay2rep_ids[assay_type] = []
             assay2sample_types[assay_type] = []
+
+    BULK_PRESENT = [at for at in assay_types if at in BULK_ASSAYS]
+    BULK_OUT_DIR = "bulkWES" if "bulkWES" in BULK_PRESENT else "bulkWGS"
 
     get_data = {}
     rep2modalities = {}
@@ -222,8 +233,29 @@ if _has_config:
         """Generate target paths under bb_dir for a given assay type."""
         return [config["bb_dir"] + f"/{assay_type}/{s}" for s in suffixes]
 
+    common_suffixes = [
+        "bb.tsv.gz",
+        "bb.Tallele.npz",
+        "bb.Aallele.npz",
+        "bb.Ballele.npz",
+    ]
     final_targets = []
-    if workflow_mode == "copytyping_preprocess":
+    if workflow_mode == "bulk_genotyping":
+        final_targets += _bb_targets(
+            BULK_OUT_DIR,
+            ["sample_ids.tsv"]
+            + common_suffixes
+            + ["bb.baf.npz", "bb.rdr.npz", "bb.depth.npz"],
+        )
+    elif workflow_mode == "single_cell_genotyping":
+        for assay_type in assay_types:
+            final_targets += _bb_targets(
+                assay_type, ["sample_ids.tsv"] + common_suffixes
+            )
+            final_targets.append(
+                config["allele_dir"] + f"/{assay_type}/barcodes.tsv.gz"
+            )
+    elif workflow_mode == "copytyping_preprocess":
         for assay_type in assay_types:
             final_targets += _bb_targets(
                 assay_type,
@@ -235,25 +267,6 @@ if _has_config:
                     "bb.Ballele.npz",
                 ],
             )
-    else:
-        common_suffixes = [
-            "bb.tsv.gz",
-            "bb.Tallele.npz",
-            "bb.Aallele.npz",
-            "bb.Ballele.npz",
-        ]
-        for assay_type in assay_types:
-            final_targets += _bb_targets(
-                assay_type, ["sample_ids.tsv"] + common_suffixes
-            )
-            if assay_type in BULK_ASSAYS:
-                final_targets += _bb_targets(
-                    assay_type, ["bb.baf.npz", "bb.rdr.npz", "bb.depth.npz"]
-                )
-            else:
-                final_targets.append(
-                    config["allele_dir"] + f"/{assay_type}/barcodes.tsv.gz"
-                )
 
     ##################################################
     os.makedirs(config["qc_dir"], exist_ok=True)

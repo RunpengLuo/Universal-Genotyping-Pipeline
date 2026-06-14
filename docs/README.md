@@ -45,11 +45,11 @@ Bulk WGS/WES. Genotypes SNPs (bcftools), phases, computes allele counts and bias
 1. Sample sheet with `assay_type` = `bulkWGS`, `bulkWGS-lr`, or `bulkWES`, including normal and tumor.
 2. Set `workflow_mode: bulk_genotyping` in config.
 3. **WGS:** Set `window_bed` to a pre-filtered window BED (e.g., build using `resources/scripts/build_wgs_window_bed.py` or use pre-built `resources/data/windows.1kbp.hg38.bed.gz`).
-4. **WES:** Set `window_bed` to a WES window BED built using `resources/scripts/build_wes_window_bed.py` (requires `--wes_targets_bed` pointing to vendor capture targets). The pipeline uses the same mosdepth + rd_correct path as WGS.
-5. Outputs in `bb_dir/{assay_type}/`:
+4. **WES:** Set `window_bed` to a WES window BED built using `resources/scripts/build_wes_window_bed.py` (requires `--wes_targets_bed` pointing to vendor capture targets).
+5. Outputs in `bb_dir/bulkWGS/` or `bb_dir/bulkWES`:
    - `bb.tsv.gz` — bin annotations.
-   - `bb.{Tallele,Aallele,Ballele,baf,depth,rdr}.npz` — allele, depth, and RDR matrices.
-   - `sample_ids.tsv` — sample metadata.
+   - `bb.{Tallele,Aallele,Ballele,baf,depth,rdr}.npz` — allele, depth, and RDR matrices; columns concatenate all bulk samples (per assay, normal first), `rdr` holds the tumor columns. RDR is normalized per assay against that assay's own normal.
+   - `sample_ids.tsv` — sample metadata, with an `assay_type` column; row order matches the matrix columns.
 
 ---
 

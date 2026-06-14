@@ -1,13 +1,17 @@
-"""SNP-informed adaptive binning + window→bin depth aggregation + RDR.
+"""SNP-informed adaptive binning across all bulk assays + depth aggregation + RDR.
 
-Combines:
-1. Adaptive binning from SNP data (switch probs, MSR/MSPB)
-2. Aggregation of corrected window depth into adaptive bins
-3. RDR computation (tumor/normal ratio or median-centering)
+All bulk assays present in the run (e.g. bulkWGS + bulkWGS-lr) are segmented on ONE
+shared bin grid: ``adaptive_segmentation`` requires ``min_snp_reads`` in every tumor
+sample, so stacking all assays' tumor columns yields bins that jointly satisfy every
+bulk sample. Allele counts are aggregated per bin across all samples; read depth and
+RDR are computed per assay, normalizing each assay's tumors by that assay's own normal.
+
+Inputs are lists (one entry per bulk assay, index-aligned to ``params.bulk_assays``).
+With a single bulk assay the lists have length 1 and the result matches the previous
+per-assay behaviour (now written under ``bb/bulkWGS/``).
 """
 
 import os
-import shutil
 import logging
 
 t = int(getattr(snakemake, "threads", 1))
@@ -20,9 +24,10 @@ os.environ["NUMEXPR_NUM_THREADS"] = str(t)
 import numpy as np
 import pandas as pd
 
-from utils import setup_logging, maybe_path, stamp_path
+from utils import setup_logging, maybe_path, stamp_path, sort_df_chr
+from combine_counts_utils import scatter_counts_to_shared_snps
 from aggregation_utils import (
-    adaptive_binning_windows,
+    adaptive_segmentation,
     assign_pos_to_range,
     detect_phase_flips,
     matrix_segmentation,
@@ -35,14 +40,18 @@ from switchprobs import (
     estimate_switchprobs_PS,
 )
 
+SNP_KEY = ["#CHR", "POS0"]
+WIN_KEY = ["#CHR", "START", "END"]
+
 setup_logging(snakemake.log[0])
 
-snp_info = snakemake.input["snp_info"]
-tot_mtx_snp = snakemake.input["tot_mtx_snp"]
-a_mtx_snp = snakemake.input["a_mtx_snp"]
-b_mtx_snp = snakemake.input["b_mtx_snp"]
-dp_corrected = snakemake.input["dp_corrected"]
-window_df_file = snakemake.input["window_df"]
+snp_info_files = list(snakemake.input["snp_info"])
+tot_files = list(snakemake.input["tot_mtx_snp"])
+a_files = list(snakemake.input["a_mtx_snp"])
+b_files = list(snakemake.input["b_mtx_snp"])
+dp_files = list(snakemake.input["dp_corrected"])
+win_files = list(snakemake.input["window_df"])
+sample_files = list(snakemake.input["sample_file"])
 
 gmap_file = maybe_path(snakemake.input["gmap_file"])
 region_bed = snakemake.input["region_bed"]
@@ -52,64 +61,99 @@ gtf_file = maybe_path(snakemake.input["gtf_file"])
 
 qc_dir = snakemake.params["qc_dir"]
 os.makedirs(qc_dir, exist_ok=True)
-run_id = getattr(snakemake.params, "run_id", "")
+run_id = snakemake.params["run_id"]
+bulk_assays = list(snakemake.params["bulk_assays"])
+median_normalization = bool(snakemake.params["median_normalization"])
+phase_flip_test = bool(snakemake.params["phase_flip_test"])
+n_assays = len(bulk_assays)
 
-sample_df = pd.read_table(snakemake.input["sample_file"])
-sample_name = sample_df["SAMPLE"].iloc[0]
-rep_ids = sample_df["REP_ID"].tolist()
-sample_types = sample_df["sample_type"].tolist()
-assay_type = snakemake.params["assay_type"]
-chromosomes = snakemake.params["chromosomes"]
+sids_list = [pd.read_table(f) for f in sample_files]
+snps_list = [pd.read_table(f, sep="\t") for f in snp_info_files]
+tot_list = [np.load(f)["mat"].astype(np.int32) for f in tot_files]
+a_list = [np.load(f)["mat"].astype(np.int32) for f in a_files]
+b_list = [np.load(f)["mat"].astype(np.int32) for f in b_files]
+dp_list = [np.load(f)["mat"] for f in dp_files]
+win_list = [pd.read_table(f, sep="\t") for f in win_files]
 
-has_normal = "normal" in sample_types
-tumor_sidx = 1 if has_normal else 0
-nsamples = len(sample_df)
+sample_name = sids_list[0]["SAMPLE"].iloc[0]
+logging.info(f"combine_counts: sample={sample_name}, bulk_assays={bulk_assays}")
 
-logging.info(
-    f"combine_counts: sample={sample_name}, assay={assay_type}, "
-    f"nsamples={nsamples}, has_normal={has_normal}"
+has_ps = all("PS" in s.columns for s in snps_list)
+annot_cols = ["#CHR", "POS", "POS0", "region_id"] + (["PS"] if has_ps else [])
+snps = (
+    pd.concat([s[annot_cols] for s in snps_list], ignore_index=True)
+    .drop_duplicates(SNP_KEY)
 )
+snps = sort_df_chr(snps, ch="#CHR", pos="POS0").reset_index(drop=True)
+snps["snp_row"] = np.arange(len(snps))
+n_snps = len(snps)
+logging.info(f"shared SNP set (union): {n_snps} SNPs across {n_assays} assays")
 
-snps = pd.read_table(snp_info, sep="\t")
-tot_mtx = np.load(tot_mtx_snp)["mat"].astype(np.int32)
-a_mtx = np.load(a_mtx_snp)["mat"].astype(np.int32)
-b_mtx = np.load(b_mtx_snp)["mat"].astype(np.int32)
-nsnps = tot_mtx.shape[0]
-logging.info(f"loaded {nsnps} SNPs, {nsamples} samples")
+total_samples = sum(len(s) for s in sids_list)
+tot_mtx = np.zeros((n_snps, total_samples), dtype=np.int32)
+a_mtx = np.zeros((n_snps, total_samples), dtype=np.int32)
+b_mtx = np.zeros((n_snps, total_samples), dtype=np.int32)
+col_assay, col_repid = [], []
+assay_blocks = []
+offset = 0
+for k in range(n_assays):
+    shared_row = (
+        snps_list[k][SNP_KEY]
+        .merge(snps[SNP_KEY + ["snp_row"]], on=SNP_KEY, how="left")["snp_row"]
+        .to_numpy()
+    )
+    scatter_counts_to_shared_snps(tot_mtx, tot_list[k], shared_row, offset)
+    scatter_counts_to_shared_snps(a_mtx, a_list[k], shared_row, offset)
+    scatter_counts_to_shared_snps(b_mtx, b_list[k], shared_row, offset)
 
-dp_mtx = np.load(dp_corrected)["mat"]
-window_df = pd.read_table(window_df_file, sep="\t")
-n_window_df = len(window_df)
-logging.info(f"loaded {n_window_df} corrected window_df")
+    stypes = sids_list[k]["sample_type"].tolist()
+    n_k = len(stypes)
+    has_normal_k = "normal" in stypes
+    tumor_cols = [offset + i for i, st in enumerate(stypes) if st == "tumor"]
+    assay_blocks.append(
+        {
+            "assay": bulk_assays[k],
+            "offset": offset,
+            "n": n_k,
+            "has_normal": has_normal_k,
+            "normal_col": offset if has_normal_k else None,
+            "tumor_cols": tumor_cols,
+        }
+    )
+    col_assay += [bulk_assays[k]] * n_k
+    col_repid += sids_list[k]["REP_ID"].tolist()
+    offset += n_k
+
+tumor_cols_all = [c for blk in assay_blocks for c in blk["tumor_cols"]]
+logging.info(f"{total_samples} bulk samples, {len(tumor_cols_all)} tumor columns")
 
 assert "region_id" in snps.columns, "invalid SNP file"
 grp_cols = ["region_id"]
-if "PS" not in snps.columns:
+if not has_ps:
     logging.info("PS not in SNP columns, setting PS=1 for all SNPs")
     snps["PS"] = 1
-else:
-    logging.info("PS is provided")
-num_phaseset = snps["PS"].nunique()
-logging.info(f"#phaseset={num_phaseset}")
 grp_cols.append("PS")
+logging.info(f"#phaseset={snps['PS'].nunique()}")
 
-phase_flip_test = bool(snakemake.params["phase_flip_test"])
 if phase_flip_test:
     snps["phase_group"] = detect_phase_flips(
         snps,
-        a_mtx,
-        b_mtx,
+        a_mtx[:, tumor_cols_all],
+        b_mtx[:, tumor_cols_all],
         grp_cols=grp_cols,
-        tumor_sidx=tumor_sidx,
+        tumor_sidx=0,
         epsilon=float(snakemake.params["phase_flip_epsilon"]),
         alpha=float(snakemake.params["phase_flip_alpha"]),
     )
     grp_cols.append("phase_group")
 
+window_df = (
+    pd.concat([w[["#CHR", "START", "END", "region_id"]] for w in win_list], ignore_index=True)
+    .drop_duplicates(WIN_KEY)
+)
+window_df = sort_df_chr(window_df, ch="#CHR", pos="START").reset_index(drop=True)
+
 window_df["win_idx"] = np.arange(len(window_df))
-# Assign PS (and phase_group if active) to window_df from SNPs via majority vote.
-# Only the columns needed for window annotation are extracted to avoid copying
-# the full SNP DataFrame.
 snp_window_cols = ["#CHR", "POS0", "PS"]
 if phase_flip_test:
     snp_window_cols.append("phase_group")
@@ -118,16 +162,12 @@ _snps_tmp = assign_pos_to_range(_snps_tmp, window_df, ref_id="win_idx", pos_col=
 _snps_tmp = _snps_tmp.dropna(subset=["win_idx"])
 _snps_tmp["win_idx"] = _snps_tmp["win_idx"].astype(np.int64)
 snps_per_win = _snps_tmp.groupby("win_idx").size()
-n_win_with_snps = len(snps_per_win)
-n_win_total = len(window_df)
 logging.info(
-    f"SNPs per window: {n_win_with_snps}/{n_win_total} windows have SNPs, "
-    f"mean={snps_per_win.mean():.1f}, median={snps_per_win.median():.1f}, "
-    f"min={snps_per_win.min()}, max={snps_per_win.max()}"
+    f"SNPs per window: {len(snps_per_win)}/{len(window_df)} windows have SNPs, "
+    f"mean={snps_per_win.mean():.1f}, median={snps_per_win.median():.1f}"
 )
 win_ps = _snps_tmp.groupby("win_idx")["PS"].agg(lambda x: x.mode().iloc[0])
 window_df["PS"] = window_df["win_idx"].map(win_ps)
-# Windows with no SNPs inherit PS from previous window (forward-fill)
 if window_df["PS"].isna().any():
     window_df["PS"] = window_df["PS"].ffill()
 
@@ -138,14 +178,15 @@ if phase_flip_test:
         window_df["phase_group"] = window_df["phase_group"].ffill()
 
 max_blocksize = int(snakemake.params["max_blocksize"])
-bbs, snps = adaptive_binning_windows(
+tot_tumor = np.ascontiguousarray(tot_mtx[:, tumor_cols_all], dtype=np.float64)
+bbs, snps = adaptive_segmentation(
     window_df,
     snps,
-    tot_mtx,
+    tot_tumor,
     int(snakemake.params["min_snp_reads"]),
     int(snakemake.params["min_snp_per_block"]),
     grp_cols=grp_cols,
-    tumor_sidx=tumor_sidx,
+    tumor_sidx=0,
     max_blocksize=max_blocksize,
 )
 num_bbs = len(bbs)
@@ -160,8 +201,6 @@ a_mtx_bb = matrix_segmentation(a_mtx, bb_ids, num_bbs)
 b_mtx_bb = matrix_segmentation(b_mtx, bb_ids, num_bbs)
 tot_mtx_bb = matrix_segmentation(tot_mtx, bb_ids, num_bbs)
 
-pdf_path = stamp_path(os.path.join(qc_dir, "combine_counts.pdf"), run_id)
-
 baf_mtx_bb = np.divide(
     b_mtx_bb,
     tot_mtx_bb,
@@ -169,47 +208,45 @@ baf_mtx_bb = np.divide(
     out=np.full_like(b_mtx_bb, np.nan, dtype=np.float32),
 )
 
-logging.info("aggregating corrected window depth into adaptive bins")
+logging.info("aggregating corrected window depth into adaptive bins (per assay)")
+bb_dp = np.full((num_bbs, total_samples), np.nan, dtype=np.float32)
+for blk, win_a, dp_a in zip(assay_blocks, win_list, dp_list):
+    w = win_a.merge(window_df[WIN_KEY + ["bin_id"]], on=WIN_KEY, how="left")
+    assert w["bin_id"].notna().all(), f"{blk['assay']} windows missing from scaffold"
+    bin_ids = w["bin_id"].to_numpy().astype(np.int64)
+    win_lengths = (w["END"] - w["START"]).to_numpy(dtype=np.float64)
+    total_len_per_bin = np.bincount(bin_ids, weights=win_lengths, minlength=num_bbs)
+    for s in range(blk["n"]):
+        weighted_sums = np.bincount(
+            bin_ids, weights=dp_a[:, s] * win_lengths, minlength=num_bbs
+        )
+        with np.errstate(invalid="ignore"):
+            bb_dp[:, blk["offset"] + s] = weighted_sums / total_len_per_bin
 
-win_bin_ids = window_df["bin_id"].to_numpy()
-win_lengths = (window_df["END"] - window_df["START"]).to_numpy(dtype=np.float64)
-total_len_per_bin = np.bincount(win_bin_ids, weights=win_lengths, minlength=num_bbs)
-
-bb_dp = np.full((num_bbs, nsamples), np.nan, dtype=np.float32)
-for s in range(nsamples):
-    weighted_sums = np.bincount(
-        win_bin_ids, weights=dp_mtx[:, s] * win_lengths, minlength=num_bbs
-    )
-    with np.errstate(invalid="ignore"):
-        bb_dp[:, s] = weighted_sums / total_len_per_bin
-
-median_normalization = bool(getattr(snakemake.params, "median_normalization", False))
-use_normal = has_normal and not median_normalization
-logging.info(f"compute bb RDR, use_normal={use_normal}")
-
-if use_normal:
-    window_sizes = (window_df["END"] - window_df["START"]).to_numpy(dtype=np.float64)
-    total_bases = np.nansum(dp_mtx * window_sizes[:, None], axis=0)
-    library_correction = total_bases[0] / total_bases[1:]
-    logging.info(f"library normalization factor: {library_correction}")
-
-    normal_bb_dp = bb_dp[:, 0]
-    with np.errstate(invalid="ignore", divide="ignore"):
-        bb_rdr = bb_dp[:, tumor_sidx:] / normal_bb_dp[:, None]
-        bb_rdr *= library_correction[None, :]
-else:
-    rdr_dp = bb_dp[:, tumor_sidx:]
-    rdr_reps = rep_ids[tumor_sidx:]
-    n_rdr = rdr_dp.shape[1]
-    bb_rdr = np.full((num_bbs, n_rdr), np.nan, dtype=np.float32)
-    for i in range(n_rdr):
-        col = rdr_dp[:, i]
-        valid_i = np.isfinite(col) & (col > 0)
-        if valid_i.any():
-            med = np.median(col[valid_i])
-            logging.info(f"  bb median-centering {rdr_reps[i]}: median={med:.4f}")
+logging.info(f"compute bb RDR, median_normalization={median_normalization}")
+bb_rdr = np.full((num_bbs, len(tumor_cols_all)), np.nan, dtype=np.float32)
+rdr_pos = {c: i for i, c in enumerate(tumor_cols_all)}
+for blk, win_a, dp_a in zip(assay_blocks, win_list, dp_list):
+    if blk["has_normal"] and not median_normalization:
+        win_sizes = (win_a["END"] - win_a["START"]).to_numpy(dtype=np.float64)
+        total_bases = np.nansum(dp_a * win_sizes[:, None], axis=0)
+        library_correction = total_bases[0] / total_bases
+        logging.info(f"  {blk['assay']} library factor: {library_correction}")
+        normal_bb_dp = bb_dp[:, blk["normal_col"]]
+        for c in blk["tumor_cols"]:
             with np.errstate(invalid="ignore", divide="ignore"):
-                bb_rdr[valid_i, i] = col[valid_i] / med
+                bb_rdr[:, rdr_pos[c]] = (
+                    bb_dp[:, c] / normal_bb_dp * library_correction[c - blk["offset"]]
+                )
+    else:
+        for c in blk["tumor_cols"]:
+            col = bb_dp[:, c]
+            valid_i = np.isfinite(col) & (col > 0)
+            if valid_i.any():
+                med = np.median(col[valid_i])
+                logging.info(f"  bb median-centering {col_repid[c]}: median={med:.4f}")
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    bb_rdr[valid_i, rdr_pos[c]] = col[valid_i] / med
 
 rdr_outlier_quantile = float(snakemake.params["rdr_outlier_quantile"])
 if rdr_outlier_quantile > 0:
@@ -221,20 +258,15 @@ if rdr_outlier_quantile > 0:
     )
     bb_rdr[bb_rdr > rdr_upper] = np.nan
 
-n_nan_bb = int(np.isnan(bb_rdr[:, 0]).sum())
-_n_filled = num_bbs - n_nan_bb
-logging.info(
-    f"bb RDR: {_n_filled}/{num_bbs} ({_n_filled / max(num_bbs, 1) * 100:.1f}%) filled, "
-    f"{n_nan_bb} NaN"
-)
-
-tumor_rep_ids = rep_ids[tumor_sidx:]
+sample_labels = [f"{col_assay[i]}:{col_repid[i]}" for i in range(total_samples)]
+tumor_labels = [sample_labels[c] for c in tumor_cols_all]
 rdr_ylim = (np.round(np.nanquantile(bb_rdr, 0.99)).astype(int) + 1) * 1.1
 
+pdf_path = stamp_path(os.path.join(qc_dir, "combine_counts.pdf"), run_id)
 with PdfPages(pdf_path) as pdf:
     plot_allele_freqs(
         bbs,
-        rep_ids,
+        sample_labels,
         tot_mtx_bb,
         b_mtx_bb,
         genome_size,
@@ -250,8 +282,8 @@ with PdfPages(pdf_path) as pdf:
     plot_rdr_baf(
         bbs,
         bb_rdr,
-        baf_mtx_bb[:, tumor_sidx:],
-        list(tumor_rep_ids),
+        baf_mtx_bb[:, tumor_cols_all],
+        tumor_labels,
         genome_size,
         pdf_path,
         unit="bb",
@@ -312,5 +344,10 @@ np.savez_compressed(snakemake.output["b_mtx_bb"], mat=b_mtx_bb)
 np.savez_compressed(snakemake.output["baf_mtx_bb"], mat=baf_mtx_bb)
 np.savez_compressed(snakemake.output["dp_mtx_bb"], mat=bb_dp)
 np.savez_compressed(snakemake.output["rdr_mtx_bb"], mat=bb_rdr)
-shutil.copy2(snakemake.input["sample_file"], snakemake.output["sample_file"])
+
+joint_sids = pd.concat(
+    [sids_list[k].assign(assay_type=bulk_assays[k]) for k in range(n_assays)],
+    ignore_index=True,
+)
+joint_sids.to_csv(snakemake.output["sample_file"], sep="\t", index=False)
 logging.info("finished combine_counts.")

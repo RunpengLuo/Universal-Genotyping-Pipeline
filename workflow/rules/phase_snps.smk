@@ -77,7 +77,7 @@ if config["phaser"] == "longphase":
         params:
             chrom="chr{chrname}",
             min_mapq=config["params_longphase"]["min_mapq"],
-            extra_params=config["params_longphase"].get("extra_params", ""),
+            extra_params=config["params_longphase"]["extra_params"],
             out_prefix=config["phase_dir"] + "/chr{chrname}",
         threads: config["threads"]["phase"]
         log:
