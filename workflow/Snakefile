@@ -138,6 +138,10 @@ if _has_config:
         (sample_df["sample_type"] == "tumor") & sample_df["is_lr"], "PATH_to_bam"
     ].to_list()
 
+    # genotype from one BAM (no pooling -> BAMs need not share an @RG SM); prefer LR normal
+    _genotype_bams = lr_normal_bams or normal_bams or lr_tumor_bams or tumor_bams
+    genotype_bam = _genotype_bams[0] if _genotype_bams else None
+
     modality2bams = {}
     for modality, rows in sample_df.groupby("modality", sort=False):
         modality2bams[modality] = rows["PATH_to_bam"].tolist()
