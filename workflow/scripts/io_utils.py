@@ -58,8 +58,8 @@ def read_VCF(
     if addchr and not str(snps["#CHROM"].iloc[0]).startswith("chr"):
         snps["#CHROM"] = "chr" + snps["#CHROM"].astype(str)
 
-    chrom_order = [f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY", "chrM", "chrMT"]
     snps["#CHROM"] = snps["#CHROM"].str.replace("^chrMT$", "chrM", regex=True)
+    chrom_order = sort_chroms(snps["#CHROM"].unique().tolist())
     snps["#CHROM"] = pd.Categorical(
         snps["#CHROM"], categories=chrom_order, ordered=True
     )
@@ -188,11 +188,7 @@ def compute_depth_statistics(dp_raw, win_df, sample_ids):
     Returns a DataFrame with columns: SAMPLE, #CHR, mean_depth, median_depth.
     """
     chroms = win_df["#CHR"].to_numpy()
-    chrom_order = {c: i for i, c in enumerate(CHROM_ORDER)}
-    sorted_chroms = sorted(
-        win_df["#CHR"].unique(),
-        key=lambda c: chrom_order.get(c, len(chrom_order)),
-    )
+    sorted_chroms = sort_chroms(win_df["#CHR"].unique().tolist())
     rows = []
     for chrom in sorted_chroms:
         mask = chroms == chrom

@@ -8,7 +8,6 @@ BULK_ASSAYS = {"bulkWGS", "bulkWGS-lr", "bulkWES"}
 LONGREAD_ASSAYS = {"bulkWGS-lr"}
 ALLOWED_ASSAY_TYPES = list(BULK_ASSAYS) + list(NONBULK_ASSAYS)
 SPATIAL_ASSAYS = {"VISIUM", "VISIUM3prime"}
-CHROM_ORDER = [f"chr{c}" for c in list(range(1, 23)) + ["X", "Y"]]
 
 # Phasers grouped by the evidence they consume. Panel-based phasers need a
 # population reference panel + genetic map; the long-read phaser instead reads

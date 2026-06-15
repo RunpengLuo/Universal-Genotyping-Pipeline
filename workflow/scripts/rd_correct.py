@@ -21,7 +21,7 @@ os.environ["NUMEXPR_NUM_THREADS"] = str(t)
 import numpy as np
 import pandas as pd
 
-from utils import setup_logging, maybe_path, stamp_path
+from utils import setup_logging, maybe_path, stamp_path, sort_df_chr
 from io_utils import compute_depth_statistics
 from count_reads_utils import compute_gc_rd_stats
 from rd_correct_utils import (
@@ -95,6 +95,13 @@ logging.info(
 dp_raw = np.zeros((n_windows, nsamples), dtype=np.float32)
 for i, mos_df in enumerate(mos_dfs):
     dp_raw[:, i] = mos_df["DEPTH"].to_numpy(dtype=np.float32)
+
+# mosdepth emits windows in BAM @SQ order; reorder to genomic order, permuting
+# dp_raw by the same order to keep it row-aligned with win_df.
+win_df["_ord"] = np.arange(len(win_df))
+win_df = sort_df_chr(win_df, ch="#CHR", pos="START")
+dp_raw = dp_raw[win_df["_ord"].to_numpy()]
+win_df = win_df.drop(columns="_ord")
 
 sample_ids = sample_df["SAMPLE"].astype(str).tolist()
 depth_stats = compute_depth_statistics(dp_raw, win_df, sample_ids)

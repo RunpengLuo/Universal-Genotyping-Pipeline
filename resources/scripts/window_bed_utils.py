@@ -22,7 +22,22 @@ ALLOWED_REFVERS = ("hg19", "hg38", "chm13v2", "mm10")
 CHR_STYLE_REFVERS = ("hg19", "hg38", "chm13v2", "mm10")
 REPLISEQ_REFVERS = ("hg19", "hg38")
 
-CHROM_ORDER = [f"chr{c}" for c in list(range(1, 23)) + ["X", "Y"]]
+def chrom_sort_key(chrom):
+    """Genomic sort key: autosomes numerically (any count), then X, Y."""
+    core = str(chrom)
+    if core.lower().startswith("chr"):
+        core = core[3:]
+    if core.isdigit():
+        return (0, int(core))
+    return (1, {"X": 1, "Y": 2}.get(core.upper(), 99))
+
+
+def is_canonical_chrom(chrom):
+    """True for autosomes and X/Y (the contigs kept in a window BED)."""
+    core = str(chrom)
+    if core.lower().startswith("chr"):
+        core = core[3:]
+    return core.isdigit() or core.upper() in ("X", "Y")
 
 UCSC_REPLISEQ_BASE = (
     "http://hgdownload.cse.ucsc.edu/goldenpath/hg19/encodeDCC/wgEncodeUwRepliSeq"
@@ -101,10 +116,9 @@ def _tile_region(chrom, start, end, window_size):
 
 
 def _sort_windows(windows):
-    """Sort windows by natural chromosome order, then by start position."""
-    chrom_rank = {c: i for i, c in enumerate(CHROM_ORDER)}
-    windows = windows[windows["#CHR"].isin(chrom_rank)].copy()
-    windows["_chrom_rank"] = windows["#CHR"].map(chrom_rank)
+    """Sort windows by genomic chromosome order then start; drop non-canonical contigs."""
+    windows = windows[windows["#CHR"].map(is_canonical_chrom)].copy()
+    windows["_chrom_rank"] = windows["#CHR"].map(chrom_sort_key)
     windows = windows.sort_values(["_chrom_rank", "START"]).reset_index(drop=True)
     return windows.drop(columns=["_chrom_rank"])
 
@@ -408,7 +422,11 @@ def print_summary(windows):
     header = f"    {'chrom':<8} {'windows':>8} {'regions':>8} {'coverage_Mb':>12} {'median_size':>12}"
     print(header)
 
-    for chrom in CHROM_ORDER:
+    present_chroms = sorted(
+        (c for c in windows["#CHR"].unique() if is_canonical_chrom(c)),
+        key=chrom_sort_key,
+    )
+    for chrom in present_chroms:
         mask = windows["#CHR"] == chrom
         if not mask.any():
             continue

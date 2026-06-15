@@ -53,31 +53,26 @@ def maybe_path(x):
     return x
 
 
-def sort_chroms(chromosomes: list):
-    """Sort chromosome names in standard genomic order (1-22, X, Y, M).
+def chrom_sort_key(chrom):
+    """Genomic sort key: autosomes numerically (any count), then X, Y, M, then unknowns.
 
-    Handles both ``chr``-prefixed and plain chromosome names.
-
-    Parameters
-    ----------
-    chromosomes : list of str
-        Chromosome name strings.
-
-    Returns
-    -------
-    list of str
-        Sorted chromosome names.
+    Accepts ``chr``-prefixed or bare names, as str or int.
     """
+    core = str(chrom)
+    if core.lower().startswith("chr"):
+        core = core[3:]
+    if core.isdigit():
+        return (0, int(core), "")
+    special = {"X": 1, "Y": 2, "M": 3, "MT": 3}
+    if core.upper() in special:
+        return (1, special[core.upper()], "")
+    return (2, 0, core)
+
+
+def sort_chroms(chromosomes: list):
+    """Sort chromosome names in genomic order. See :func:`chrom_sort_key`."""
     assert len(chromosomes) != 0
-    chromosomes = [str(c) for c in chromosomes]
-    ch = "chr" if str(chromosomes[0]).startswith("chr") else ""
-    chr2ord = {}
-    for i in range(1, 23):
-        chr2ord[f"{ch}{i}"] = i
-    chr2ord[f"{ch}X"] = 23
-    chr2ord[f"{ch}Y"] = 24
-    chr2ord[f"{ch}M"] = 25
-    return sorted(chromosomes, key=lambda x: chr2ord[x])
+    return sorted((str(c) for c in chromosomes), key=chrom_sort_key)
 
 
 def adaptive_dot_size(n_points, s_base=4, s_min=0.5, s_max=10, n_ref=5000):
@@ -116,6 +111,9 @@ def sort_df_chr(df: pd.DataFrame, ch="#CHR", pos="POS"):
     pd.DataFrame
         The same DataFrame, sorted in-place.
     """
+    # Cast to str so an int-typed #CHR (autosomes-only file) matches the string
+    # categories below instead of silently becoming all-NaN.
+    df[ch] = df[ch].astype(str)
     chs = sort_chroms(df[ch].unique().tolist())
     df[ch] = pd.Categorical(df[ch], categories=chs, ordered=True)
     df.sort_values(by=[ch, pos], inplace=True, ignore_index=True)
