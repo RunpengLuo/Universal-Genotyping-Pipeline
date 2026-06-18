@@ -21,7 +21,7 @@ os.environ["NUMEXPR_NUM_THREADS"] = str(t)
 import numpy as np
 import pandas as pd
 
-from utils import setup_logging, maybe_path, stamp_path, sort_df_chr
+from utils import setup_logging, maybe_path, qc_path, sort_df_chr
 from io_utils import compute_depth_statistics
 from count_reads_utils import compute_gc_rd_stats
 from rd_correct_utils import (
@@ -54,8 +54,10 @@ gc_correct = bool(snakemake.params["gc_correct"])
 gc_correct_method = str(snakemake.params.get("gc_correct_method", "median"))
 rt_correct = bool(snakemake.params["rt_correct"])
 qc_dir = snakemake.params["qc_dir"]
+qc_prefix = "rd_correction"
 os.makedirs(qc_dir, exist_ok=True)
 run_id = getattr(snakemake.params, "run_id", "")
+qc_stamp = ".".join(p for p in (snakemake.params["assay_type"], run_id) if p)
 
 sample_df = pd.read_table(sample_file, sep="\t")
 rep_ids = sample_df["REP_ID"].astype(str).tolist()
@@ -178,7 +180,7 @@ else:
 
 rd_ylim = max(np.nanquantile(dp_corrected, 0.99), 1.0) * 1.1
 
-rd_pdf = PdfPages(stamp_path(os.path.join(qc_dir, "rd_correct.pdf"), run_id))
+rd_pdf = PdfPages(qc_path(qc_dir, qc_prefix, "rd_correct.pdf", qc_stamp))
 plot_rd_1d_scatter(
     win_df,
     dp_raw,

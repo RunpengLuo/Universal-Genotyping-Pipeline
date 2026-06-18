@@ -70,8 +70,10 @@ tot_mtx_files = snakemake.input["tot_mtxs"]
 ad_mtx_files = snakemake.input["ad_mtxs"]
 snp_vcf = snakemake.input["snp_vcf"]
 qc_dir = snakemake.params["qc_dir"]
+qc_prefix = "phase_and_concat"
 os.makedirs(qc_dir, exist_ok=True)
 run_id = getattr(snakemake.params, "run_id", "")
+qc_stamp = ".".join(p for p in (snakemake.params["assay_type"], run_id) if p)
 
 region_bed = snakemake.input["region_bed"]
 genome_size = snakemake.input["genome_size"]
@@ -237,13 +239,14 @@ plot_snp_depth_histogram(
     tot_mtx,
     rep_ids,
     qc_dir,
-    run_id,
+    qc_stamp,
     ref_mtx=ref_mtx,
     is_bulk=is_bulk_assay,
     cell_rep_idx=cell_rep_idx,
+    name_prefix=qc_prefix,
 )
 
-af_pdf_path = stamp_path(os.path.join(qc_dir, "snp_allele_freq.pdf"), run_id)
+af_pdf_path = qc_path(qc_dir, qc_prefix, "snp_allele_freq.pdf", qc_stamp)
 with PdfPages(af_pdf_path) as pdf:
     plot_allele_freqs(
         snps,

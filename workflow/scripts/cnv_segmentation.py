@@ -49,8 +49,10 @@ h5ad_file = snakemake.input["h5ad_file"]
 all_barcodes = snakemake.input["all_barcodes"]
 barcodes_full_path = snakemake.input["barcodes_full"]
 qc_dir = snakemake.params["qc_dir"]
+qc_prefix = "cnv_segmentation"
 os.makedirs(qc_dir, exist_ok=True)
 run_id = getattr(snakemake.params, "run_id", "")
+qc_stamp = ".".join(p for p in (snakemake.params["assay_type"], run_id) if p)
 
 region_bed = snakemake.input["region_bed"]
 genome_size = snakemake.input["genome_size"]
@@ -117,7 +119,7 @@ logging.info(
     f"B sparsity={_sparsity(b_mtx_bb):.4f}"
 )
 
-pdf_path = stamp_path(os.path.join(qc_dir, f"af_cnv-B_{assay_type}.pdf"), run_id)
+pdf_path = qc_path(qc_dir, qc_prefix, f"af_cnv-B_{assay_type}.pdf", qc_stamp)
 _pseudobulk = not is_bulk_assay
 with PdfPages(pdf_path) as pdf:
     plot_allele_freqs(

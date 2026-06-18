@@ -42,7 +42,7 @@ rule phase_and_concat_bulk:
     wildcard_constraints:
         assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
     params:
-        qc_dir=lambda wc: config["qc_dir"] + f"/{wc.assay_type}/phase_and_concat/",
+        qc_dir=config["qc_dir"],
         sample_name=SAMPLE_ID,
         assay_type=lambda wc: wc.assay_type,
         rep_ids=lambda wc: assay2rep_ids[wc.assay_type],
@@ -108,7 +108,7 @@ rule phase_and_concat_single_cell:
     wildcard_constraints:
         assay_type="(scRNA|scATAC|VISIUM|VISIUM3prime)",
     params:
-        qc_dir=lambda wc: config["qc_dir"] + f"/{wc.assay_type}/phase_and_concat/",
+        qc_dir=config["qc_dir"],
         sample_name=SAMPLE_ID,
         assay_type=lambda wc: wc.assay_type,
         rep_ids=lambda wc: assay2rep_ids[wc.assay_type],

@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 from io_utils import get_chr_sizes, read_region_file
-from utils import adaptive_dot_size, stamp_path
+from utils import adaptive_dot_size, stamp_path, qc_path
 from combine_counts_utils import (
     compute_af_pseudobulk,
     compute_af_per_sample,
@@ -545,6 +545,166 @@ def plot_rdr_baf(
 # ---------------------------------------------------------------------------
 
 
+# native per-segment count label by assay (ax-1 of the segmentation QC page-2).
+# Bulk passes total aligned bases (sum of per-window depth*length), shown in Mbp;
+# ASSAY_COUNT_SCALE divides the raw values to match the label's unit.
+ASSAY_COUNT_LABEL = {
+    "bulkWGS": "DNA aligned bases (Mbp)",
+    "bulkWGS-lr": "DNA aligned bases (Mbp)",
+    "bulkWES": "DNA aligned bases (Mbp)",
+    "scRNA": "UMI count",
+    "VISIUM": "UMI count",
+    "VISIUM3prime": "UMI count",
+    "scATAC": "ATAC fragment count",
+}
+ASSAY_COUNT_SCALE = {
+    "bulkWGS": 1e6,
+    "bulkWGS-lr": 1e6,
+    "bulkWES": 1e6,
+}
+
+
+def _seg_gene_counts(seg_df, gene_count, gene_col):
+    """Resolve a per-segment gene count from an explicit array or a seg_df column."""
+    if gene_count is not None:
+        return np.asarray(gene_count, dtype=float)
+    if "n_genes" in seg_df.columns:
+        return seg_df["n_genes"].to_numpy(dtype=float)
+    if gene_col in seg_df.columns:
+        def _count(v):
+            if not isinstance(v, str) or v == "":
+                return 0
+            return sum(1 for g in v.split(";") if g and g != "intergenic")
+        return seg_df[gene_col].map(_count).to_numpy(dtype=float)
+    return None
+
+
+def _hist_with_stats(ax, vals, xlabel, header="", ylabel="# segments", clip_q=0.99):
+    """Histogram of *vals* with a multi-line, mean/median-annotated title.
+
+    *header* is an optional first title line (used for the page-1 panel names); page-2
+    rows leave it empty and carry the sample label as a vertical row label instead.
+    """
+    prefix = f"{header}\n" if header else ""
+    vals = np.asarray(vals, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if len(vals) == 0:
+        ax.set_title(f"{prefix}{xlabel}\n(n=0)", fontsize=8)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        return
+    mean, median = float(np.mean(vals)), float(np.median(vals))
+    plot_vals = vals
+    if clip_q is not None and len(vals) > 1:
+        hi = np.quantile(vals, clip_q)
+        if hi > 0:
+            plot_vals = vals[vals <= hi]
+    ax.hist(plot_vals, bins=50, alpha=0.7)
+    ax.set_title(f"{prefix}{xlabel}\nmean={mean:.1f}, median={median:.1f}", fontsize=8)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+
+
+def plot_segmentation_qc(
+    seg_df: pd.DataFrame,
+    sample_df: pd.DataFrame,
+    x_count_mat,
+    b_count_mat,
+    tot_count_mat,
+    out_file: str | None = None,
+    pdf: PdfPages | None = None,
+    gene_count=None,
+    gene_col: str = "feature_id",
+    dpi: int = 150,
+):
+    """Two-page segmentation QC histograms for combine_counts output.
+
+    Page 1 — two histograms over all segments:
+      (i) segment length (kbp), (ii) per-segment gene count.
+    Page 2 — one row per REP_ID, three histograms:
+      native counts (DNA reads / UMI / ATAC fragments, by assay), B-allele counts,
+      total-allele counts. Every subplot title is multi-line and carries
+      ``{SAMPLE} {REP_ID} {assay_type} {sample_type}`` plus mean/median.
+
+    Parameters
+    ----------
+    seg_df : pd.DataFrame
+        Segmentation table with ``#CHR``, ``START``, ``END`` (bb.tsv.gz schema).
+        For the gene-count panel it may carry a ``;``-joined ``gene_col`` or a numeric
+        ``n_genes`` column; otherwise pass *gene_count* explicitly.
+    sample_df : pd.DataFrame
+        One row per count-matrix column (per REP_ID), with ``REP_ID``, ``assay_type``,
+        ``sample_type`` and a sample-name column (``SAMPLE_NAME`` or ``SAMPLE``). Row
+        order must match the columns of the count matrices.
+    x_count_mat, b_count_mat, tot_count_mat : ndarray or sparse, (n_seg, n_rep)
+        Native, B-allele, and total-allele counts per segment per rep; columns aligned
+        to *sample_df* rows.
+    gene_count : array-like (n_seg,) or None
+        Optional explicit per-segment gene count (overrides derivation from *seg_df*).
+    out_file, pdf : see the other ``plot_*`` functions. Exactly one is used.
+    """
+    logging.info("QC analysis - plot segmentation QC histograms")
+
+    def _col(mat, j):
+        if issparse(mat):
+            return np.asarray(mat[:, j].toarray()).ravel()
+        return np.asarray(mat[:, j]).ravel()
+
+    name_col = "SAMPLE_NAME" if "SAMPLE_NAME" in sample_df.columns else "SAMPLE"
+    n_rep = len(sample_df)
+
+    _own_pdf = pdf is None
+    pdf_pages = PdfPages(out_file) if _own_pdf else pdf
+
+    # ---- page 1: segment length + per-segment gene count ----
+    lengths_kbp = (seg_df["END"].to_numpy() - seg_df["START"].to_numpy()) / 1000.0
+    genes_per_seg = _seg_gene_counts(seg_df, gene_count, gene_col)
+    fig1, ax1 = plt.subplots(1, 2, figsize=(11, 4))
+    _hist_with_stats(ax1[0], lengths_kbp, "segment length (kbp)", "Segment length")
+    if genes_per_seg is not None:
+        _hist_with_stats(ax1[1], genes_per_seg, "# genes / segment", "Genes per segment")
+    else:
+        ax1[1].set_title("Genes per segment\n(no gene annotation)", fontsize=8)
+        ax1[1].set_xlabel("# genes / segment")
+        ax1[1].set_ylabel("# segments")
+    fig1.suptitle(f"Segmentation QC — {len(seg_df)} segments", fontsize=11)
+    fig1.tight_layout()
+    pdf_pages.savefig(fig1, dpi=dpi)
+    plt.close(fig1)
+
+    # ---- page 2: per-rep count histograms ----
+    fig2, axes = plt.subplots(
+        nrows=max(n_rep, 1), ncols=3, figsize=(15, 3 * max(n_rep, 1)), squeeze=False
+    )
+    for ri in range(n_rep):
+        row = sample_df.iloc[ri]
+        assay = str(row.get("assay_type", ""))
+        # 2-line sample label, shown once per row as a bold vertical "row super-title"
+        row_label = (
+            f"{row.get(name_col, '')} {row.get('REP_ID', '')}\n"
+            f"{assay} {row.get('sample_type', '')}"
+        )
+        x_label = ASSAY_COUNT_LABEL.get(assay, "count")
+        x_scale = ASSAY_COUNT_SCALE.get(assay, 1.0)
+        _hist_with_stats(axes[ri, 0], _col(x_count_mat, ri) / x_scale, x_label)
+        _hist_with_stats(axes[ri, 1], _col(b_count_mat, ri), "B-allele count")
+        _hist_with_stats(axes[ri, 2], _col(tot_count_mat, ri), "total allele count")
+        axes[ri, 0].annotate(
+            row_label,
+            xy=(0, 0.5), xytext=(-axes[ri, 0].yaxis.labelpad - 22, 0),
+            xycoords=axes[ri, 0].yaxis.label, textcoords="offset points",
+            ha="right", va="center", rotation=90, fontweight="bold", fontsize=9,
+        )
+    fig2.tight_layout()
+    fig2.subplots_adjust(left=0.18)
+    pdf_pages.savefig(fig2, dpi=dpi)
+    plt.close(fig2)
+
+    if _own_pdf:
+        pdf_pages.close()
+        logging.info(f"saved segmentation QC histograms to {out_file}")
+
+
 def plot_snp_depth_histogram(
     tot_mtx,
     rep_ids,
@@ -553,6 +713,7 @@ def plot_snp_depth_histogram(
     ref_mtx=None,
     is_bulk=True,
     cell_rep_idx=None,
+    name_prefix="",
 ):
     """Plot per-sample histograms of total allele depth and ref-AF at SNP positions.
 
@@ -664,7 +825,7 @@ def plot_snp_depth_histogram(
             ax_af.set_ylabel("# SNPs")
 
     fig.tight_layout()
-    out_path = stamp_path(os.path.join(qc_dir, "snp_depth_hist.pdf"), run_id)
+    out_path = qc_path(qc_dir, name_prefix, "snp_depth_hist.pdf", run_id)
     fig.savefig(out_path)
     plt.close(fig)
     logging.info(f"saved SNP depth histogram to {out_path}")
@@ -687,6 +848,7 @@ def plot_allele_freqs(
     run_id="",
     pdf: PdfPages | None = None,
     cell_rep_idx=None,
+    name_prefix="",
 ):
     """Generate genome-wide allele-frequency scatter plots.
 
@@ -734,8 +896,8 @@ def plot_allele_freqs(
 
     if apply_pseudobulk and not per_rep_pseudobulk:
         af = compute_af_pseudobulk(tot_mtx, b_mtx)
-        plot_file = stamp_path(
-            os.path.join(plot_dir, f"af_{allele}_{unit}.pseudobulk{suffix}.pdf"), run_id
+        plot_file = qc_path(
+            plot_dir, name_prefix, f"af_{allele}_{unit}.pseudobulk{suffix}.pdf", run_id
         )
         plot_1d_sample(
             pos_df,
@@ -759,9 +921,7 @@ def plot_allele_freqs(
         af_mat = np.column_stack(
             [compute_af_per_sample(_tot_mtx, _b_mtx, i) for i in range(len(rep_ids))]
         )
-    plot_file = stamp_path(
-        os.path.join(plot_dir, f"af_{allele}_{unit}{suffix}.pdf"), run_id
-    )
+    plot_file = qc_path(plot_dir, name_prefix, f"af_{allele}_{unit}{suffix}.pdf", run_id)
     plot_1d_multi_sample(
         pos_df,
         af_mat,
