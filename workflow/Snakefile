@@ -163,7 +163,9 @@ if _has_config:
             assay2sample_types[assay_type] = []
 
     BULK_PRESENT = [at for at in assay_types if at in BULK_ASSAYS]
-    BULK_OUT_DIR = "bulkWES" if "bulkWES" in BULK_PRESENT else "bulkWGS"
+    # non-bulk assays are segmented jointly per sample on one shared grid; outputs are
+    # written flat in bb_dir with the assay encoded in the filename (bb.{assay}.*.npz).
+    NONBULK_PRESENT = [at for at in assay_types if at in NONBULK_ASSAYS]
 
     get_data = {}
     rep2modalities = {}
@@ -245,20 +247,26 @@ if _has_config:
     ]
     final_targets = []
     if workflow_mode == "bulk_genotyping":
-        final_targets += _bb_targets(
-            BULK_OUT_DIR,
-            ["sample_ids.tsv"]
+        # flat in bb_dir (one shared grid; matrix columns are bulk samples)
+        final_targets += [
+            config["bb_dir"] + f"/{s}"
+            for s in ["sample_ids.tsv"]
             + common_suffixes
-            + ["bb.baf.npz", "bb.rdr.npz", "bb.depth.npz"],
-        )
+            + ["bb.baf.npz", "bb.rdr.npz", "bb.depth.npz"]
+        ]
     elif workflow_mode == "single_cell_genotyping":
-        for assay_type in assay_types:
-            final_targets += _bb_targets(
-                assay_type, ["sample_ids.tsv"] + common_suffixes
-            )
-            final_targets.append(
-                config["allele_dir"] + f"/{assay_type}/barcodes.tsv.gz"
-            )
+        # joint per-sample grid (flat in bb_dir): one bb.tsv.gz + per-assay cell matrices
+        final_targets += [
+            config["bb_dir"] + "/bb.tsv.gz",
+            config["bb_dir"] + "/sample_ids.tsv",
+        ]
+        for assay_type in NONBULK_PRESENT:
+            final_targets += [
+                config["bb_dir"] + f"/bb.{assay_type}.Tallele.npz",
+                config["bb_dir"] + f"/bb.{assay_type}.Aallele.npz",
+                config["bb_dir"] + f"/bb.{assay_type}.Ballele.npz",
+                config["bb_dir"] + f"/barcodes.{assay_type}.tsv.gz",
+            ]
     elif workflow_mode == "copytyping_preprocess":
         for assay_type in assay_types:
             final_targets += _bb_targets(
@@ -285,13 +293,8 @@ if _has_config:
     include: "rules/count_reads.smk"
     include: "rules/combine_counts.smk"
 
-    if workflow_mode == "copytyping_preprocess":
-
-        ruleorder: cnv_segmentation > combine_counts_nonbulk
-
-    else:
-
-        ruleorder: combine_counts_nonbulk > cnv_segmentation
+    # combine_counts_nonbulk (flat bb_dir/bb.{assay}.*) and cnv_segmentation
+    # (bb/{assay_type}/*) no longer share output paths, so no ruleorder is needed.
 
     rule all:
         input:

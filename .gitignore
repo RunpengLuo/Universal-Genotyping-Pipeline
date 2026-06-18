@@ -4,6 +4,7 @@ third_party/
 tmp/
 .snakemake/
 .ruff_cache/
+.envs/
 CLAUDE.md
 third_party
 .claude/

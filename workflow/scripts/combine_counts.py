@@ -7,8 +7,8 @@ bulk sample. Allele counts are aggregated per bin across all samples; read depth
 RDR are computed per assay, normalizing each assay's tumors by that assay's own normal.
 
 Inputs are lists (one entry per bulk assay, index-aligned to ``params.bulk_assays``).
-With a single bulk assay the lists have length 1 and the result matches the previous
-per-assay behaviour (now written under ``bb/bulkWGS/``).
+With a single bulk assay the lists have length 1. Outputs are written flat under
+``bb_dir/`` (e.g. ``bb_dir/bb.tsv.gz``); matrix columns are the bulk samples.
 """
 
 import os
@@ -24,16 +24,18 @@ os.environ["NUMEXPR_NUM_THREADS"] = str(t)
 import numpy as np
 import pandas as pd
 
-from utils import setup_logging, maybe_path, stamp_path, sort_df_chr
+from utils import setup_logging, maybe_path, qc_path, sort_df_chr
 from combine_counts_utils import scatter_counts_to_shared_snps
 from aggregation_utils import (
     adaptive_segmentation,
     assign_pos_to_range,
+    count_split_genes,
     detect_phase_flips,
+    gene_block_labels,
     matrix_segmentation,
 )
 from matplotlib.backends.backend_pdf import PdfPages
-from plot_utils import plot_allele_freqs, plot_rdr_baf
+from plot_utils import plot_allele_freqs, plot_rdr_baf, plot_segmentation_qc
 from switchprobs import (
     interp_cM_blocks,
     estimate_switchprobs_cM,
@@ -60,8 +62,11 @@ genome_size = snakemake.input["genome_size"]
 gtf_file = maybe_path(snakemake.input["gtf_file"])
 
 qc_dir = snakemake.params["qc_dir"]
+qc_prefix = "combine_counts"
 os.makedirs(qc_dir, exist_ok=True)
 run_id = snakemake.params["run_id"]
+# QC files are <qc_prefix>.<name>.bulk.<run_id>.<ext>: fold "bulk"+run_id into the stamp
+qc_stamp = ".".join(p for p in ("bulk", run_id) if p)
 bulk_assays = list(snakemake.params["bulk_assays"])
 median_normalization = bool(snakemake.params["median_normalization"])
 phase_flip_test = bool(snakemake.params["phase_flip_test"])
@@ -79,7 +84,12 @@ sample_name = sids_list[0]["SAMPLE"].iloc[0]
 logging.info(f"combine_counts: sample={sample_name}, bulk_assays={bulk_assays}")
 
 has_ps = all("PS" in s.columns for s in snps_list)
-annot_cols = ["#CHR", "POS", "POS0", "region_id"] + (["PS"] if has_ps else [])
+has_feature = all("feature_id" in s.columns for s in snps_list)
+annot_cols = (
+    ["#CHR", "POS", "POS0", "region_id"]
+    + (["PS"] if has_ps else [])
+    + (["feature_id"] if has_feature else [])
+)
 snps = (
     pd.concat([s[annot_cols] for s in snps_list], ignore_index=True)
     .drop_duplicates(SNP_KEY)
@@ -153,10 +163,13 @@ window_df = (
 )
 window_df = sort_df_chr(window_df, ch="#CHR", pos="START").reset_index(drop=True)
 
+gene_aware_binning = bool(snakemake.params["gene_aware_binning"]) and has_feature
 window_df["win_idx"] = np.arange(len(window_df))
 snp_window_cols = ["#CHR", "POS0", "PS"]
 if phase_flip_test:
     snp_window_cols.append("phase_group")
+if gene_aware_binning:
+    snp_window_cols.append("feature_id")
 _snps_tmp = snps[snp_window_cols].copy()
 _snps_tmp = assign_pos_to_range(_snps_tmp, window_df, ref_id="win_idx", pos_col="POS0")
 _snps_tmp = _snps_tmp.dropna(subset=["win_idx"])
@@ -177,6 +190,24 @@ if phase_flip_test:
     if window_df["phase_group"].isna().any():
         window_df["phase_group"] = window_df["phase_group"].ffill()
 
+if gene_aware_binning:
+    # Gene blocks: every window holding a gene's SNPs -- and any window between the
+    # first and last such window -- is glued into one indivisible block, so a bin can
+    # span several whole genes but never a partial gene. A window shared by two genes
+    # merges their blocks (inseparable at window resolution). Windows holding no gene
+    # SNP are singleton blocks, keeping native window granularity.
+    genic = _snps_tmp[
+        _snps_tmp["feature_id"].notna() & (_snps_tmp["feature_id"] != "intergenic")
+    ]
+    rng = genic.groupby("feature_id")["win_idx"].agg(["min", "max"])
+    window_df["gene_block"] = gene_block_labels(
+        len(window_df), zip(rng["min"].to_numpy(), rng["max"].to_numpy())
+    )
+    logging.info(
+        f"gene-aware binning: {len(rng)} genes over {len(window_df)} windows -> "
+        f"{window_df['gene_block'].nunique()} gene/intergenic blocks (bins never split a gene)"
+    )
+
 max_blocksize = int(snakemake.params["max_blocksize"])
 tot_tumor = np.ascontiguousarray(tot_mtx[:, tumor_cols_all], dtype=np.float64)
 bbs, snps = adaptive_segmentation(
@@ -188,8 +219,17 @@ bbs, snps = adaptive_segmentation(
     grp_cols=grp_cols,
     tumor_sidx=0,
     max_blocksize=max_blocksize,
+    gene_aware=gene_aware_binning,
 )
 num_bbs = len(bbs)
+
+_split = count_split_genes(snps, grp_cols)
+if _split is not None:
+    logging.info(
+        f"gene-split sanity: {_split[0]}/{_split[1]} genes have SNPs crossing a bin "
+        f"boundary (gene_aware_binning={gene_aware_binning})"
+    )
+
 bb_ids = snps["bb_id"].to_numpy()
 
 snp_orig_idx = snps["_orig_idx"].to_numpy()
@@ -210,6 +250,9 @@ baf_mtx_bb = np.divide(
 
 logging.info("aggregating corrected window depth into adaptive bins (per assay)")
 bb_dp = np.full((num_bbs, total_samples), np.nan, dtype=np.float32)
+# total aligned bases per bin = sum_w(depth_w * win_len_w); a per-segment total
+# (vs bb_dp which is the length-weighted mean depth), used for the segmentation QC.
+bb_bases = np.zeros((num_bbs, total_samples), dtype=np.float64)
 for blk, win_a, dp_a in zip(assay_blocks, win_list, dp_list):
     w = win_a.merge(window_df[WIN_KEY + ["bin_id"]], on=WIN_KEY, how="left")
     assert w["bin_id"].notna().all(), f"{blk['assay']} windows missing from scaffold"
@@ -220,6 +263,7 @@ for blk, win_a, dp_a in zip(assay_blocks, win_list, dp_list):
         weighted_sums = np.bincount(
             bin_ids, weights=dp_a[:, s] * win_lengths, minlength=num_bbs
         )
+        bb_bases[:, blk["offset"] + s] = weighted_sums
         with np.errstate(invalid="ignore"):
             bb_dp[:, blk["offset"] + s] = weighted_sums / total_len_per_bin
 
@@ -262,8 +306,30 @@ sample_labels = [f"{col_assay[i]}:{col_repid[i]}" for i in range(total_samples)]
 tumor_labels = [sample_labels[c] for c in tumor_cols_all]
 rdr_ylim = (np.round(np.nanquantile(bb_rdr, 0.99)).astype(int) + 1) * 1.1
 
-pdf_path = stamp_path(os.path.join(qc_dir, "combine_counts.pdf"), run_id)
+joint_sids = pd.concat(
+    [sids_list[k].assign(assay_type=bulk_assays[k]) for k in range(n_assays)],
+    ignore_index=True,
+)
+if gene_aware_binning and "feature_id" in snps.columns:
+    _genic = snps[snps["feature_id"].notna() & (snps["feature_id"] != "intergenic")]
+    bb_gene_count = (
+        _genic.groupby("bb_id")["feature_id"].nunique()
+        .reindex(range(num_bbs)).fillna(0).to_numpy()
+    )
+else:
+    bb_gene_count = None
+
+pdf_path = qc_path(qc_dir, qc_prefix, "combine_counts.pdf", qc_stamp)
 with PdfPages(pdf_path) as pdf:
+    plot_segmentation_qc(
+        bbs,
+        joint_sids,
+        bb_bases,
+        b_mtx_bb,
+        tot_mtx_bb,
+        pdf=pdf,
+        gene_count=bb_gene_count,
+    )
     plot_allele_freqs(
         bbs,
         sample_labels,
@@ -345,9 +411,5 @@ np.savez_compressed(snakemake.output["baf_mtx_bb"], mat=baf_mtx_bb)
 np.savez_compressed(snakemake.output["dp_mtx_bb"], mat=bb_dp)
 np.savez_compressed(snakemake.output["rdr_mtx_bb"], mat=bb_rdr)
 
-joint_sids = pd.concat(
-    [sids_list[k].assign(assay_type=bulk_assays[k]) for k in range(n_assays)],
-    ignore_index=True,
-)
 joint_sids.to_csv(snakemake.output["sample_file"], sep="\t", index=False)
 logging.info("finished combine_counts.")
