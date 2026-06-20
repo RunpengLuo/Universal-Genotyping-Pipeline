@@ -2,7 +2,7 @@ rule pileup_snps_bulk_mode1b:
     input:
         bam=lambda wc: get_data[(wc.assay_type, wc.rep_id)][1],
         snp_vcf=lambda wc: branch(
-            run_genotype_snps,
+            run_genotyping,
             then=config["phase_dir"] + "/phased_het_snps.vcf.gz",
             otherwise=config["het_snp_vcf"],
         ),
@@ -43,7 +43,7 @@ rule pileup_snps_single_cell_mode1a:
         barcode=lambda wc: get_data[(wc.assay_type, wc.rep_id)][0],
         bam=lambda wc: get_data[(wc.assay_type, wc.rep_id)][1],
         snp_vcf=lambda wc: branch(
-            run_genotype_snps,
+            run_genotyping,
             then=config["phase_dir"] + "/phased_het_snps.vcf.gz",
             otherwise=config["het_snp_vcf"],
         ),

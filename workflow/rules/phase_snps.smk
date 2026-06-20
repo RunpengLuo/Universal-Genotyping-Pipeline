@@ -68,9 +68,7 @@ if config["phaser"] == "longphase":
     rule phase_snps_longphase:
         input:
             snp_vcf=lambda wc: config["snp_dir"] + f"/chr{wc.chrname}.vcf.gz",
-            bams=lambda wc: lr_normal_bams[0]
-            if len(lr_normal_bams) > 0
-            else lr_tumor_bams[0],
+            bams=lambda wc: phase_bams,
             reference=lambda wc: config["reference"],
         output:
             phased_file=config["phase_dir"] + "/chr{chrname}.vcf.gz",
