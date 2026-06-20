@@ -88,7 +88,6 @@ params_longphase:
 params_process_anndata:
   gene_id_colname: gene_ids
   min_frac_barcodes: 5e-3
-  tile_width: 200000
 
 params_phase_and_concat:
   min_depth: 1

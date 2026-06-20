@@ -698,3 +698,123 @@ def feature_to_blocks(
     else:
         adata.var[block_idx] = adata.var[block_idx].astype(feature_df[block_idx].dtype)
     return adata
+
+
+def locate_atac_fragment_file(ranger_dir):
+    """Return the 10x ATAC fragment file inside a cellranger dir, or None."""
+    for fname in ("atac_fragments.tsv.gz", "fragments.tsv.gz"):
+        fpath = os.path.join(ranger_dir, fname)
+        if os.path.exists(fpath):
+            return fpath
+    return None
+
+
+def rna_h5ad_to_bb(h5ad_file, barcodes, bb_df, num_bbs, assay_type):
+    """Aggregate per-cell RNA counts (h5ad from ``process_rna_anndata``) into bb bins.
+
+    Each RNA feature (gene) is assigned to the bb bin it overlaps most (``feature_to_blocks``
+    -> largest overlap, same mapping as copytyping's ``cnv_segmentation``); its per-cell counts
+    are summed into that bin. Cells are reordered to ``barcodes`` so the columns match that
+    assay's ``bb.*allele.npz`` matrices.
+
+    Parameters
+    ----------
+    h5ad_file : str
+        AnnData (cells x genes) with ``var`` carrying ``#CHR``, ``START``, ``END``.
+    barcodes : sequence of str
+        Cell barcodes (``"{raw}_{rep}"``) in matrix-column order (that assay's allele columns).
+    bb_df : pd.DataFrame
+        Bins with ``#CHR``, ``START``, ``END`` (0-based half-open) and ``bb_id``.
+    num_bbs : int
+        Number of bins (output rows).
+
+    Returns
+    -------
+    scipy.sparse.csr_matrix, shape ``(num_bbs, n_cells)``, dtype int32.
+    """
+    adata = sc.read_h5ad(h5ad_file)
+    barcodes = np.asarray(barcodes, dtype=str)
+    missing = barcodes[~np.isin(barcodes, adata.obs_names)]
+    if len(missing):
+        raise ValueError(
+            f"{len(missing)} barcodes missing from {h5ad_file}, e.g. {missing[:5]}"
+        )
+    adata = adata[barcodes, :].copy()
+    adata = feature_to_blocks(adata, bb_df, assay_type, block_idx="bb_id", drop_cols=False)
+    x_count = matrix_segmentation(adata.X.T, adata.var["bb_id"].to_numpy(), num_bbs)
+    return x_count.astype(np.int32)
+
+
+def atac_fragments_to_bb(
+    frag_files, reps, barcodes_full, bb_df, num_bbs, chunksize=5_000_000
+):
+    """Count deduped ATAC fragments per bb bin per cell from 10x fragment files.
+
+    Each row of a 10x ``atac_fragments.tsv.gz`` is one deduplicated fragment
+    (``chrom, start, end, barcode, readSupport``); the readSupport column is IGNORED.
+    Every fragment is counted once, assigned to the bb bin containing its midpoint, so
+    the column sums equal the number of in-bin fragments per cell.
+
+    Parameters
+    ----------
+    frag_files, reps : parallel lists
+        ``frag_files[i]`` is the fragment file for replicate ``reps[i]``.
+    barcodes_full : pd.DataFrame
+        Columns ``REP_ID``, ``BARCODE`` (``BARCODE`` = ``"{raw}_{rep}"``) giving the cell
+        column order (identical to that assay's ``bb.*allele.npz`` columns).
+    bb_df : pd.DataFrame
+        Bins with ``#CHR``, ``START``, ``END`` (0-based half-open) and ``bb_id``.
+    num_bbs : int
+        Number of bins (output rows).
+
+    Returns
+    -------
+    scipy.sparse.csr_matrix, shape ``(num_bbs, n_cells)``, dtype int32.
+    """
+    n_cells = len(barcodes_full)
+    bc_rep = barcodes_full["REP_ID"].to_numpy().astype(str)
+    bc_full = barcodes_full["BARCODE"].to_numpy().astype(str)
+    # global column index keyed by (rep, raw_barcode); strip the "_{rep}" suffix
+    col_of = {}
+    for i in range(n_cells):
+        rep, raw = bc_rep[i], bc_full[i]
+        sfx = "_" + rep
+        if raw.endswith(sfx):
+            raw = raw[: -len(sfx)]
+        col_of[(rep, raw)] = i
+
+    rows_all, cols_all = [], []
+    for frag_file, rep in zip(frag_files, reps):
+        rep_map = {raw: c for (r, raw), c in col_of.items() if r == rep}
+        if not rep_map or frag_file is None:
+            continue
+        n_frag = 0
+        for chunk in pd.read_csv(
+            frag_file, sep="\t", comment="#", header=None, usecols=[0, 1, 2, 3],
+            names=["#CHR", "start", "end", "BC"],
+            dtype={0: str, 1: np.int64, 2: np.int64, 3: str}, chunksize=chunksize,
+        ):
+            col_vals = chunk["BC"].map(rep_map).to_numpy()
+            m = ~pd.isna(col_vals)
+            if not m.any():
+                continue
+            sub = chunk.loc[m]
+            mid = (sub["start"].to_numpy() + sub["end"].to_numpy()) // 2
+            frag = pd.DataFrame({"#CHR": sub["#CHR"].to_numpy(), "POS0": mid})
+            frag = assign_pos_to_range(frag, bb_df, ref_id="bb_id", pos_col="POS0")
+            keep = frag["bb_id"].notna().to_numpy()
+            if not keep.any():
+                continue
+            rows_all.append(frag.loc[keep, "bb_id"].to_numpy().astype(np.int64))
+            cols_all.append(col_vals[m][keep].astype(np.int64))
+            n_frag += int(keep.sum())
+        logging.info(f"  ATAC {rep}: {n_frag} in-bin fragments counted")
+
+    if rows_all:
+        rows = np.concatenate(rows_all)
+        cols = np.concatenate(cols_all)
+    else:
+        rows = np.zeros(0, dtype=np.int64)
+        cols = np.zeros(0, dtype=np.int64)
+    data = np.ones(len(rows), dtype=np.int32)
+    return csr_matrix((data, (rows, cols)), shape=(num_bbs, n_cells), dtype=np.int32)
