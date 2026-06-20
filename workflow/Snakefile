@@ -35,7 +35,7 @@ _has_config = (
 
 if _has_config:
     ##################################################
-    print("=== Resolved config ===")
+    print("=== Configuration Parameters ===")
     for key, val in config.items():
         print(f"  {key}: {val}")
     print()
@@ -47,55 +47,47 @@ if _has_config:
         "copytyping_preprocess",
     }
 
-    # parse sample file
+    configured_assay_types = config["assay_types"]
+    invalid_assay_types = [
+        a for a in configured_assay_types if a not in ALLOWED_ASSAY_TYPES
+    ]
+    assert not invalid_assay_types, f"invalid assay_types={invalid_assay_types}"
+    if workflow_mode == "bulk_genotyping":
+        configured_assay_types = [a for a in configured_assay_types if a in BULK_ASSAYS]
+    elif workflow_mode in ["single_cell_genotyping", "copytyping_preprocess"]:
+        configured_assay_types = [
+            a for a in configured_assay_types if a in NONBULK_ASSAYS
+        ]
+
     sample_df = pd.read_table(config["sample_file"])
-    required = ["SAMPLE", "REP_ID", "assay_type", "sample_type", "PATH_to_bam"]
-    optional = ["PATH_to_barcodes", "PATH_to_10x_ranger"]
-    missing = [c for c in required if c not in sample_df.columns]
-    assert not missing, f"missing columns: {missing}"
-    for c in optional:
+    required_cols = ["SAMPLE", "REP_ID", "assay_type", "sample_type", "PATH_to_bam"]
+    optional_cols = ["PATH_to_barcodes", "PATH_to_10x_ranger"]
+    missing_cols = [c for c in required_cols if c not in sample_df.columns]
+    assert not missing_cols, f"missing columns: {missing_cols}"
+    assert sample_df["REP_ID"].notna().all(), "REP_ID has missing values"
+    assert sample_df["PATH_to_bam"].notna().all(), "PATH_to_bam has missing values"
+    assert all(
+        st in ["normal", "tumor"] for st in sample_df["sample_type"]
+    ), "sample_type must be {normal, tumor}"
+
+    for c in optional_cols:
         if c not in sample_df.columns:
             sample_df[c] = pd.NA
     SAMPLE_ID = config["sample_id"]
-    sample_df = sample_df.loc[sample_df["SAMPLE"] == SAMPLE_ID].reset_index(drop=True)
-    assert len(sample_df) > 0, f"no rows matching sample_id={SAMPLE_ID} in sample file"
-    assert sample_df["REP_ID"].notna().all(), "REP_ID required for all replicates"
-    assert sample_df["PATH_to_bam"].notna().all(), "PATH_to_bam has missing values"
-
-    # filter to configured assay types
-    configured_assay_types = config["assay_types"]
-    assert all(
-        at in ALLOWED_ASSAY_TYPES for at in configured_assay_types
-    ), f"unknown assay_types in config: {configured_assay_types}"
     sample_df = sample_df.loc[
-        sample_df["assay_type"].isin(configured_assay_types)
+        (sample_df["SAMPLE"] == SAMPLE_ID)
+        & (sample_df["assay_type"].isin(configured_assay_types))
     ].reset_index(drop=True)
-    assert (
-        len(sample_df) > 0
-    ), f"no rows with assay_type in {configured_assay_types} for sample_id={SAMPLE_ID}"
-
-    uniq_sample_types = sample_df["sample_type"].unique().tolist()
-    assert all(st in ["normal", "tumor"] for st in uniq_sample_types)
     sample_df["modality"] = sample_df["assay_type"].map(ASSAY_TYPE2MODALITY)
-    sample_df["is_lr"] = sample_df["assay_type"].isin(LONGREAD_ASSAYS)
 
-    if workflow_mode == "bulk_genotyping":
-        sample_df = sample_df.loc[
-            sample_df["assay_type"].isin(BULK_ASSAYS), :
-        ].reset_index(drop=True)
-        assert len(sample_df) > 0, "no samples for bulk_genotyping mode"
-        assert sample_df["REP_ID"].nunique() == len(
-            sample_df
-        ), "bulk mode must have no duplicated replicate IDs"
-        present_bulk = set(sample_df["assay_type"])
-        if "bulkWES" in present_bulk:
-            assert present_bulk == {"bulkWES"}, "bulkWES genotyping cannot mix with other types"
-        run_genotype_snps = True
-    elif workflow_mode == "single_cell_genotyping":
-        sample_df = sample_df.loc[
-            sample_df["assay_type"].isin(NONBULK_ASSAYS), :
-        ].reset_index(drop=True)
-        assert len(sample_df) > 0, "no samples for single_cell_genotyping mode"
+    rep_ids = sample_df["REP_ID"].unique().tolist()
+    assay_types = sample_df["assay_type"].unique().tolist()
+    modalities = sample_df["modality"].unique().tolist()
+
+    # bulk allele/combine outputs live under allele_dir/{stream}/ (WGS family or WES)
+    bulk_stream = "bulkWES" if "bulkWES" in assay_types else "bulkWGS"
+
+    if workflow_mode in ["single_cell_genotyping", "copytyping_preprocess"]:
         assert (
             sample_df["PATH_to_barcodes"].notna().all()
         ), "PATH_to_barcodes has missing values"
@@ -110,37 +102,16 @@ if _has_config:
             ), "at most 2 data types allowed per replicate"
             if len(rep_assay_types) == 2:
                 assert ("scRNA" in rep_assay_types) and ("scATAC" in rep_assay_types)
-        run_genotype_snps = True
-    elif workflow_mode == "copytyping_preprocess":
-        sample_df = sample_df.loc[
-            sample_df["assay_type"].isin(NONBULK_ASSAYS), :
-        ].reset_index(drop=True)
-        assert len(sample_df) > 0, "no nonbulk for single_cell_genotyping mode"
-        assert config.get("het_snp_vcf") is not None
-        assert config.get("bb_file") is not None
-        run_genotype_snps = False
+        if workflow_mode == "copytyping_preprocess":
+            assert config.get("het_snp_vcf") is not None
+            assert config.get("bb_file") is not None
     else:
-        raise ValueError(f"unknown mode: {workflow_mode}")
-
-    rep_ids = sample_df["REP_ID"].unique().tolist()
-    assay_types = sample_df["assay_type"].unique().tolist()
-    modalities = sample_df["modality"].unique().tolist()
-    normal_bams = sample_df.loc[
-        sample_df["sample_type"] == "normal", "PATH_to_bam"
-    ].to_list()
-    tumor_bams = sample_df.loc[
-        sample_df["sample_type"] == "tumor", "PATH_to_bam"
-    ].to_list()
-    lr_normal_bams = sample_df.loc[
-        (sample_df["sample_type"] == "normal") & sample_df["is_lr"], "PATH_to_bam"
-    ].to_list()
-    lr_tumor_bams = sample_df.loc[
-        (sample_df["sample_type"] == "tumor") & sample_df["is_lr"], "PATH_to_bam"
-    ].to_list()
-
-    # genotype from one BAM (no pooling -> BAMs need not share an @RG SM); prefer LR normal
-    _genotype_bams = lr_normal_bams or normal_bams or lr_tumor_bams or tumor_bams
-    genotype_bam = _genotype_bams[0] if _genotype_bams else None
+        assert len(rep_ids) == len(
+            sample_df
+        ), "bulk mode must have no duplicated replicate IDs"
+        if "bulkWES" in assay_types and len(assay_types) > 1:
+            print("mix bulkWES with other bulk assays is unsupported")
+            sys.exit(1)
 
     modality2bams = {}
     for modality, rows in sample_df.groupby("modality", sort=False):
@@ -162,17 +133,8 @@ if _has_config:
             assay2rep_ids[assay_type] = []
             assay2sample_types[assay_type] = []
 
-    BULK_PRESENT = [at for at in assay_types if at in BULK_ASSAYS]
-    # non-bulk assays are segmented jointly per sample on one shared grid; outputs are
-    # written flat in bb_dir with the assay encoded in the filename (bb.{assay}.*.npz).
-    NONBULK_PRESENT = [at for at in assay_types if at in NONBULK_ASSAYS]
-
     get_data = {}
-    rep2modalities = {}
-    rep2isMultiome = {}
     for rep_id, rep_df in sample_df.groupby(by="REP_ID", sort=False):
-        rep2modalities[rep_id] = rep_df["modality"].tolist()
-        rep2isMultiome[rep_id] = len(rep_df) > 1
         for _, row in rep_df.iterrows():
             assay_type = row["assay_type"]
             get_data[(assay_type, rep_id)] = [
@@ -181,25 +143,46 @@ if _has_config:
                 row["PATH_to_10x_ranger"],
             ]
 
-    if len(rep_ids) > 1 and any(rep2isMultiome.values()):
-        print("genotyping >1 replicates involving multiome data, warning")
-
-    ##################################################
-    # parse phase_snps inputs
     refvers = config.get("reference_version")
     if refvers not in REFVERS:
         print(
-            f"WARNING: reference_version={refvers!r} is not natively supported: {REFVERS}; "
-            "proceeding anyway — ensure gmap_path, phasing_panel, region_bed, and "
-            "window_bed are all provided for this reference."
+            f"WARNING: reference_version={refvers!r} is not natively supported: {REFVERS}."
         )
 
+    ##################################################
+    # parse workflow inputs
+
+    genotype_bam = None
+    phase_bams = None
     phaser = config.get("phaser", "undefined")
-    # population-based phasing required to estimate switchprobs
-    require_genetic_map = run_genotype_snps and phaser in PANEL_PHASER
-    if run_genotype_snps:
+
+    run_genotyping = workflow_mode in ["bulk_genotyping", "single_cell_genotyping"]
+    require_genetic_map = run_genotyping and phaser in PANEL_PHASER
+    if run_genotyping:
+        normal_bams = sample_df.loc[
+            sample_df["sample_type"] == "normal", "PATH_to_bam"
+        ].to_list()
+        tumor_bams = sample_df.loc[
+            sample_df["sample_type"] == "tumor", "PATH_to_bam"
+        ].to_list()
+        lr_normal_bams = sample_df.loc[
+            (sample_df["sample_type"] == "normal")
+            & (sample_df["assay_type"].isin(LONGREAD_ASSAYS)),
+            "PATH_to_bam",
+        ].to_list()
+        lr_tumor_bams = sample_df.loc[
+            (sample_df["sample_type"] == "tumor")
+            & (sample_df["assay_type"].isin(LONGREAD_ASSAYS)),
+            "PATH_to_bam",
+        ].to_list()
+
+        # TODO this is for bulk genotyping. single-cell genotyping used all BAMs via modality2bams
+        _genotype_bams = lr_normal_bams or normal_bams or lr_tumor_bams or tumor_bams
+        genotype_bam = _genotype_bams[0]
+
+        # parse phasing inputs
         if phaser in PANEL_PHASER:
-            # population-based phasing required to estimate switchprobs
+            # parse genetic maps
             gmap_path = config.get("gmap_path")
             assert gmap_path, f"gmap_path required for {phaser}"
             get_genetic_map = get_genetic_map_path(gmap_path)
@@ -211,6 +194,8 @@ if _has_config:
             assert (
                 not missing_gmaps
             ), f"failed to locate gmap files: {missing_gmaps[:3]}"
+
+            # parse phasing panels
             phasing_panel = config["phasing_panel"]
             assert os.path.isdir(
                 phasing_panel
@@ -229,56 +214,46 @@ if _has_config:
                 f"phaser={phaser} requires at least one long-read bulk assay "
                 f"({sorted(LONGREAD_ASSAYS)}) in the sample sheet for sample_id={SAMPLE_ID}"
             )
+            phase_bams = (
+                lr_normal_bams[0] if len(lr_normal_bams) > 0 else lr_tumor_bams[0]
+            )
         else:
             raise ValueError(f"unknown phaser: {phaser}")
 
     ##################################################
     # final target files
 
-    def _bb_targets(assay_type, suffixes):
-        """Generate target paths under bb_dir for a given assay type."""
-        return [config["bb_dir"] + f"/{assay_type}/{s}" for s in suffixes]
-
-    common_suffixes = [
-        "bb.tsv.gz",
-        "bb.Tallele.npz",
-        "bb.Aallele.npz",
-        "bb.Ballele.npz",
-    ]
     final_targets = []
     if workflow_mode == "bulk_genotyping":
-        # flat in bb_dir (one shared grid; matrix columns are bulk samples)
         final_targets += [
-            config["bb_dir"] + f"/{s}"
-            for s in ["sample_ids.tsv"]
-            + common_suffixes
-            + ["bb.baf.npz", "bb.rdr.npz", "bb.depth.npz"]
+            config["bb_dir"] + f"/{bulk_stream}/bb.tsv.gz",
+            config["bb_dir"] + f"/{bulk_stream}/sample_ids.tsv",
+            config["bb_dir"] + f"/{bulk_stream}/bb.Tallele.npz",
+            config["bb_dir"] + f"/{bulk_stream}/bb.Aallele.npz",
+            config["bb_dir"] + f"/{bulk_stream}/bb.Ballele.npz",
+            config["bb_dir"] + f"/{bulk_stream}/bb.depth.npz",
+            config["bb_dir"] + f"/{bulk_stream}/bb.rdr.npz",
         ]
     elif workflow_mode == "single_cell_genotyping":
-        # joint per-sample grid (flat in bb_dir): one bb.tsv.gz + per-assay cell matrices
-        final_targets += [
-            config["bb_dir"] + "/bb.tsv.gz",
-            config["bb_dir"] + "/sample_ids.tsv",
-        ]
-        for assay_type in NONBULK_PRESENT:
+        for assay_type in assay_types:
             final_targets += [
-                config["bb_dir"] + f"/bb.{assay_type}.Tallele.npz",
-                config["bb_dir"] + f"/bb.{assay_type}.Aallele.npz",
-                config["bb_dir"] + f"/bb.{assay_type}.Ballele.npz",
-                config["bb_dir"] + f"/barcodes.{assay_type}.tsv.gz",
+                config["bb_dir"] + f"/{assay_type}/bb.tsv.gz",
+                config["bb_dir"] + f"/{assay_type}/sample_ids.tsv",
+                config["bb_dir"] + f"/{assay_type}/bb.Tallele.npz",
+                config["bb_dir"] + f"/{assay_type}/bb.Aallele.npz",
+                config["bb_dir"] + f"/{assay_type}/bb.Ballele.npz",
+                config["bb_dir"] + f"/{assay_type}/bb.Xcount.npz",
+                config["bb_dir"] + f"/{assay_type}/barcodes.tsv.gz",
             ]
     elif workflow_mode == "copytyping_preprocess":
         for assay_type in assay_types:
-            final_targets += _bb_targets(
-                assay_type,
-                [
-                    "cnv_segments.tsv",
-                    "bb.Xcount.npz",
-                    "bb.Tallele.npz",
-                    "bb.Aallele.npz",
-                    "bb.Ballele.npz",
-                ],
-            )
+            final_targets += [
+                config["bb_dir"] + f"/{assay_type}/cnv_segments.tsv",
+                config["bb_dir"] + f"/{assay_type}/bb.Xcount.npz",
+                config["bb_dir"] + f"/{assay_type}/bb.Tallele.npz",
+                config["bb_dir"] + f"/{assay_type}/bb.Aallele.npz",
+                config["bb_dir"] + f"/{assay_type}/bb.Ballele.npz",
+            ]
 
     ##################################################
     os.makedirs(config["qc_dir"], exist_ok=True)
@@ -293,8 +268,13 @@ if _has_config:
     include: "rules/count_reads.smk"
     include: "rules/combine_counts.smk"
 
-    # combine_counts_nonbulk (flat bb_dir/bb.{assay}.*) and cnv_segmentation
-    # (bb/{assay_type}/*) no longer share output paths, so no ruleorder is needed.
+    if workflow_mode == "copytyping_preprocess":
+
+        ruleorder: cnv_segmentation > combine_counts_nonbulk
+
+    else:
+
+        ruleorder: combine_counts_nonbulk > cnv_segmentation
 
     rule all:
         input:
@@ -328,18 +308,9 @@ else:
         shell:
             "touch {output}"
 
-    rule _conda_env_snapatac2:
-        output:
-            temp(".conda_env_snapatac2"),
-        conda:
-            "envs/snapatac2.yaml"
-        shell:
-            "touch {output}"
-
     rule all:
         input:
             ".conda_env_base",
             ".conda_env_tools",
             ".conda_env_phase",
-            ".conda_env_snapatac2",
         default_target: True

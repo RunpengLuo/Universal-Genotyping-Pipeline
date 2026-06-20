@@ -11,7 +11,9 @@ The window BED is expected to be pre-filtered by region and blacklist
 import os
 import logging
 
-t = int(getattr(snakemake, "threads", 1))
+snakemake_handle = snakemake
+
+t = int(getattr(snakemake_handle, "threads", 1))
 os.environ["OMP_NUM_THREADS"] = str(t)
 os.environ["OPENBLAS_NUM_THREADS"] = str(t)
 os.environ["MKL_NUM_THREADS"] = str(t)
@@ -21,7 +23,7 @@ os.environ["NUMEXPR_NUM_THREADS"] = str(t)
 import numpy as np
 import pandas as pd
 
-from utils import setup_logging, maybe_path, qc_path, sort_df_chr
+from utils import setup_logging, maybe_path, sort_df_chr
 from io_utils import compute_depth_statistics
 from count_reads_utils import compute_gc_rd_stats
 from rd_correct_utils import (
@@ -35,33 +37,38 @@ import matplotlib
 matplotlib.use("Agg")
 from matplotlib.backends.backend_pdf import PdfPages
 
-setup_logging(snakemake.log[0])
+log_file = snakemake_handle.log[0]
+setup_logging(log_file)
 
-sample_file = snakemake.input["sample_file"]
-window_bed_file = snakemake.input["window_bed"]
-genome_size = snakemake.input["genome_size"]
-region_bed = snakemake.input["region_bed"] or None
-blacklist_bed = maybe_path(snakemake.input.get("blacklist_bed", None))
-assay_type = str(snakemake.params["assay_type"])
+# inputs
+window_bed_file = snakemake_handle.input["window_bed"]
+genome_size = snakemake_handle.input["genome_size"]
+region_bed = snakemake_handle.input["region_bed"] or None
+blacklist_bed = maybe_path(snakemake_handle.input.get("blacklist_bed", None))
 
-mosdepth_dir = snakemake.params["mosdepth_dir"]
-chromosomes = snakemake.params["chromosomes"]
-samplesize = int(snakemake.params["samplesize"])
-routlier = float(snakemake.params["routlier"])
-doutlier = float(snakemake.params["doutlier"])
-min_mappability = float(snakemake.params["min_mappability"])
-gc_correct = bool(snakemake.params["gc_correct"])
-gc_correct_method = str(snakemake.params.get("gc_correct_method", "median"))
-rt_correct = bool(snakemake.params["rt_correct"])
-qc_dir = snakemake.params["qc_dir"]
-qc_prefix = "rd_correction"
-os.makedirs(qc_dir, exist_ok=True)
-run_id = getattr(snakemake.params, "run_id", "")
-qc_stamp = ".".join(p for p in (snakemake.params["assay_type"], run_id) if p)
+# parameters
+assay_type = str(snakemake_handle.params["assay_type"])
+rep_ids = [str(r) for r in snakemake_handle.params["rep_ids"]]
+sample_ids = [str(s) for s in snakemake_handle.params["sample_ids"]]
+mosdepth_dir = snakemake_handle.params["mosdepth_dir"]
+chromosomes = snakemake_handle.params["chromosomes"]
+samplesize = int(snakemake_handle.params["samplesize"])
+routlier = float(snakemake_handle.params["routlier"])
+doutlier = float(snakemake_handle.params["doutlier"])
+min_mappability = float(snakemake_handle.params["min_mappability"])
+gc_correct = bool(snakemake_handle.params["gc_correct"])
+gc_correct_method = str(snakemake_handle.params.get("gc_correct_method", "median"))
+rt_correct = bool(snakemake_handle.params["rt_correct"])
+qc_dir = snakemake_handle.params["qc_dir"]
 
-sample_df = pd.read_table(sample_file, sep="\t")
-rep_ids = sample_df["REP_ID"].astype(str).tolist()
-nsamples = len(sample_df)
+# outputs
+out_depth_stats = snakemake_handle.output["depth_stats"]
+out_dp_corrected = snakemake_handle.output["dp_corrected"]
+window_df = snakemake_handle.output["window_df"]
+
+run_id = getattr(snakemake_handle.params, "run_id", "")
+
+nsamples = len(rep_ids)
 target_chroms = {f"chr{c}" for c in chromosomes}
 join_keys = ["#CHR", "START", "END"]
 
@@ -98,27 +105,19 @@ dp_raw = np.zeros((n_windows, nsamples), dtype=np.float32)
 for i, mos_df in enumerate(mos_dfs):
     dp_raw[:, i] = mos_df["DEPTH"].to_numpy(dtype=np.float32)
 
-# mosdepth emits windows in BAM @SQ order; reorder to genomic order, permuting
-# dp_raw by the same order to keep it row-aligned with win_df.
+# mosdepth emits windows in BAM @SQ order; reorder to genomic order (permute dp_raw too)
 win_df["_ord"] = np.arange(len(win_df))
 win_df = sort_df_chr(win_df, ch="#CHR", pos="START")
 dp_raw = dp_raw[win_df["_ord"].to_numpy()]
 win_df = win_df.drop(columns="_ord")
 
-sample_ids = sample_df["SAMPLE"].astype(str).tolist()
 depth_stats = compute_depth_statistics(dp_raw, win_df, sample_ids)
-depth_stats.to_csv(snakemake.output["depth_stats"], sep="\t", index=False)
-logging.info(f"wrote depth statistics to {snakemake.output['depth_stats']}")
+depth_stats.to_csv(out_depth_stats, sep="\t", index=False)
+logging.info(f"wrote depth statistics to {out_depth_stats}")
 for _, row in depth_stats[depth_stats["#CHR"] == "TOTAL"].iterrows():
     logging.info(
         f"  {row['SAMPLE']}: mean={row['mean_depth']:.2f}, median={row['median_depth']:.2f}"
     )
-
-snps = pd.read_table(snakemake.input["snp_info"], sep="\t")
-tot_mtx_snp = np.load(snakemake.input["tot_mtx_snp"])["mat"].astype(np.int32)
-a_mtx_snp = np.load(snakemake.input["a_mtx_snp"])["mat"].astype(np.int32)
-b_mtx_snp = np.load(snakemake.input["b_mtx_snp"])["mat"].astype(np.int32)
-logging.info(f"loaded {len(snps)} SNPs, allele matrices shape={tot_mtx_snp.shape}")
 
 gc_vals = win_df["GC"].to_numpy()
 
@@ -180,7 +179,7 @@ else:
 
 rd_ylim = max(np.nanquantile(dp_corrected, 0.99), 1.0) * 1.1
 
-rd_pdf = PdfPages(qc_path(qc_dir, qc_prefix, "rd_correct.pdf", qc_stamp))
+rd_pdf = PdfPages(os.path.join(qc_dir, f"rd_correction.rd_correct.{assay_type}.{run_id}.pdf"))
 plot_rd_1d_scatter(
     win_df,
     dp_raw,
@@ -218,7 +217,7 @@ if n_nan_rows > 0:
     dp_corrected = dp_corrected[valid]
     win_df = win_df.loc[valid].reset_index(drop=True)
 
-np.savez_compressed(snakemake.output["dp_corrected"], mat=dp_corrected)
+np.savez_compressed(out_dp_corrected, mat=dp_corrected)
 
 out_cols = ["#CHR", "START", "END", "region_id", "GC"]
 if "MAP" in win_df.columns:
@@ -226,7 +225,7 @@ if "MAP" in win_df.columns:
 if "REPLI" in win_df.columns:
     out_cols.append("REPLI")
 win_df[out_cols].to_csv(
-    snakemake.output["window_df"],
+    window_df,
     sep="\t",
     header=True,
     index=False,

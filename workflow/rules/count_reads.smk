@@ -75,15 +75,10 @@ rule rd_correct:
             + f"/{wc.assay_type}/out_mosdepth/{rep_id}.regions.bed.gz"
             for rep_id in assay2rep_ids[wc.assay_type]
         ],
-        sample_file=lambda wc: config["allele_dir"] + f"/{wc.assay_type}/sample_ids.tsv",
         window_bed=config["window_bed"] or [],
         genome_size=config["genome_size"],
         region_bed=config["region_bed"],
         blacklist_bed=config["blacklist_bed"] or [],
-        snp_info=config["allele_dir"] + "/{assay_type}/snps.tsv.gz",
-        tot_mtx_snp=config["allele_dir"] + "/{assay_type}/snp.Tallele.npz",
-        a_mtx_snp=config["allele_dir"] + "/{assay_type}/snp.Aallele.npz",
-        b_mtx_snp=config["allele_dir"] + "/{assay_type}/snp.Ballele.npz",
     output:
         dp_corrected=config["pileup_dir"] + "/{assay_type}/window.dp.npz",
         window_df=config["pileup_dir"] + "/{assay_type}/window.tsv.gz",
@@ -93,6 +88,10 @@ rule rd_correct:
     params:
         qc_dir=config["qc_dir"],
         sample_name=SAMPLE_ID,
+        rep_ids=lambda wc: assay2rep_ids[wc.assay_type],
+        sample_ids=lambda wc: [
+            f"{SAMPLE_ID}_{rep_id}" for rep_id in assay2rep_ids[wc.assay_type]
+        ],
         mosdepth_dir=lambda wc: config["pileup_dir"] + f"/{wc.assay_type}/out_mosdepth",
         chromosomes=config["chromosomes"],
         samplesize=_rdr_cfg["samplesize"],

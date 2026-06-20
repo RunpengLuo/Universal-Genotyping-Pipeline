@@ -1,6 +1,6 @@
 """Utility functions for SNP/allele processing, phasing, and filtering.
 
-Used by phase_and_concat.py, combine_counts.py, and combine_counts_nonbulk.py.
+Used by phase_and_concat_{bulk,single_cell}.py, combine_counts.py, and combine_counts_nonbulk.py.
 """
 
 import logging
@@ -13,7 +13,6 @@ from scipy.sparse import csr_matrix, hstack, issparse
 from scipy.stats import beta
 
 from io_utils import read_VCF
-from utils import stamp_path
 
 
 def canon_mat_one_replicate(

@@ -5,27 +5,18 @@
 ##################################################
 
 
-def _bulk_inputs(subdir, fname):
-    return [f"{subdir}/{at}/{fname}" for at in BULK_PRESENT]
-
-
-def _nonbulk_inputs(subdir, fname):
-    return [f"{subdir}/{at}/{fname}" for at in NONBULK_PRESENT]
-
-
-def _nonbulk_outputs(prefix, suffix):
-    return [config["bb_dir"] + f"/{prefix}.{at}.{suffix}" for at in NONBULK_PRESENT]
-
-
 rule combine_counts:
     input:
-        dp_corrected=_bulk_inputs(config["pileup_dir"], "window.dp.npz"),
-        window_df=_bulk_inputs(config["pileup_dir"], "window.tsv.gz"),
-        snp_info=_bulk_inputs(config["allele_dir"], "snps.tsv.gz"),
-        tot_mtx_snp=_bulk_inputs(config["allele_dir"], "snp.Tallele.npz"),
-        a_mtx_snp=_bulk_inputs(config["allele_dir"], "snp.Aallele.npz"),
-        b_mtx_snp=_bulk_inputs(config["allele_dir"], "snp.Ballele.npz"),
-        sample_file=_bulk_inputs(config["allele_dir"], "sample_ids.tsv"),
+        # depth/window stay per-assay; allele matrices are one joint set
+        dp_corrected=[
+            config["pileup_dir"] + f"/{at}/window.dp.npz" for at in assay_types
+        ],
+        window_df=[config["pileup_dir"] + f"/{at}/window.tsv.gz" for at in assay_types],
+        snp_info=config["allele_dir"] + f"/{bulk_stream}/snps.tsv.gz",
+        tot_mtx_snp=config["allele_dir"] + f"/{bulk_stream}/snp.Tallele.npz",
+        a_mtx_snp=config["allele_dir"] + f"/{bulk_stream}/snp.Aallele.npz",
+        b_mtx_snp=config["allele_dir"] + f"/{bulk_stream}/snp.Ballele.npz",
+        sample_file=config["allele_dir"] + f"/{bulk_stream}/sample_ids.tsv",
         gmap_file=lambda wc: (
             config["phase_dir"] + "/genetic_map.tsv.gz" if require_genetic_map else []
         ),
@@ -34,17 +25,16 @@ rule combine_counts:
         genome_size=config["genome_size"],
         gtf_file=config["gtf_file"],
     output:
-        bb_file=config["bb_dir"] + "/bb.tsv.gz",
-        tot_mtx_bb=config["bb_dir"] + "/bb.Tallele.npz",
-        a_mtx_bb=config["bb_dir"] + "/bb.Aallele.npz",
-        b_mtx_bb=config["bb_dir"] + "/bb.Ballele.npz",
-        baf_mtx_bb=config["bb_dir"] + "/bb.baf.npz",
-        dp_mtx_bb=config["bb_dir"] + "/bb.depth.npz",
-        rdr_mtx_bb=config["bb_dir"] + "/bb.rdr.npz",
-        sample_file=config["bb_dir"] + "/sample_ids.tsv",
+        bb_file=config["bb_dir"] + f"/{bulk_stream}/bb.tsv.gz",
+        tot_mtx_bb=config["bb_dir"] + f"/{bulk_stream}/bb.Tallele.npz",
+        a_mtx_bb=config["bb_dir"] + f"/{bulk_stream}/bb.Aallele.npz",
+        b_mtx_bb=config["bb_dir"] + f"/{bulk_stream}/bb.Ballele.npz",
+        dp_mtx_bb=config["bb_dir"] + f"/{bulk_stream}/bb.depth.npz",
+        rdr_mtx_bb=config["bb_dir"] + f"/{bulk_stream}/bb.rdr.npz",
+        sample_file=config["bb_dir"] + f"/{bulk_stream}/sample_ids.tsv",
     params:
         qc_dir=config["qc_dir"],
-        bulk_assays=BULK_PRESENT,
+        bulk_assays=assay_types,
         nu=config["params_combine_counts"]["nu"],
         min_switchprob=config["params_combine_counts"]["min_switchprob"],
         switchprob_ps=config["params_combine_counts"]["switchprob_ps"],
@@ -69,13 +59,33 @@ rule combine_counts:
 
 rule combine_counts_nonbulk:
     input:
-        snp_info=_nonbulk_inputs(config["allele_dir"], "snps.tsv.gz"),
-        tot_mtx_snp=_nonbulk_inputs(config["allele_dir"], "snp.Tallele.npz"),
-        a_mtx_snp=_nonbulk_inputs(config["allele_dir"], "snp.Aallele.npz"),
-        b_mtx_snp=_nonbulk_inputs(config["allele_dir"], "snp.Ballele.npz"),
-        sample_file=_nonbulk_inputs(config["allele_dir"], "sample_ids.tsv"),
-        all_barcodes=_nonbulk_inputs(config["allele_dir"], "barcodes.tsv.gz"),
-        barcodes_full=_nonbulk_inputs(config["allele_dir"], "barcodes.full.tsv.gz"),
+        snp_info=[config["allele_dir"] + f"/{at}/snps.tsv.gz" for at in assay_types],
+        tot_mtx_snp=[
+            config["allele_dir"] + f"/{at}/snp.Tallele.npz" for at in assay_types
+        ],
+        a_mtx_snp=[
+            config["allele_dir"] + f"/{at}/snp.Aallele.npz" for at in assay_types
+        ],
+        b_mtx_snp=[
+            config["allele_dir"] + f"/{at}/snp.Ballele.npz" for at in assay_types
+        ],
+        sample_file=[
+            config["allele_dir"] + f"/{at}/sample_ids.tsv" for at in assay_types
+        ],
+        all_barcodes=[
+            config["allele_dir"] + f"/{at}/barcodes.tsv.gz" for at in assay_types
+        ],
+        barcodes_full=[
+            config["allele_dir"] + f"/{at}/barcodes.full.tsv.gz" for at in assay_types
+        ],
+        ranger_dirs=[
+            get_data[(at, rid)][2] for at in assay_types for rid in assay2rep_ids[at]
+        ],
+        h5ad_files=[
+            config["bb_dir"] + f"/{at}/{at}.h5ad"
+            for at in assay_types
+            if ASSAY_TYPE2MODALITY[at] == "RNA"
+        ],
         gmap_file=(
             config["phase_dir"] + "/genetic_map.tsv.gz" if require_genetic_map else []
         ),
@@ -83,21 +93,34 @@ rule combine_counts_nonbulk:
         genome_size=config["genome_size"],
         gtf_file=config["gtf_file"],
     output:
-        bb_file=config["bb_dir"] + "/bb.tsv.gz",
-        sample_file=config["bb_dir"] + "/sample_ids.tsv",
-        tot_mtx_bb=_nonbulk_outputs("bb", "Tallele.npz"),
-        a_mtx_bb=_nonbulk_outputs("bb", "Aallele.npz"),
-        b_mtx_bb=_nonbulk_outputs("bb", "Ballele.npz"),
-        baf_mtx_bb=_nonbulk_outputs("bb", "baf.npz"),
-        multi_snp_file=_nonbulk_outputs("multi_snp", "tsv.gz"),
-        tot_mtx_multi=_nonbulk_outputs("multi_snp", "Tallele.npz"),
-        a_mtx_multi=_nonbulk_outputs("multi_snp", "Aallele.npz"),
-        b_mtx_multi=_nonbulk_outputs("multi_snp", "Ballele.npz"),
-        all_barcodes=_nonbulk_outputs("barcodes", "tsv.gz"),
-        barcodes_full=_nonbulk_outputs("barcodes", "full.tsv.gz"),
+        bb_file=[config["bb_dir"] + f"/{at}/bb.tsv.gz" for at in assay_types],
+        sample_file=[config["bb_dir"] + f"/{at}/sample_ids.tsv" for at in assay_types],
+        tot_mtx_bb=[config["bb_dir"] + f"/{at}/bb.Tallele.npz" for at in assay_types],
+        a_mtx_bb=[config["bb_dir"] + f"/{at}/bb.Aallele.npz" for at in assay_types],
+        b_mtx_bb=[config["bb_dir"] + f"/{at}/bb.Ballele.npz" for at in assay_types],
+        multi_snp_file=[
+            config["bb_dir"] + f"/{at}/multi_snp.tsv.gz" for at in assay_types
+        ],
+        tot_mtx_multi=[
+            config["bb_dir"] + f"/{at}/multi_snp.Tallele.npz" for at in assay_types
+        ],
+        a_mtx_multi=[
+            config["bb_dir"] + f"/{at}/multi_snp.Aallele.npz" for at in assay_types
+        ],
+        b_mtx_multi=[
+            config["bb_dir"] + f"/{at}/multi_snp.Ballele.npz" for at in assay_types
+        ],
+        all_barcodes=[config["bb_dir"] + f"/{at}/barcodes.tsv.gz" for at in assay_types],
+        barcodes_full=[
+            config["bb_dir"] + f"/{at}/barcodes.full.tsv.gz" for at in assay_types
+        ],
+        x_count=[config["bb_dir"] + f"/{at}/bb.Xcount.npz" for at in assay_types],
     params:
         qc_dir=config["qc_dir"],
-        nonbulk_assays=NONBULK_PRESENT,
+        nonbulk_assays=assay_types,
+        ranger_assays=[at for at in assay_types for rid in assay2rep_ids[at]],
+        ranger_reps=[rid for at in assay_types for rid in assay2rep_ids[at]],
+        h5ad_assays=[at for at in assay_types if ASSAY_TYPE2MODALITY[at] == "RNA"],
         nu=config["params_combine_counts"]["nu"],
         min_switchprob=config["params_combine_counts"]["min_switchprob"],
         switchprob_ps=config["params_combine_counts"]["switchprob_ps"],
@@ -125,7 +148,14 @@ rule cnv_segmentation:
         sample_file=lambda wc: config["allele_dir"] + f"/{wc.assay_type}/sample_ids.tsv",
         all_barcodes=config["allele_dir"] + "/{assay_type}/barcodes.tsv.gz",
         barcodes_full=config["allele_dir"] + "/{assay_type}/barcodes.full.tsv.gz",
-        h5ad_file=config["bb_dir"] + "/{assay_type}/{assay_type}.h5ad",
+        h5ad_file=lambda wc: (
+            config["bb_dir"] + f"/{wc.assay_type}/{wc.assay_type}.h5ad"
+            if ASSAY_TYPE2MODALITY[wc.assay_type] == "RNA"
+            else []
+        ),
+        ranger_dirs=lambda wc: [
+            get_data[(wc.assay_type, rid)][2] for rid in assay2rep_ids[wc.assay_type]
+        ],
         region_bed=lambda wc: config["region_bed"],
         genome_size=lambda wc: config["genome_size"],
         gtf_file=lambda wc: config["gtf_file"],
