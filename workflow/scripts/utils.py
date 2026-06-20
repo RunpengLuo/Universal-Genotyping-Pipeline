@@ -86,24 +86,6 @@ def adaptive_dot_size(n_points, s_base=4, s_min=0.5, s_max=10, n_ref=5000):
     return float(np.clip(s_base * n_ref / n_points, s_min, s_max))
 
 
-def stamp_path(path, run_id):
-    """Insert run_id before file extension: 'foo.pdf' -> 'foo.20260309_143000.pdf'."""
-    if not run_id:
-        return path
-    base, ext = os.path.splitext(path)
-    return f"{base}.{run_id}{ext}"
-
-
-def qc_path(qc_dir, prefix, name, run_id):
-    """Flat QC path ``qc_dir/<prefix>.<name>`` with run_id stamped before the extension.
-
-    Folds the former ``qc/<assay>/<stage>/`` sub-dirs into the filename as a mid-fix,
-    so all QC files live directly under ``qc_dir`` (e.g.
-    ``qc/bulkWGS.combine_counts.combine_counts.<run_id>.pdf``).
-    """
-    name = f"{prefix}.{name}" if prefix else name
-    return stamp_path(os.path.join(qc_dir, name), run_id)
-
 
 def sort_df_chr(df: pd.DataFrame, ch="#CHR", pos="POS"):
     """Sort a DataFrame by chromosome (genomic order) then by position, in-place.

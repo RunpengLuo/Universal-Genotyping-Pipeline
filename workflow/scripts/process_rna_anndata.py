@@ -1,6 +1,8 @@
 import os, logging
 
-t = int(getattr(snakemake, "threads", 1))
+snakemake_handle = snakemake
+
+t = int(getattr(snakemake_handle, "threads", 1))
 os.environ["OMP_NUM_THREADS"] = str(t)
 os.environ["OPENBLAS_NUM_THREADS"] = str(t)
 os.environ["MKL_NUM_THREADS"] = str(t)
@@ -29,12 +31,25 @@ Input:
 Output:
 single h5ad matrix covers all replicates with position columns
 """
-setup_logging(snakemake.log[0])
+log_file = snakemake_handle.log[0]
+setup_logging(log_file)
 
-barcode_files = snakemake.input["barcodes"]
-ranger_dirs = snakemake.input["ranger_dirs"]
-assay_type = snakemake.params["assay_type"]
-rep_ids = snakemake.params["rep_ids"]
+# inputs
+barcode_files = snakemake_handle.input["barcodes"]
+ranger_dirs = snakemake_handle.input["ranger_dirs"]
+gtf_file = snakemake_handle.input["gtf_file"]
+gene_blacklist_file = maybe_path(snakemake_handle.input["gene_blacklist_file"])
+region_bed = snakemake_handle.input["region_bed"]
+
+# parameters
+assay_type = snakemake_handle.params["assay_type"]
+rep_ids = snakemake_handle.params["rep_ids"]
+gene_id_colname = str(snakemake_handle.params["gene_id_colname"])
+min_frac_barcodes = float(snakemake_handle.params["min_frac_barcodes"])
+
+# outputs
+out_h5ad_file = snakemake_handle.output["h5ad_file"]
+
 logging.info(f"prepare rna anndata, assay_type={assay_type}, rep_ids={rep_ids}")
 
 adatas = {}
@@ -82,8 +97,7 @@ adata.X = adata.X.tocsr()
 num_total_barcodes = adata.n_obs
 logging.info(f"#concat barcodes={num_total_barcodes}, #union features={adata.n_vars}")
 
-gene_id_colname = str(snakemake.params["gene_id_colname"])
-genes_gtf = read_genes_gtf_file(snakemake.input["gtf_file"], id_col=gene_id_colname)[
+genes_gtf = read_genes_gtf_file(gtf_file, id_col=gene_id_colname)[
     [gene_id_colname, "#CHR", "START", "END"]
 ]
 logging.info(f"loaded #{len(genes_gtf)} unique genes from GTF.")
@@ -109,7 +123,6 @@ adata.var["pseudobulk_counts"] = np.asarray(adata.X.sum(axis=0)).flatten()
 adata = adata[:, adata.var["pseudobulk_counts"] > 0].copy()
 logging.info(f"#genes after filtering by zero pseudobulk_counts: {adata.n_vars}")
 
-gene_blacklist_file = maybe_path(snakemake.input["gene_blacklist_file"])
 if gene_blacklist_file is not None:
     gene_blacklist = (
         pd.read_table(gene_blacklist_file, header=None).iloc[:, 0].to_numpy()
@@ -121,7 +134,6 @@ if gene_blacklist_file is not None:
     adata = adata[:, ~ind_gene_blacklist]
 
 sum_count_before_filtering = float(adata.X.sum())
-min_frac_barcodes = float(snakemake.params["min_frac_barcodes"])
 min_expressed_barcodes = round(min_frac_barcodes * num_total_barcodes)
 logging.info(
     f"min_frac_barcodes={min_frac_barcodes}, min_expressed_barcodes={min_expressed_barcodes}/{num_total_barcodes}"
@@ -138,7 +150,7 @@ if assay_type in SPATIAL_ASSAYS:
         f"Retaining {100.0 * np.mean(ind_sufficient_expressed_genes):.3f}% of genes with sufficient expression across spots ({100.0 * count_ratio:.2f}% of total UMIs) @ {min_frac_barcodes} fraction of barcodes."
     )
 
-regions = read_region_file(snakemake.input["region_bed"])[["#CHR", "START", "END", "region_id"]]
+regions = read_region_file(region_bed)[["#CHR", "START", "END", "region_id"]]
 adata = feature_to_blocks(adata, regions, assay_type)
 
 chs = sort_chroms(adata.var["#CHR"].unique().tolist())
@@ -148,7 +160,7 @@ assert adata.var_names.is_unique, "var_names is not unique!"
 sort_index = adata.var.sort_values(by=["#CHR", "START"]).index
 adata = adata[:, sort_index].copy()
 
-adata.write_h5ad(snakemake.output["h5ad_file"], compression="gzip")
+adata.write_h5ad(out_h5ad_file, compression="gzip")
 
 logging.info(f"final processed {assay_type} AnnData")
 logging.info(f"final #obs={adata.n_obs}, #vars={adata.n_vars}")

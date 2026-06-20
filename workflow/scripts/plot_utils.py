@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 from io_utils import get_chr_sizes, read_region_file
-from utils import adaptive_dot_size, stamp_path, qc_path
+from utils import adaptive_dot_size
 from combine_counts_utils import (
     compute_af_pseudobulk,
     compute_af_per_sample,
@@ -730,7 +730,7 @@ def plot_snp_depth_histogram(
     qc_dir : str
         Output directory for the PDF.
     run_id : str
-        Run identifier used by :func:`stamp_path`.
+        Run identifier appended to the output filename before the extension.
     ref_mtx : ndarray or sparse, optional
         Ref-allele count matrix (same shape as *tot_mtx*). When provided, a
         second column of ref-AF histograms is added to the figure.
@@ -825,7 +825,8 @@ def plot_snp_depth_histogram(
             ax_af.set_ylabel("# SNPs")
 
     fig.tight_layout()
-    out_path = qc_path(qc_dir, name_prefix, "snp_depth_hist.pdf", run_id)
+    stem = f"{name_prefix}.snp_depth_hist" if name_prefix else "snp_depth_hist"
+    out_path = os.path.join(qc_dir, f"{stem}.{run_id}.pdf")
     fig.savefig(out_path)
     plt.close(fig)
     logging.info(f"saved SNP depth histogram to {out_path}")
@@ -896,9 +897,9 @@ def plot_allele_freqs(
 
     if apply_pseudobulk and not per_rep_pseudobulk:
         af = compute_af_pseudobulk(tot_mtx, b_mtx)
-        plot_file = qc_path(
-            plot_dir, name_prefix, f"af_{allele}_{unit}.pseudobulk{suffix}.pdf", run_id
-        )
+        stem = f"af_{allele}_{unit}.pseudobulk{suffix}"
+        stem = f"{name_prefix}.{stem}" if name_prefix else stem
+        plot_file = os.path.join(plot_dir, f"{stem}.{run_id}.pdf")
         plot_1d_sample(
             pos_df,
             af,
@@ -921,7 +922,9 @@ def plot_allele_freqs(
         af_mat = np.column_stack(
             [compute_af_per_sample(_tot_mtx, _b_mtx, i) for i in range(len(rep_ids))]
         )
-    plot_file = qc_path(plot_dir, name_prefix, f"af_{allele}_{unit}{suffix}.pdf", run_id)
+    stem = f"af_{allele}_{unit}{suffix}"
+    stem = f"{name_prefix}.{stem}" if name_prefix else stem
+    plot_file = os.path.join(plot_dir, f"{stem}.{run_id}.pdf")
     plot_1d_multi_sample(
         pos_df,
         af_mat,
