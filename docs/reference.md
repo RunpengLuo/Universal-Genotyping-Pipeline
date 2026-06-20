@@ -53,11 +53,11 @@ Defaults live in `config/config.yaml`. A starting template for user runs is at `
 | `params_bcftools` | `genotype_snps_bulk` | `min_mapq`, `min_baseq`, `min_dp`, `max_depth`, `min_qual` |
 | `params_annotate_snps` | `annotate_snps_pseudobulk` | `min_het_reads`, `min_hom_dp`, `min_vaf_thres`, `filter_nz_OTH`, `filter_hom_ALT` |
 | `params_longphase` | `phase_snps_longphase` | `min_mapq`, `extra_params` (`--pb` or `--ont`) |
-| `params_process_anndata` | `process_rna_anndata`, `process_atac_fragments` | `gene_id_colname`, `min_frac_barcodes`, `tile_width` |
-| `params_phase_and_concat` | `phase_and_concat_{bulk,single_cell}` | `min_depth`, `gamma`, `exon_only` |
+| `params_process_anndata` | `process_rna_anndata` | `gene_id_colname`, `min_frac_barcodes` |
+| `params_phase_and_concat` | `phase_and_concat_{bulk,single_cell}` | `min_depth` (bulk), `gamma` (bulk), `exon_only` |
 | `params_mosdepth` | `run_mosdepth` | `read_quality`, `extra_params` |
 | `params_count_reads` | `rd_correct` | `gc_correct`, `gc_correct_method` (`lowess`/`median`), `rt_correct`, `samplesize`, `routlier`, `doutlier`, `min_mappability` |
-| `params_combine_counts` | `combine_counts`, `combine_counts_nonbulk` | `min_switchprob`, `nu`, `switchprob_ps`, `nsnp_multi` (sc only), `min_snp_reads`, `min_snp_per_block`, `max_blocksize` (bulk only), `median_normalization`, `rdr_outlier_quantile` (bulk only), `phase_flip_test`, `phase_flip_epsilon`, `phase_flip_alpha` |
+| `params_combine_counts` | `combine_counts`, `combine_counts_nonbulk` | `min_switchprob`, `nu`, `switchprob_ps`, `min_snp_reads`, `min_snp_per_block`, `gene_aware_binning`, `nsnp_multi` (sc only), `max_blocksize` (bulk only), `median_normalization` (bulk only), `rdr_outlier_quantile` (bulk only), `phase_flip_test` (bulk only), `phase_flip_epsilon` (bulk only), `phase_flip_alpha` (bulk only) |
 | `threads` | All multi-thread rules | `genotype`, `phase`, `pileup`, `mosdepth` |
 
 ### Output directories
@@ -86,10 +86,14 @@ All output directories (`snp_dir`, `phase_dir`, `pileup_dir`, `allele_dir`, `bb_
 
 One subdirectory per `{assay_type}_{rep_id}` with cellsnp-lite output.
 
-### Allele Counts (`allele_dir/{assay_type}/`)
+### Allele Counts (`allele_dir/{stream_or_assay}/`)
+
+Bulk writes ONE joint set under `allele_dir/{stream}/` (`stream` = `bulkWGS` for the WGS
+family or `bulkWES`): all bulk assays segmented together; dense matrices, one pseudobulk
+column per replicate. Single-cell writes per-assay sparse matrices under `allele_dir/{assay_type}/`.
 
 - `snps.tsv.gz` — SNP annotations (chr, pos, ref/alt, phase, block).
-- `snp.{Tallele,Aallele,Ballele}.npz` — sparse allele count matrices (SNPs x samples/cells).
+- `snp.{Tallele,Aallele,Ballele}.npz` — allele count matrices (SNPs x samples/cells); dense for bulk, sparse for single-cell.
 - `sample_ids.tsv` — sample metadata.
 - `barcodes.tsv.gz` — cell barcode list (single-cell only).
 - `barcodes.full.tsv.gz` — 2-col `REP_ID`/`BARCODE` mapping in matrix-column order (single-cell only).
@@ -100,35 +104,37 @@ One subdirectory per `{assay_type}_{rep_id}` with cellsnp-lite output.
 
 - `{assay_type}.h5ad` — AnnData with cells x features (single-cell only; produced by `process_anndata`).
 
-### Final Bins (bulk: `bb_dir/bulkWGS/`, or `bb_dir/bulkWES/` for a WES-only run; single-cell/copytyping: `bb_dir/{assay_type}/`)
+### Final Bins — bulk: `bb_dir/{stream}/`; single-cell & copytyping: per-assay `bb_dir/{assay_type}/`
 
-Common outputs across all modes:
-- `sample_ids.tsv` — sample metadata. For bulk this carries an `assay_type` column and its row order matches the matrix columns.
+Common:
+- `sample_ids.tsv` — sample metadata. For bulk and single-cell it carries an `assay_type` column and its row order matches the (sample / replicate×assay) matrix columns.
 
-**Bulk (`bulk_genotyping`):** all bulk assays are jointly segmented on one shared bin grid under `bb_dir/bulkWGS/` (WGS family) or `bb_dir/bulkWES/` (WES-only).
+**Bulk (`bulk_genotyping`):** all bulk assays jointly segmented on one shared bin grid, written under `bb_dir/{stream}/` (`stream` = `bulkWGS` or `bulkWES`).
 - `bb.tsv.gz` — bin annotations (one shared grid for all bulk assays).
-- `bb.{Tallele,Aallele,Ballele,baf,depth,rdr}.npz` — allele, depth, and RDR matrices. Columns concatenate all bulk samples (per assay, normal first); `rdr` holds the tumor columns only, normalized per assay against that assay's own normal.
+- `bb.{Tallele,Aallele,Ballele,depth,rdr}.npz` — allele, depth, and RDR matrices. Columns concatenate all bulk samples (per assay, normal first); `rdr` holds the tumor columns only, normalized per assay against that assay's own normal. (BAF is not stored — derive it from `Ballele`/`Tallele`.)
 
-**Single-cell (`single_cell_genotyping`):**
-- `bb.tsv.gz` — bin annotations.
-- `bb.{Tallele,Aallele,Ballele}.npz` — allele count matrices.
-- `multi_snp.tsv.gz` — multi-SNP group annotations.
-- `multi_snp.{Tallele,Aallele,Ballele}.npz` — multi-SNP allele count matrices.
-- `barcodes.tsv.gz`, `barcodes.full.tsv.gz` — copied from `allele_dir`.
+**Single-cell (`single_cell_genotyping`):** all of the sample's non-bulk assays are jointly segmented on one shared grid (one pseudobulk column per replicate×assay). Everything lives under `bb_dir/{assay_type}/`; the shared grid and combined sample sheet are duplicated into each sub-dir.
+- `{assay_type}/bb.tsv.gz` — the one shared bin grid (joint across assays; identical copy in each sub-dir).
+- `{assay_type}/sample_ids.tsv` — one row per replicate×assay (identical copy in each sub-dir).
+- `{assay_type}/bb.{Tallele,Aallele,Ballele}.npz` — per-assay allele count matrices (bins × cells) on the shared grid. (BAF is not stored — derive it from `Ballele`/`Tallele`.)
+- `{assay_type}/bb.Xcount.npz` — per-assay native-count matrix per bb bin (bins × cells, sparse int32), same shape/column order as `{assay_type}/bb.{T,A,B}allele.npz`. **scATAC**: deduped ATAC fragment counts (each fragment counted once by its midpoint, from raw fragments). **scRNA / VISIUM / VISIUM3prime**: UMI counts, summed from the `process_rna_anndata` h5ad (each gene assigned to its largest-overlap bin, as in copytyping).
+- `{assay_type}/multi_snp.tsv.gz`, `{assay_type}/multi_snp.{Tallele,Aallele,Ballele}.npz` — per-assay multi-SNP diagnostic groups.
+- `{assay_type}/barcodes.tsv.gz`, `{assay_type}/barcodes.full.tsv.gz` — per-assay, copied from `allele_dir`.
 
-**Copytyping (`copytyping_preprocess`):**
+**Copytyping (`copytyping_preprocess`):** per assay under `bb_dir/{assay_type}/`.
 - `cnv_segments.tsv` — BB block annotations.
 - `bb.{Xcount,Tallele,Aallele,Ballele}.npz` — per-block count matrices.
 - `barcodes.tsv.gz`, `barcodes.full.tsv.gz` — copied from `allele_dir`.
 
-### QC (bulk: `qc_dir/bulkWGS/` or `qc_dir/bulkWES/`; single-cell/copytyping: `qc_dir/{assay_type}/`)
+### QC (`qc_dir/`, flat: `<stage>.<name>.<assay>.<run_id>.<ext>`)
 
-Plots from bias correction, phasing, and binning steps:
-- `rd_correct.{run_id}.pdf` — read depth bias correction (bulk WGS/WES). One page per sample with before/after correction genome-wide RD scatter, followed by GC correction diagnostic pages.
-- `snp_allele_freq.{run_id}.pdf` — SNP-level allele frequency: page 1 = unphased REF/TOTAL, page 2 = phased B-allele frequency.
-- `snp_depth_hist.{run_id}.pdf` — SNP depth histogram.
-- `combine_counts.{run_id}.pdf` — adaptive binning QC: bin-level BAF + per-sample RDR/BAF (bulk).
-- `af_cnv-B_{assay_type}.{run_id}.pdf` — SNP and BB-level BAF (copytyping only).
+All QC plots are written flat in `qc_dir`, with the pipeline stage, assay (or `bulk`), and run_id encoded in the filename:
+- `phase_and_concat.snp_allele_freq.{assay}.{run_id}.pdf` — SNP allele frequency: page 1 = unphased REF/TOTAL, page 2 = phased B-allele frequency.
+- `phase_and_concat.snp_depth_hist.{assay}.{run_id}.pdf` — SNP depth histogram.
+- `rd_correction.rd_correct.{assay}.{run_id}.pdf` — read depth bias correction (bulk WGS/WES): before/after genome-wide RD scatter + GC/MAP/RT diagnostics.
+- `combine_counts.combine_counts.bulk.{run_id}.pdf` — adaptive binning QC (bulk): segment-length & genes/segment histograms, per-sample count histograms, bin-level BAF and per-sample RDR/BAF scatter.
+- `combine_counts.af_B_bb.pseudobulk.{assay}.{run_id}.pdf` (and `…af_B_multi-snp…`) — bin-level pseudobulk BAF (single-cell).
+- `cnv_segmentation.af_cnv-B_{assay}.{assay}.{run_id}.pdf` — SNP and BB-level BAF (copytyping only).
 
 ---
 
@@ -136,7 +142,7 @@ Plots from bias correction, phasing, and binning steps:
 
 ### `snps.tsv.gz`
 
-`#CHR`, `POS`, `POS0`, `START`, `END`, `GT`, `PHASE` (0 = B-allele is ALT, 1 = B-allele is REF), `region_id`, `feature_id`, `feature_type` (exon/intron/intergenic).
+`#CHR`, `POS`, `POS0`, `START`, `END`, `GT`, `PHASE` (0 = B-allele is ALT, 1 = B-allele is REF), `region_id`, `feature_id`, `feature_type` (exon/intron/intergenic). Bulk also carries `PS` (phase set) when the phaser (longphase) emits it.
 
 ### `bb.tsv.gz`
 

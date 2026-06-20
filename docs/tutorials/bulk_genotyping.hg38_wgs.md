@@ -96,11 +96,11 @@ gmap_path: "/path/to/shapeit5/resources/maps/b38/chr{chrname}.b38.gmap.gz"
 ```
 
 ### Count reads
-By default, we apply quadratic median regression to correct GC content and replication timing biases while being robust to copy-number signals. Use read-depth plots and KDE scatter plot for diagnostic purpose under `<qc_dir>/<assay_type>/rd_correction/*`.
+By default, we apply quadratic median regression to correct GC content and replication timing biases while being robust to copy-number signals. Use read-depth plots and KDE scatter plot for diagnostic purpose under `<qc_dir>/rd_correction.rd_correct.<assay_type>.*.pdf`.
 
 ### Combine counts
 
-`min_snp_reads` and `min_snp_per_block` balanced the bin size and phase-switch errors from reference phasing. Use bb BAF and RDR genome-level plot for diagnostic purpose under `<qc_dir>/bulkWGS/combine_counts/*`. If the bins are pretty sparse or noisy, please decrease or increase the parameters accordingly. We recommend leaving them as default.
+`min_snp_reads` and `min_snp_per_block` balanced the bin size and phase-switch errors from reference phasing. Use bb BAF and RDR genome-level plot for diagnostic purpose under `<qc_dir>/combine_counts.combine_counts.bulk.*.pdf`. If the bins are pretty sparse or noisy, please decrease or increase the parameters accordingly. We recommend leaving them as default.
 
 ```yaml
 params_combine_counts:
@@ -134,7 +134,7 @@ Defaults are auto-loaded from `config/config.yaml`. The `--configfile` and `--co
 
 ## 5. Results
 
-Final outputs required by HATCHet3 can be found in `<out_dir>/<bb_dir>/bulkWGS/`. See [docs/reference.md](../reference.md) for the full output specification including intermediate files.
+Final outputs required by HATCHet3 can be found in `<out_dir>/<bb_dir>/{stream}/` (`stream` = `bulkWGS` for the WGS family or `bulkWES`; e.g. `bb.tsv.gz`, `bb.{Tallele,Aallele,Ballele,depth,rdr}.npz`). See [docs/reference.md](../reference.md) for the full output specification including intermediate files.
 
 ## 6. Rerunning from intermediate results
 
