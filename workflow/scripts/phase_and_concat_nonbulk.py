@@ -31,27 +31,6 @@ from plot_utils import plot_allele_freqs, plot_snp_depth_histogram
 from aggregation_utils import *
 
 
-def annotate_feature_type(snps, gtf_file):
-    """Annotate SNPs with feature_type (exon/intron/intergenic) using a GTF file."""
-    genes_gtf = read_genes_gtf_file(gtf_file, id_col="gene_id")[
-        ["gene_id", "#CHR", "START", "END"]
-    ]
-    genes_gtf["gene_idx"] = np.arange(len(genes_gtf))
-    snps = assign_pos_to_range(snps, genes_gtf, ref_id="gene_idx", pos_col="POS0")
-    gene_mask = snps["gene_idx"].notna()
-
-    exons_gtf = read_exons_gtf_file(gtf_file)
-    exons_gtf["exon_idx"] = np.arange(len(exons_gtf))
-    snps = assign_pos_to_range(snps, exons_gtf, ref_id="exon_idx", pos_col="POS0")
-
-    snps["feature_type"] = "intergenic"
-    snps.loc[gene_mask, "feature_type"] = "intron"
-    snps.loc[snps["exon_idx"].notna(), "feature_type"] = "exon"
-
-    snps.drop(columns=["exon_idx"], inplace=True, errors="ignore")
-    return snps, genes_gtf, gene_mask
-
-
 ##################################################
 log_file = snakemake_handle.log[0]
 setup_logging(log_file)
@@ -130,57 +109,35 @@ a_mtx, b_mtx = apply_phase_to_mat(tot_mtx, ref_mtx, alt_mtx, snps["PHASE"].to_nu
 num_snps_before = len(snps)
 
 snp_mask = np.ones(len(snps), dtype=bool)
-regions = read_region_file(region_bed)
-region_mask = get_mask_by_region(snps, regions)
-logging.info(f"region filter: {np.sum(region_mask)}/{len(snps)} SNPs passed")
-snp_mask &= region_mask
+snp_mask, regions = apply_region_blacklist_masks(
+    snps, snp_mask, region_bed, blacklist_bed
+)
 
-if blacklist_bed is not None:
-    bl_regions = read_region_file(blacklist_bed)
-    bl_mask = get_mask_by_region(snps, bl_regions)
-    logging.info(f"blacklist filter: {np.sum(bl_mask)}/{len(snps)} SNPs in blacklist")
-    snp_mask &= ~bl_mask
-
-snps, genes_gtf, gene_mask = annotate_feature_type(snps, gtf_file)
+# feature_id (;-joined GTF genes) + feature_type, uniform across all assays
+snps, _, _ = annotate_feature_type(snps, gtf_file)
 snps.drop(columns=["gene_idx"], inplace=True, errors="ignore")
 
 if is_rna_assay:
-    # filter SNPs to those overlapping an RNA feature (gene) from the h5ad
-    logging.info("annotate SNPs with feature_id")
+    # coverage filter only: RNA reads cover expressed genes, so drop SNPs outside
+    # the h5ad feature set (feature_id itself stays GTF-derived from above)
     adata: sc.AnnData = sc.read_h5ad(h5ad_file)
     feature_df = adata.var.reset_index(drop=False).rename(
         columns={"index": "feature_id"}
     )
     feature_df["feature_idx"] = np.arange(len(feature_df))
-
-    snps = assign_pos_to_range(snps, feature_df, ref_id="feature_idx", pos_col="POS0")
-    snp_mask &= snps["feature_idx"].notna().to_numpy()
-    logging.info(
-        f"{assay_type} feature overlap: {np.sum(snp_mask)}/{len(snps)} "
-        f"({np.sum(snp_mask) / len(snps):.3%})"
+    cov = assign_pos_to_range(
+        snps[["#CHR", "POS0"]].copy(), feature_df, ref_id="feature_idx", pos_col="POS0"
     )
-else:
-    # scATAC: no feature-level filtering; region filter (above) already applied
-    snps["feature_id"] = "intergenic"
+    cov_mask = cov["feature_idx"].notna().to_numpy()
+    snp_mask &= cov_mask
+    logging.info(
+        f"{assay_type} feature overlap: {np.sum(cov_mask)}/{len(snps)} "
+        f"({np.sum(cov_mask) / len(snps):.3%})"
+    )
 
-_n_exon = int((snps["feature_type"] == "exon").sum())
-logging.info(f"#exonic SNPs: {_n_exon}/{len(snps)} ({_n_exon / max(len(snps), 1):.3%})")
-if exon_only:
-    exon_mask = (snps["feature_type"] == "exon").to_numpy()
-    logging.info(f"exon filter: {np.sum(exon_mask)}/{len(snps)} SNPs passed")
-    snp_mask &= exon_mask
+snp_mask = apply_exon_only_mask(snps, snp_mask, exon_only)
 
 snps = snps.loc[snp_mask, :].reset_index(drop=True)
-if is_rna_assay:
-    snps["feature_idx"] = snps["feature_idx"].astype(feature_df["feature_idx"].dtype)
-    snps = pd.merge(
-        left=snps,
-        right=feature_df[["feature_idx", "feature_id"]],
-        how="left",
-        on="feature_idx",
-        sort=False,
-    ).reset_index(drop=True)
-# TODO refine by gene interval?
 snps["START"] = snps["POS0"]
 snps["END"] = snps["POS"]
 

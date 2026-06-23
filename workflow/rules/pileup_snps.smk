@@ -38,7 +38,7 @@ rule pileup_snps_bulk_mode1b:
         """
 
 
-rule pileup_snps_single_cell_mode1a:
+rule pileup_snps_nonbulk_mode1a:
     input:
         barcode=lambda wc: get_data[(wc.assay_type, wc.rep_id)][0],
         bam=lambda wc: get_data[(wc.assay_type, wc.rep_id)][1],
@@ -67,7 +67,7 @@ rule pileup_snps_single_cell_mode1a:
         minCOUNT=config["params_cellsnp_lite"]["minCOUNT_pileup"],
     log:
         config["log_dir"]
-        + f"/pileup_snps_single_cell_mode1a/pileup_snps.{{assay_type}}_{{rep_id}}.{_run_id}.log",
+        + f"/pileup_snps_nonbulk_mode1a/pileup_snps.{{assay_type}}_{{rep_id}}.{_run_id}.log",
     conda:
         "../envs/tools.yaml"
     shell:

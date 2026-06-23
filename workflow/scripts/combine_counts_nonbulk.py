@@ -52,7 +52,6 @@ h5ad_files = list(snakemake_handle.input["h5ad_files"])
 gmap_file = maybe_path(snakemake_handle.input["gmap_file"])
 region_bed = snakemake_handle.input["region_bed"]
 genome_size = snakemake_handle.input["genome_size"]
-gtf_file = maybe_path(snakemake_handle.input["gtf_file"])
 
 # parameters
 ranger_assays = list(snakemake_handle.params["ranger_assays"])  # parallel to ranger_dirs
@@ -103,37 +102,24 @@ logging.info(f"joint non-bulk binning: sample={sample_name}, assays={nonbulk_ass
 
 ##################################################
 # 1. shared SNP grid (union across assays)
-has_ps = all("PS" in s.columns for s in snps_list)
-has_feature = all("feature_id" in s.columns for s in snps_list)
-annot_cols = (
-    ["#CHR", "POS", "POS0", "START", "END", "region_id"]
-    + (["PS"] if has_ps else [])
-    + (["feature_id"] if has_feature else [])
-)
-snps = (
-    pd.concat([s[annot_cols] for s in snps_list], ignore_index=True)
-    .drop_duplicates(["#CHR", "POS0"])
-)
-snps = sort_df_chr(snps, ch="#CHR", pos="POS0").reset_index(drop=True)
-snps["snp_row"] = np.arange(len(snps))
+snps, has_ps, has_feature = build_union_snp_grid(snps_list)
 n_snps = len(snps)
 logging.info(f"shared SNP set (union): {n_snps} SNPs across {n_assays} assays")
 
-grp_cols = ["region_id"]
-if not has_ps:
-    logging.info("PS not in SNP columns, setting PS=1 for all SNPs")
-    snps["PS"] = 1
-grp_cols.append("PS")
-logging.info(f"#phaseset={snps['PS'].nunique()}")
+grp_cols = setup_phaseset_groups(snps)
 
 gene_aware_binning = gene_aware_binning_param and has_feature
 logging.info(f"gene_aware_binning={gene_aware_binning}")
 if gene_aware_binning:
-    # gene blocks over the union SNPs (genomically ordered) so a bin never splits a gene
+    # gene blocks over the union SNPs (genomically ordered) so a bin never splits a
+    # gene; explode the ;-joined multi-gene feature_id so each gene gets its own span
     _g = snps.loc[
         snps["feature_id"].notna() & (snps["feature_id"] != "intergenic"), ["feature_id"]
     ].copy()
     _g["__i"] = _g.index.to_numpy()
+    _g["feature_id"] = _g["feature_id"].str.split(";")
+    _g = _g.explode("feature_id")
+    _g = _g[_g["feature_id"] != "intergenic"]
     _rng = _g.groupby("feature_id")["__i"].agg(["min", "max"])
     snps["gene_block"] = gene_block_labels(
         len(snps), zip(_rng["min"].to_numpy(), _rng["max"].to_numpy())
@@ -184,12 +170,7 @@ bbs, snps_bb = adaptive_segmentation(
 )
 num_bbs = len(bbs)
 
-_split = count_split_genes(snps_bb, grp_cols)
-if _split is not None:
-    logging.info(
-        f"gene-split sanity: {_split[0]}/{_split[1]} genes have SNPs crossing a bin "
-        f"boundary (gene_aware_binning={gene_aware_binning})"
-    )
+count_split_genes(snps_bb, grp_cols, gene_aware_binning)
 
 logging.info("estimate bin-level switchprobs")
 if gmap_file is not None:
@@ -201,7 +182,15 @@ if gmap_file is not None:
 else:
     bbs["switchprobs"] = estimate_switchprobs_PS(bbs, switchprob_ps)
 
-bb_out = bbs[["#CHR", "START", "END", "#SNPS", "region_id", "switchprobs"]]
+bb_cols = ["#CHR", "START", "END", "#SNPS", "region_id", "switchprobs"]
+if "feature_id" in snps_bb.columns:
+    bbs["feature_id"] = (
+        bbs["bb_id"]
+        .map(snps_bb.groupby("bb_id")["feature_id"].agg(merge_feature_ids))
+        .fillna("intergenic")
+    )
+    bb_cols.append("feature_id")
+bb_out = bbs[bb_cols]
 for bb_path in out_bb_file:
     bb_out.to_csv(bb_path, sep="\t", header=True, index=False)
 # combined sample sheet: one row per (replicate x assay) column

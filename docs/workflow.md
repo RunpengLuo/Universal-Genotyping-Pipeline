@@ -37,9 +37,9 @@ Assays: `scRNA`, `scATAC`, `VISIUM`, `VISIUM3prime`
 | 3. Phase SNPs (per chr) | `phase_snps_{eagle,shapeit,longphase}` | eagle2 / shapeit5 / longphase |
 | 4. Concat phased VCFs | `concat_and_extract_phased_het_snps` | bcftools concat + view |
 | 5. Parse genetic map | `parse_genetic_map` | `scripts/parse_genetic_map.py` |
-| 6. Single-cell pileup | `pileup_snps_single_cell_mode1a` | cellsnp-lite |
+| 6. Single-cell pileup | `pileup_snps_nonbulk_mode1a` | cellsnp-lite |
 | 7. Build RNA AnnData (RNA-family only; feeds the RNA `bb.Xcount.npz`) | `process_rna_anndata` | `scripts/process_rna_anndata.py` |
-| 8. Phase and concat | `phase_and_concat_single_cell` | `scripts/phase_and_concat_single_cell.py` |
+| 8. Phase and concat | `phase_and_concat_nonbulk` | `scripts/phase_and_concat_nonbulk.py` |
 | 9. Adaptive binning (+ per-assay `bb.Xcount.npz`: scATAC from raw fragments, RNA from the h5ad) | `combine_counts_nonbulk` | `scripts/combine_counts_nonbulk.py` |
 
 **Outputs** (all per-assay under `bb_dir/{assay}/`): `bb.tsv.gz` (the one shared grid, joint across the sample's assays, duplicated into each sub-dir), `sample_ids.tsv` (likewise duplicated), `bb.{Tallele,Aallele,Ballele}.npz` (bins × cells), `bb.Xcount.npz` (per-cell native counts per bb bin — scATAC from raw fragments, scRNA/VISIUM UMIs from the h5ad), `multi_snp.*`, `barcodes{,.full}.tsv.gz`
@@ -52,9 +52,9 @@ Assays: `scRNA`, `scATAC`, `VISIUM`, `VISIUM3prime` (requires pre-computed het S
 
 | Step | Rule | Script / Tool |
 |------|------|---------------|
-| 1. Single-cell pileup | `pileup_snps_single_cell_mode1a` | cellsnp-lite |
+| 1. Single-cell pileup | `pileup_snps_nonbulk_mode1a` | cellsnp-lite |
 | 2. Build AnnData (RNA only) | `process_rna_anndata` | `scripts/process_rna_anndata.py` |
-| 3. Phase and concat | `phase_and_concat_single_cell` | `scripts/phase_and_concat_single_cell.py` |
+| 3. Phase and concat | `phase_and_concat_nonbulk` | `scripts/phase_and_concat_nonbulk.py` |
 | 4. Adaptive binning | `combine_counts_nonbulk` | `scripts/combine_counts_nonbulk.py` |
 | 5. CNV segmentation | `cnv_segmentation` | `scripts/cnv_segmentation.py` |
 

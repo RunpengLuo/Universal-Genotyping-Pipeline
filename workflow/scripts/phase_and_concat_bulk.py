@@ -50,30 +50,6 @@ def log_ref_mapping_bias(ref_counts, alt_counts, label=""):
         )
 
 
-def annotate_feature_type(snps, gtf_file):
-    """Annotate SNPs with feature_type (exon/intron/intergenic) using a GTF file.
-
-    Returns the gene_mask (bool Series) indicating which SNPs fall within a gene.
-    """
-    genes_gtf = read_genes_gtf_file(gtf_file, id_col="gene_id")[
-        ["gene_id", "#CHR", "START", "END"]
-    ]
-    genes_gtf["gene_idx"] = np.arange(len(genes_gtf))
-    snps = assign_pos_to_range(snps, genes_gtf, ref_id="gene_idx", pos_col="POS0")
-    gene_mask = snps["gene_idx"].notna()
-
-    exons_gtf = read_exons_gtf_file(gtf_file)
-    exons_gtf["exon_idx"] = np.arange(len(exons_gtf))
-    snps = assign_pos_to_range(snps, exons_gtf, ref_id="exon_idx", pos_col="POS0")
-
-    snps["feature_type"] = "intergenic"
-    snps.loc[gene_mask, "feature_type"] = "intron"
-    snps.loc[snps["exon_idx"].notna(), "feature_type"] = "exon"
-
-    snps.drop(columns=["exon_idx"], inplace=True, errors="ignore")
-    return snps, genes_gtf, gene_mask
-
-
 ##################################################
 log_file = snakemake_handle.log[0]
 setup_logging(log_file)
@@ -148,39 +124,18 @@ for nc in normal_cols:
 ##################################################
 num_snps_before = len(snps)
 snp_mask = np.ones(len(snps), dtype=bool)
+snp_mask, regions = apply_region_blacklist_masks(
+    snps, snp_mask, region_bed, blacklist_bed
+)
 
-regions = read_region_file(region_bed)
-region_mask = get_mask_by_region(snps, regions)
-logging.info(f"region filter: {np.sum(region_mask)}/{len(snps)} SNPs passed")
-snp_mask &= region_mask
-
-if blacklist_bed is not None:
-    bl_regions = read_region_file(blacklist_bed)
-    bl_mask = get_mask_by_region(snps, bl_regions)
-    logging.info(f"blacklist filter: {np.sum(bl_mask)}/{len(snps)} SNPs in blacklist")
-    snp_mask &= ~bl_mask
-
-snps, genes_gtf, gene_mask = annotate_feature_type(snps, gtf_file)
-snps["feature_id"] = "intergenic"
-if gene_mask.any():
-    snps.loc[gene_mask, "gene_idx"] = snps.loc[gene_mask, "gene_idx"].astype(int)
-    snps.loc[gene_mask, "feature_id"] = (
-        genes_gtf.set_index("gene_idx")
-        .loc[snps.loc[gene_mask, "gene_idx"], "gene_id"]
-        .values
-    )
+snps, _, _ = annotate_feature_type(snps, gtf_file)
 snps.drop(columns=["gene_idx"], inplace=True, errors="ignore")
 
 snp_mask &= get_mask_by_depth(snps, tot_mtx, min_dp=max(min_depth, 1))
 for nc in normal_cols:
     snp_mask &= get_mask_by_het_balanced(snps, ref_mtx, alt_mtx, gamma, normal_idx=nc)
 
-_n_exon = int((snps["feature_type"] == "exon").sum())
-logging.info(f"#exonic SNPs: {_n_exon}/{len(snps)} ({_n_exon / max(len(snps), 1):.3%})")
-if exon_only:
-    exon_mask = (snps["feature_type"] == "exon").to_numpy()
-    logging.info(f"exon filter: {np.sum(exon_mask)}/{len(snps)} SNPs passed")
-    snp_mask &= exon_mask
+snp_mask = apply_exon_only_mask(snps, snp_mask, exon_only)
 
 snps = snps.loc[snp_mask, :].reset_index(drop=True)
 snps = assign_snp_bounderies(snps, regions, colname="region_id")

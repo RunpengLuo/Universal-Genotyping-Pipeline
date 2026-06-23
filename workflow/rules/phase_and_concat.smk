@@ -60,7 +60,7 @@ rule phase_and_concat_bulk:
 ##################################################
 
 
-rule phase_and_concat_single_cell:
+rule phase_and_concat_nonbulk:
     input:
         vcfs=lambda wc: [
             config["pileup_dir"] + f"/{wc.assay_type}_{rep_id}/cellSNP.base.vcf.gz"
@@ -122,4 +122,4 @@ rule phase_and_concat_single_cell:
     conda:
         "../envs/base.yaml"
     script:
-        """../scripts/phase_and_concat_single_cell.py"""
+        """../scripts/phase_and_concat_nonbulk.py"""

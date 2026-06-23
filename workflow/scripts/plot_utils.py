@@ -25,6 +25,13 @@ from combine_counts_utils import (
 )
 
 
+def _extract_col(mat, col_idx):
+    """Extract a single matrix column as a 1-D numpy array (dense or sparse)."""
+    if issparse(mat):
+        return np.asarray(mat[:, col_idx].toarray()).ravel()
+    return np.asarray(mat[:, col_idx]).ravel()
+
+
 # ---------------------------------------------------------------------------
 # rd_correct_utils plots
 # ---------------------------------------------------------------------------
@@ -645,11 +652,6 @@ def plot_segmentation_qc(
     """
     logging.info("QC analysis - plot segmentation QC histograms")
 
-    def _col(mat, j):
-        if issparse(mat):
-            return np.asarray(mat[:, j].toarray()).ravel()
-        return np.asarray(mat[:, j]).ravel()
-
     name_col = "SAMPLE_NAME" if "SAMPLE_NAME" in sample_df.columns else "SAMPLE"
     n_rep = len(sample_df)
 
@@ -686,9 +688,11 @@ def plot_segmentation_qc(
         )
         x_label = ASSAY_COUNT_LABEL.get(assay, "count")
         x_scale = ASSAY_COUNT_SCALE.get(assay, 1.0)
-        _hist_with_stats(axes[ri, 0], _col(x_count_mat, ri) / x_scale, x_label)
-        _hist_with_stats(axes[ri, 1], _col(b_count_mat, ri), "B-allele count")
-        _hist_with_stats(axes[ri, 2], _col(tot_count_mat, ri), "total allele count")
+        _hist_with_stats(axes[ri, 0], _extract_col(x_count_mat, ri) / x_scale, x_label)
+        _hist_with_stats(axes[ri, 1], _extract_col(b_count_mat, ri), "B-allele count")
+        _hist_with_stats(
+            axes[ri, 2], _extract_col(tot_count_mat, ri), "total allele count"
+        )
         axes[ri, 0].annotate(
             row_label,
             xy=(0, 0.5), xytext=(-axes[ri, 0].yaxis.labelpad - 22, 0),
@@ -790,16 +794,10 @@ def plot_snp_depth_histogram(
             f"min={depth_vals.min():.0f}, max={depth_vals.max():.0f}"
         )
 
-    def _get_col(mat, col_idx):
-        """Extract a single column as a 1-D numpy array."""
-        if issparse(mat):
-            return np.asarray(mat[:, col_idx].toarray()).ravel()
-        return np.asarray(mat[:, col_idx]).ravel()
-
     for ri, label in enumerate(row_labels):
         # --- depth histogram ---
         ax_depth = axes[ri, 0]
-        depth = _get_col(depth_mat, ri)
+        depth = _extract_col(depth_mat, ri)
         if len(depth) > 0:
             clip_threshold = np.percentile(depth, 99)
             ax_depth.hist(depth[depth <= clip_threshold], bins=50, alpha=0.7)
@@ -810,8 +808,8 @@ def plot_snp_depth_histogram(
         # --- ref-AF histogram ---
         if has_af:
             ax_af = axes[ri, 1]
-            total_depth = _get_col(depth_mat, ri).astype(np.float64)
-            ref_depth = _get_col(ref_count_mat, ri).astype(np.float64)
+            total_depth = _extract_col(depth_mat, ri).astype(np.float64)
+            ref_depth = _extract_col(ref_count_mat, ri).astype(np.float64)
             covered_mask = total_depth > 0
             ref_af = np.full(len(total_depth), np.nan)
             ref_af[covered_mask] = ref_depth[covered_mask] / total_depth[covered_mask]

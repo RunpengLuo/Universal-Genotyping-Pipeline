@@ -35,6 +35,14 @@ from aggregation_utils import (
     detect_phase_flips,
     gene_block_labels,
     matrix_segmentation,
+    merge_feature_ids,
+)
+from combine_counts_utils import (
+    aggregate_window_depth_to_bins,
+    build_assay_blocks,
+    compute_bb_rdr,
+    load_bulk_snp_matrices,
+    setup_phaseset_groups,
 )
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_utils import plot_allele_freqs, plot_rdr_baf, plot_segmentation_qc
@@ -59,7 +67,6 @@ gmap_file = maybe_path(snakemake_handle.input["gmap_file"])
 region_bed = snakemake_handle.input["region_bed"]
 blacklist_bed = maybe_path(snakemake_handle.input.get("blacklist_bed", None))
 genome_size = snakemake_handle.input["genome_size"]
-gtf_file = maybe_path(snakemake_handle.input["gtf_file"])
 
 # parameters
 qc_dir = snakemake_handle.params["qc_dir"]
@@ -87,62 +94,28 @@ out_dp_mtx_bb = snakemake_handle.output["dp_mtx_bb"]
 out_rdr_mtx_bb = snakemake_handle.output["rdr_mtx_bb"]
 out_sample_file = snakemake_handle.output["sample_file"]
 
-joint_sids = pd.read_table(sample_file)
-snps = pd.read_table(snp_info, sep="\t")
-tot_mtx = np.load(tot_mtx_snp)["mat"].astype(np.int32)
-a_mtx = np.load(a_mtx_snp)["mat"].astype(np.int32)
-b_mtx = np.load(b_mtx_snp)["mat"].astype(np.int32)
+sample_df = pd.read_table(sample_file)
+snps, tot_mtx, a_mtx, b_mtx = load_bulk_snp_matrices(
+    snp_info, tot_mtx_snp, a_mtx_snp, b_mtx_snp
+)
 dp_corrected_list = [np.load(f)["mat"] for f in dp_corrected_files]
 window_df_list = [pd.read_table(f, sep="\t") for f in window_df_files]
-
-snps["_row"] = np.arange(len(snps))
-snps = sort_df_chr(snps, ch="#CHR", pos="POS0").reset_index(drop=True)
-perm = snps["_row"].to_numpy()
-tot_mtx, a_mtx, b_mtx = tot_mtx[perm], a_mtx[perm], b_mtx[perm]
-snps = snps.drop(columns="_row")
 n_snps = len(snps)
 
-sample_name = joint_sids["SAMPLE_NAME"].iloc[0]
-total_samples = len(joint_sids)
+sample_name = sample_df["SAMPLE_NAME"].iloc[0]
+total_samples = len(sample_df)
 logging.info(
     f"combine_counts: sample={sample_name}, bulk_assays={bulk_assays}; "
-    f"joint grid {n_snps} SNPs x {total_samples} samples"
+    f"{n_snps} SNPs x {total_samples} samples"
 )
 
-col_assay = joint_sids["assay_type"].tolist()
-col_repid = joint_sids["REP_ID"].tolist()
-col_stype = joint_sids["sample_type"].tolist()
-assay_blocks = []
-for at in bulk_assays:
-    cols = [i for i, a in enumerate(col_assay) if a == at]
-    assert cols, f"no samples for assay {at} in joint sample sheet"
-    stypes = [col_stype[i] for i in cols]
-    has_normal_k = "normal" in stypes
-    assay_blocks.append(
-        {
-            "assay": at,
-            "offset": cols[0],
-            "n": len(cols),
-            "has_normal": has_normal_k,
-            "normal_col": cols[0] if has_normal_k else None,
-            "tumor_cols": [cols[i] for i, st in enumerate(stypes) if st == "tumor"],
-        }
-    )
-
-tumor_cols_all = [c for blk in assay_blocks for c in blk["tumor_cols"]]
+col_assay = sample_df["assay_type"].tolist()
+col_repid = sample_df["REP_ID"].tolist()
+assay_blocks, tumor_cols_all = build_assay_blocks(sample_df, bulk_assays)
 logging.info(f"{total_samples} bulk samples, {len(tumor_cols_all)} tumor columns")
 
-assert "region_id" in snps.columns, "invalid SNP file"
 has_feature = "feature_id" in snps.columns
-has_ps = "PS" in snps.columns
-grp_cols = ["region_id"]
-if not has_ps:
-    logging.info("PS not in SNP columns, setting PS=1 for all SNPs")
-    snps["PS"] = 1
-else:
-    assert snps["PS"].notna().all(), "unexpected SNP without PS in phased VCF"
-grp_cols.append("PS")
-logging.info(f"#phaseset={snps['PS'].nunique()}")
+grp_cols = setup_phaseset_groups(snps)
 
 if phase_flip_test:
     snps["phase_group"] = detect_phase_flips(
@@ -190,10 +163,14 @@ if phase_flip_test:
         window_df["phase_group"] = window_df["phase_group"].ffill()
 
 if gene_aware_binning:
-    # glue each gene's window span into one block so a bin never splits a gene
+    # glue each gene's window span into one block so a bin never splits a gene;
+    # explode the ;-joined multi-gene feature_id so each gene gets its own span
     genic = _snps_tmp[
         _snps_tmp["feature_id"].notna() & (_snps_tmp["feature_id"] != "intergenic")
-    ]
+    ].copy()
+    genic["feature_id"] = genic["feature_id"].str.split(";")
+    genic = genic.explode("feature_id")
+    genic = genic[genic["feature_id"] != "intergenic"]
     rng = genic.groupby("feature_id")["win_idx"].agg(["min", "max"])
     window_df["gene_block"] = gene_block_labels(
         len(window_df), zip(rng["min"].to_numpy(), rng["max"].to_numpy())
@@ -217,12 +194,7 @@ bbs, snps = adaptive_segmentation(
 )
 num_bbs = len(bbs)
 
-_split = count_split_genes(snps, grp_cols)
-if _split is not None:
-    logging.info(
-        f"gene-split sanity: {_split[0]}/{_split[1]} genes have SNPs crossing a bin "
-        f"boundary (gene_aware_binning={gene_aware_binning})"
-    )
+count_split_genes(snps, grp_cols, gene_aware_binning)
 
 bb_ids = snps["bb_id"].to_numpy()
 
@@ -243,63 +215,33 @@ baf_mtx_bb = np.divide(
 )
 
 logging.info("aggregating corrected window depth into adaptive bins (per assay)")
-bb_dp = np.full((num_bbs, total_samples), np.nan, dtype=np.float32)
-# per-bin total aligned bases (length-weighted), for segmentation QC
-bb_bases = np.zeros((num_bbs, total_samples), dtype=np.float64)
-for blk, win_a, dp_a in zip(assay_blocks, window_df_list, dp_corrected_list):
-    w = win_a.merge(window_df[["#CHR", "START", "END", "bin_id"]], on=["#CHR", "START", "END"], how="left")
-    assert w["bin_id"].notna().all(), f"{blk['assay']} windows missing from scaffold"
-    bin_ids = w["bin_id"].to_numpy().astype(np.int64)
-    win_lengths = (w["END"] - w["START"]).to_numpy(dtype=np.float64)
-    total_len_per_bin = np.bincount(bin_ids, weights=win_lengths, minlength=num_bbs)
-    for s in range(blk["n"]):
-        weighted_sums = np.bincount(
-            bin_ids, weights=dp_a[:, s] * win_lengths, minlength=num_bbs
-        )
-        bb_bases[:, blk["offset"] + s] = weighted_sums
-        with np.errstate(invalid="ignore"):
-            bb_dp[:, blk["offset"] + s] = weighted_sums / total_len_per_bin
+bb_dp, bb_bases = aggregate_window_depth_to_bins(
+    assay_blocks, window_df, window_df_list, dp_corrected_list, num_bbs, total_samples
+)
 
 logging.info(f"compute bb RDR, median_normalization={median_normalization}")
-bb_rdr = np.full((num_bbs, len(tumor_cols_all)), np.nan, dtype=np.float32)
-rdr_pos = {c: i for i, c in enumerate(tumor_cols_all)}
-for blk, win_a, dp_a in zip(assay_blocks, window_df_list, dp_corrected_list):
-    if blk["has_normal"] and not median_normalization:
-        win_sizes = (win_a["END"] - win_a["START"]).to_numpy(dtype=np.float64)
-        total_bases = np.nansum(dp_a * win_sizes[:, None], axis=0)
-        library_correction = total_bases[0] / total_bases
-        logging.info(f"  {blk['assay']} library factor: {library_correction}")
-        normal_bb_dp = bb_dp[:, blk["normal_col"]]
-        for c in blk["tumor_cols"]:
-            with np.errstate(invalid="ignore", divide="ignore"):
-                bb_rdr[:, rdr_pos[c]] = (
-                    bb_dp[:, c] / normal_bb_dp * library_correction[c - blk["offset"]]
-                )
-    else:
-        for c in blk["tumor_cols"]:
-            col = bb_dp[:, c]
-            valid_i = np.isfinite(col) & (col > 0)
-            if valid_i.any():
-                med = np.median(col[valid_i])
-                logging.info(f"  bb median-centering {col_repid[c]}: median={med:.4f}")
-                with np.errstate(invalid="ignore", divide="ignore"):
-                    bb_rdr[valid_i, rdr_pos[c]] = col[valid_i] / med
-
-if rdr_outlier_quantile > 0:
-    rdr_upper = np.nanquantile(bb_rdr, 1 - rdr_outlier_quantile)
-    n_outlier = int(np.nansum(bb_rdr > rdr_upper))
-    logging.info(
-        f"RDR outlier filter: quantile={rdr_outlier_quantile}, "
-        f"threshold={rdr_upper:.4f}, {n_outlier} entries set to NaN"
-    )
-    bb_rdr[bb_rdr > rdr_upper] = np.nan
+bb_rdr = compute_bb_rdr(
+    assay_blocks,
+    window_df_list,
+    dp_corrected_list,
+    bb_dp,
+    tumor_cols_all,
+    median_normalization,
+    rdr_outlier_quantile,
+    col_repid,
+)
 
 sample_labels = [f"{col_assay[i]}:{col_repid[i]}" for i in range(total_samples)]
 tumor_labels = [sample_labels[c] for c in tumor_cols_all]
 rdr_ylim = (np.round(np.nanquantile(bb_rdr, 0.99)).astype(int) + 1) * 1.1
 
 if gene_aware_binning and "feature_id" in snps.columns:
-    _genic = snps[snps["feature_id"].notna() & (snps["feature_id"] != "intergenic")]
+    _genic = snps[
+        snps["feature_id"].notna() & (snps["feature_id"] != "intergenic")
+    ][["bb_id", "feature_id"]].copy()
+    _genic["feature_id"] = _genic["feature_id"].str.split(";")
+    _genic = _genic.explode("feature_id")
+    _genic = _genic[_genic["feature_id"] != "intergenic"]
     bb_gene_count = (
         _genic.groupby("bb_id")["feature_id"].nunique()
         .reindex(range(num_bbs)).fillna(0).to_numpy()
@@ -311,7 +253,7 @@ pdf_path = os.path.join(qc_dir, f"combine_counts.combine_counts.bulk.{run_id}.pd
 with PdfPages(pdf_path) as pdf:
     plot_segmentation_qc(
         bbs,
-        joint_sids,
+        sample_df,
         bb_bases,
         b_mtx_bb,
         tot_mtx_bb,
@@ -388,14 +330,20 @@ if gmap_file is not None:
 else:
     bbs["switchprobs"] = estimate_switchprobs_PS(bbs, switchprob_ps)
 
-bbs[["#CHR", "START", "END", "#SNPS", "region_id", "switchprobs"]].to_csv(
-    out_bb_file, sep="\t", header=True, index=False
-)
+bb_cols = ["#CHR", "START", "END", "#SNPS", "region_id", "switchprobs"]
+if "feature_id" in snps_valid.columns:
+    bbs["feature_id"] = (
+        bbs["bb_id"]
+        .map(snps_valid.groupby("bb_id")["feature_id"].agg(merge_feature_ids))
+        .fillna("intergenic")
+    )
+    bb_cols.append("feature_id")
+bbs[bb_cols].to_csv(out_bb_file, sep="\t", header=True, index=False)
 np.savez_compressed(out_tot_mtx_bb, mat=tot_mtx_bb)
 np.savez_compressed(out_a_mtx_bb, mat=a_mtx_bb)
 np.savez_compressed(out_b_mtx_bb, mat=b_mtx_bb)
 np.savez_compressed(out_dp_mtx_bb, mat=bb_dp)
 np.savez_compressed(out_rdr_mtx_bb, mat=bb_rdr)
 
-joint_sids.to_csv(out_sample_file, sep="\t", index=False)
+sample_df.to_csv(out_sample_file, sep="\t", index=False)
 logging.info("finished combine_counts.")

@@ -1,4 +1,5 @@
 import os
+import heapq
 import logging
 
 import numpy as np
@@ -130,20 +131,32 @@ def detect_phase_flips(
     return pd.Series(phase_group, index=snps.index, dtype=np.int64)
 
 
-def count_split_genes(snps, grp_cols, bb_col="bb_id", feature_col="feature_id"):
-    """Count genes whose SNPs cross a bin boundary (sanity check for gene-aware binning).
+def count_split_genes(snps, grp_cols, gene_aware, bb_col="bb_id", feature_col="feature_id"):
+    """Log a gene-split sanity check for gene-aware binning.
 
     A gene is "split" if, within one ``grp_cols`` group (region_id / PS / phase_group),
-    its SNPs land in more than one bin. Returns ``(n_split, n_genes)`` over genic SNPs,
-    or ``None`` if no ``feature_col`` is present.
+    its SNPs land in more than one bin. Logs the split count over genic SNPs; no-op if
+    no ``feature_col`` is present.
     """
     if feature_col not in snps.columns:
-        return None
-    g = snps[snps[feature_col].notna() & (snps[feature_col] != "intergenic")]
+        return
+    g = snps.loc[
+        snps[feature_col].notna() & (snps[feature_col] != "intergenic"),
+        grp_cols + [bb_col, feature_col],
+    ].copy()
+    if len(g) > 0:
+        g[feature_col] = g[feature_col].str.split(";")
+        g = g.explode(feature_col)
+        g = g[g[feature_col] != "intergenic"]
     if len(g) == 0:
-        return 0, 0
-    key = g.groupby(grp_cols + [feature_col], sort=False)[bb_col].nunique()
-    return int((key > 1).sum()), int(len(key))
+        n_split, n_genes = 0, 0
+    else:
+        key = g.groupby(grp_cols + [feature_col], sort=False)[bb_col].nunique()
+        n_split, n_genes = int((key > 1).sum()), int(len(key))
+    logging.info(
+        f"gene-split sanity: {n_split}/{n_genes} genes have SNPs crossing a bin "
+        f"boundary (gene_aware_binning={gene_aware})"
+    )
 
 
 def gene_block_labels(n_items, ranges):
@@ -447,6 +460,96 @@ def adaptive_segmentation(
     return bbs, snps
 
 
+def _searchsorted_assign(starts, ends, positions):
+    """Index of the non-overlapping, start-sorted interval containing each position.
+
+    ``starts``/``ends`` are 0-based half-open (``START <= pos < END``), sorted by
+    ``starts`` with no overlaps. Returns ``(idx, valid)``: ``idx[k]`` is the interval
+    index for ``positions[k]`` where ``valid[k]``, undefined otherwise.
+    """
+    if len(starts) == 0:
+        n = len(positions)
+        return np.zeros(n, dtype=np.int64), np.zeros(n, dtype=bool)
+    idx = np.searchsorted(starts, positions, side="right") - 1
+    safe_idx = idx.clip(min=0)
+    valid = (idx >= 0) & (positions < ends[safe_idx])
+    return idx, valid
+
+
+def _interval_tiers(starts, ends):
+    """Partition intervals into the minimum number of non-overlapping tiers.
+
+    Greedy earliest-finishing assignment (sort by start, reuse the tier whose last
+    END fits before the next START, else open a new tier). Tier count equals the max
+    overlap depth. Members within a tier come out start-sorted. Returns a list of
+    index arrays into the input.
+    """
+    order = np.argsort(starts, kind="stable")
+    heap = []  # (last_end, tier_id)
+    tier_members = []
+    for i in order:
+        s, e = int(starts[i]), int(ends[i])
+        if heap and heap[0][0] <= s:
+            _, t = heapq.heappop(heap)
+            tier_members[t].append(i)
+            heapq.heappush(heap, (e, t))
+        else:
+            t = len(tier_members)
+            tier_members.append([i])
+            heapq.heappush(heap, (e, t))
+    return [np.array(m, dtype=np.int64) for m in tier_members]
+
+
+def assign_all_features(snps, ref, id_col, pos_col="POS0", sep=";", default="intergenic"):
+    """All overlapping ``ref`` ids per SNP, ``sep``-joined (``default`` when none).
+
+    Vectorized: ``ref`` intervals are split into non-overlapping tiers so each tier
+    uses the ``_searchsorted_assign`` fast path. The first (densest) tier is assigned
+    fully vectorized; only the rare SNPs that also hit a higher tier are joined.
+    Returns a Series aligned to ``snps.index``.
+    """
+    result = pd.Series(default, index=snps.index, dtype=object)
+    if len(ref) == 0:
+        return result
+    for chrom, ref_c in ref.groupby("#CHR", sort=False):
+        qmask = (snps["#CHR"] == chrom).to_numpy()
+        if not qmask.any():
+            continue
+        positions = snps.loc[qmask, pos_col].to_numpy()
+        qidx = snps.index[qmask]
+        starts = ref_c["START"].to_numpy()
+        ends = ref_c["END"].to_numpy()
+        ids = ref_c[id_col].to_numpy().astype(str)
+        tiers = _interval_tiers(starts, ends)
+
+        t0 = tiers[0]
+        idx0, valid0 = _searchsorted_assign(starts[t0], ends[t0], positions)
+        joined = np.where(valid0, ids[t0][idx0.clip(min=0)], "").astype(object)
+        for tier in tiers[1:]:
+            idx, valid = _searchsorted_assign(starts[tier], ends[tier], positions)
+            for k in np.nonzero(valid)[0]:
+                gid = ids[tier][idx[k]]
+                joined[k] = gid if joined[k] == "" else f"{joined[k]}{sep}{gid}"
+        joined = np.where(joined == "", default, joined)
+        result.loc[qidx] = joined
+    return result
+
+
+def merge_feature_ids(strings, sep=";", default="intergenic"):
+    """Collapse an iterable of ``sep``-joined feature_id strings into one deduped union.
+
+    Drops ``default`` tokens unless nothing else remains; preserves first-seen order.
+    """
+    seen = dict()
+    for s in strings:
+        if not isinstance(s, str):
+            continue
+        for tok in s.split(sep):
+            if tok and tok != default:
+                seen[tok] = None
+    return sep.join(seen) if seen else default
+
+
 def _assign_chrom_overlapping(qry, qry_mask, ref_chrom, ref_id, pos_col):
     """Assign positions to overlapping intervals on one chromosome using numpy."""
     positions = qry.loc[qry_mask, pos_col].to_numpy()
@@ -541,17 +644,70 @@ def assign_pos_to_range(
         has_overlap = len(starts) > 1 and np.any(starts[1:] < ends[:-1])
 
         if not has_overlap:
-            # Fast path: searchsorted for non-overlapping intervals
-            # 0-based half-open: START <= pos < END
-            idx = np.searchsorted(starts, positions, side="right") - 1
-            safe_idx = idx.clip(min=0)
-            valid = (idx >= 0) & (positions < ends[safe_idx])
+            idx, valid = _searchsorted_assign(starts, ends, positions)
             qry_indices = qry.index[qry_mask]
             qry.loc[qry_indices[valid], ref_id] = ids[idx[valid]]
         else:
             _assign_chrom_overlapping(qry, qry_mask, ref_chrom, ref_id, pos_col)
 
     return qry
+
+
+def annotate_feature_type(snps, gtf_file):
+    """Annotate SNPs with feature_type (exon/intron/intergenic) and feature_id (genes).
+
+    ``feature_id`` is a ``;``-joined list of every GTF gene the SNP overlaps
+    (``intergenic`` when none); ``feature_type`` is set independently from gene/exon
+    membership. Returns ``(snps, genes_gtf, gene_mask)`` where ``gene_mask`` flags
+    SNPs falling within a gene.
+    """
+    genes_gtf = read_genes_gtf_file(gtf_file, id_col="gene_id")[
+        ["gene_id", "#CHR", "START", "END"]
+    ]
+    genes_gtf["gene_idx"] = np.arange(len(genes_gtf))
+    snps = assign_pos_to_range(snps, genes_gtf, ref_id="gene_idx", pos_col="POS0")
+    gene_mask = snps["gene_idx"].notna()
+    snps["feature_id"] = assign_all_features(snps, genes_gtf, id_col="gene_id")
+
+    exons_gtf = read_exons_gtf_file(gtf_file)
+    exons_gtf["exon_idx"] = np.arange(len(exons_gtf))
+    snps = assign_pos_to_range(snps, exons_gtf, ref_id="exon_idx", pos_col="POS0")
+
+    snps["feature_type"] = "intergenic"
+    snps.loc[gene_mask, "feature_type"] = "intron"
+    snps.loc[snps["exon_idx"].notna(), "feature_type"] = "exon"
+
+    snps.drop(columns=["exon_idx"], inplace=True, errors="ignore")
+    return snps, genes_gtf, gene_mask
+
+
+def apply_region_blacklist_masks(snps, snp_mask, region_bed, blacklist_bed):
+    """AND snp_mask with region inclusion and (optional) blacklist exclusion.
+
+    Returns the updated mask and the parsed regions (reused for boundaries).
+    """
+    regions = read_region_file(region_bed)
+    region_mask = get_mask_by_region(snps, regions)
+    logging.info(f"region filter: {np.sum(region_mask)}/{len(snps)} SNPs passed")
+    snp_mask &= region_mask
+
+    if blacklist_bed is not None:
+        bl_regions = read_region_file(blacklist_bed)
+        bl_mask = get_mask_by_region(snps, bl_regions)
+        logging.info(f"blacklist filter: {np.sum(bl_mask)}/{len(snps)} SNPs in blacklist")
+        snp_mask &= ~bl_mask
+    return snp_mask, regions
+
+
+def apply_exon_only_mask(snps, snp_mask, exon_only):
+    """Log exonic SNP count and, if exon_only, AND snp_mask with the exon mask."""
+    n_exon = int((snps["feature_type"] == "exon").sum())
+    logging.info(f"#exonic SNPs: {n_exon}/{len(snps)} ({n_exon / max(len(snps), 1):.3%})")
+    if exon_only:
+        exon_mask = (snps["feature_type"] == "exon").to_numpy()
+        logging.info(f"exon filter: {np.sum(exon_mask)}/{len(snps)} SNPs passed")
+        snp_mask &= exon_mask
+    return snp_mask
 
 
 def snp_to_region(

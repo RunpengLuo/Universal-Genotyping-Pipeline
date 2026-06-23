@@ -13,6 +13,7 @@ from scipy.sparse import csr_matrix, hstack, issparse
 from scipy.stats import beta
 
 from io_utils import read_VCF
+from utils import sort_df_chr
 
 
 def canon_mat_one_replicate(
@@ -232,6 +233,184 @@ def compute_af_pseudobulk(tot_mtx, b_mtx):
 
     out = np.full(den.shape[0], np.nan, dtype=np.float32)
     return np.divide(num, den, out=out, where=(den > 0))
+
+
+##################################################
+# combine_counts: SNP parsing, grouping, and bulk depth/RDR aggregation
+
+
+def load_bulk_snp_matrices(snp_info_file, tot_file, a_file, b_file):
+    """Read the joint bulk SNP table and dense T/A/B matrices, genomically sorted.
+
+    Returns ``(snps, tot_mtx, a_mtx, b_mtx)`` with SNP rows in ``#CHR``/``POS0``
+    order and the matrices permuted to match.
+    """
+    snps = pd.read_table(snp_info_file, sep="\t")
+    tot_mtx = np.load(tot_file)["mat"].astype(np.int32)
+    a_mtx = np.load(a_file)["mat"].astype(np.int32)
+    b_mtx = np.load(b_file)["mat"].astype(np.int32)
+
+    snps["_row"] = np.arange(len(snps))
+    snps = sort_df_chr(snps, ch="#CHR", pos="POS0").reset_index(drop=True)
+    perm = snps["_row"].to_numpy()
+    tot_mtx, a_mtx, b_mtx = tot_mtx[perm], a_mtx[perm], b_mtx[perm]
+    snps = snps.drop(columns="_row")
+    return snps, tot_mtx, a_mtx, b_mtx
+
+
+def build_union_snp_grid(snps_list):
+    """Union per-assay SNP tables onto one genomically-sorted grid.
+
+    Keeps shared annotation columns (``PS``/``feature_id`` only when present in
+    EVERY assay), dedupes on ``(#CHR, POS0)``, sorts, and adds a 0-based
+    ``snp_row``. Returns ``(snps, has_ps, has_feature)``.
+    """
+    has_ps = all("PS" in s.columns for s in snps_list)
+    has_feature = all("feature_id" in s.columns for s in snps_list)
+    annot_cols = (
+        ["#CHR", "POS", "POS0", "START", "END", "region_id"]
+        + (["PS"] if has_ps else [])
+        + (["feature_id"] if has_feature else [])
+    )
+    # feature_id is GTF-derived per assay, so the same SNP carries an identical
+    # string in every assay -> keep-first dedup is already a correct cross-assay union
+    snps = pd.concat(
+        [s[annot_cols] for s in snps_list], ignore_index=True
+    ).drop_duplicates(["#CHR", "POS0"])
+    snps = sort_df_chr(snps, ch="#CHR", pos="POS0").reset_index(drop=True)
+    snps["snp_row"] = np.arange(len(snps))
+    return snps, has_ps, has_feature
+
+
+def setup_phaseset_groups(snps):
+    """Ensure a ``PS`` column exists and return grouping columns ``[region_id, PS]``.
+
+    If ``PS`` is absent, set ``PS=1`` for all SNPs. When ``PS`` is present (longphase
+    output) every SNP must carry a non-null value, since unphased SNPs are dropped
+    upstream; a ``NaN`` would signal an upstream bug.
+    """
+    assert "region_id" in snps.columns, "invalid SNP file"
+    if "PS" not in snps.columns:
+        logging.info("PS not in SNP columns, setting PS=1 for all SNPs")
+        snps["PS"] = 1
+    else:
+        assert snps["PS"].notna().all(), "unexpected SNP without PS in phased VCF"
+    logging.info(f"#phaseset={snps['PS'].nunique()}")
+    return ["region_id", "PS"]
+
+
+def build_assay_blocks(sample_df, bulk_assays):
+    """Group joint sample columns by assay into per-assay block descriptors.
+
+    Each block records the assay's column ``offset``, size ``n``, matched
+    ``normal_col`` (or None), and ``tumor_cols``. Returns
+    ``(assay_blocks, tumor_cols_all)``.
+    """
+    col_assay = sample_df["assay_type"].tolist()
+    col_stype = sample_df["sample_type"].tolist()
+    assay_blocks = []
+    for at in bulk_assays:
+        cols = [i for i, a in enumerate(col_assay) if a == at]
+        assert cols, f"no samples for assay {at} in joint sample sheet"
+        stypes = [col_stype[i] for i in cols]
+        has_normal_k = "normal" in stypes
+        assay_blocks.append(
+            {
+                "assay": at,
+                "offset": cols[0],
+                "n": len(cols),
+                "has_normal": has_normal_k,
+                "normal_col": cols[0] if has_normal_k else None,
+                "tumor_cols": [cols[i] for i, st in enumerate(stypes) if st == "tumor"],
+            }
+        )
+    tumor_cols_all = [c for blk in assay_blocks for c in blk["tumor_cols"]]
+    return assay_blocks, tumor_cols_all
+
+
+def aggregate_window_depth_to_bins(
+    assay_blocks, scaffold, window_df_list, dp_corrected_list, num_bbs, total_samples
+):
+    """Length-weighted aggregation of corrected window depth into adaptive bins.
+
+    Each assay's windows are matched to the shared ``scaffold`` (carrying
+    ``bin_id``) and aggregated per bin. Returns ``(bb_dp, bb_bases)``: per-bin
+    mean depth and per-bin total aligned bases, both ``(num_bbs, total_samples)``.
+    """
+    bb_dp = np.full((num_bbs, total_samples), np.nan, dtype=np.float32)
+    bb_bases = np.zeros((num_bbs, total_samples), dtype=np.float64)
+    for blk, win_a, dp_a in zip(assay_blocks, window_df_list, dp_corrected_list):
+        w = win_a.merge(
+            scaffold[["#CHR", "START", "END", "bin_id"]],
+            on=["#CHR", "START", "END"],
+            how="left",
+        )
+        assert w["bin_id"].notna().all(), f"{blk['assay']} windows missing from scaffold"
+        bin_ids = w["bin_id"].to_numpy().astype(np.int64)
+        win_lengths = (w["END"] - w["START"]).to_numpy(dtype=np.float64)
+        total_len_per_bin = np.bincount(bin_ids, weights=win_lengths, minlength=num_bbs)
+        for s in range(blk["n"]):
+            weighted_sums = np.bincount(
+                bin_ids, weights=dp_a[:, s] * win_lengths, minlength=num_bbs
+            )
+            bb_bases[:, blk["offset"] + s] = weighted_sums
+            with np.errstate(invalid="ignore"):
+                bb_dp[:, blk["offset"] + s] = weighted_sums / total_len_per_bin
+    return bb_dp, bb_bases
+
+
+def compute_bb_rdr(
+    assay_blocks,
+    window_df_list,
+    dp_corrected_list,
+    bb_dp,
+    tumor_cols_all,
+    median_normalization,
+    rdr_outlier_quantile,
+    col_repid,
+):
+    """Per-assay bin RDR for every tumor column.
+
+    Tumors are normalized by their own assay's matched normal (library-size
+    corrected) when one is present and ``median_normalization`` is False;
+    otherwise each tumor column is median-centered. Entries above the
+    ``1 - rdr_outlier_quantile`` quantile are set to NaN. Returns a
+    ``(num_bbs, len(tumor_cols_all))`` array column-aligned to ``tumor_cols_all``.
+    """
+    num_bbs = bb_dp.shape[0]
+    bb_rdr = np.full((num_bbs, len(tumor_cols_all)), np.nan, dtype=np.float32)
+    rdr_pos = {c: i for i, c in enumerate(tumor_cols_all)}
+    for blk, win_a, dp_a in zip(assay_blocks, window_df_list, dp_corrected_list):
+        if blk["has_normal"] and not median_normalization:
+            win_sizes = (win_a["END"] - win_a["START"]).to_numpy(dtype=np.float64)
+            total_bases = np.nansum(dp_a * win_sizes[:, None], axis=0)
+            library_correction = total_bases[0] / total_bases
+            logging.info(f"  {blk['assay']} library factor: {library_correction}")
+            normal_bb_dp = bb_dp[:, blk["normal_col"]]
+            for c in blk["tumor_cols"]:
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    bb_rdr[:, rdr_pos[c]] = (
+                        bb_dp[:, c] / normal_bb_dp * library_correction[c - blk["offset"]]
+                    )
+        else:
+            for c in blk["tumor_cols"]:
+                col = bb_dp[:, c]
+                valid_i = np.isfinite(col) & (col > 0)
+                if valid_i.any():
+                    med = np.median(col[valid_i])
+                    logging.info(f"  bb median-centering {col_repid[c]}: median={med:.4f}")
+                    with np.errstate(invalid="ignore", divide="ignore"):
+                        bb_rdr[valid_i, rdr_pos[c]] = col[valid_i] / med
+
+    if rdr_outlier_quantile > 0:
+        rdr_upper = np.nanquantile(bb_rdr, 1 - rdr_outlier_quantile)
+        n_outlier = int(np.nansum(bb_rdr > rdr_upper))
+        logging.info(
+            f"RDR outlier filter: quantile={rdr_outlier_quantile}, "
+            f"threshold={rdr_upper:.4f}, {n_outlier} entries set to NaN"
+        )
+        bb_rdr[bb_rdr > rdr_upper] = np.nan
+    return bb_rdr
 
 
 ##################################################

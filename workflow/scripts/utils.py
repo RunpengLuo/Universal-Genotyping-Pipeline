@@ -26,23 +26,6 @@ def setup_logging(log):
     root.addHandler(fh)
 
 
-def symlink_force(src, dst):
-    """Create a symlink from *src* to *dst*, removing any existing file at *dst*.
-
-    Parameters
-    ----------
-    src : str
-        Source path (symlink target).
-    dst : str
-        Destination path (symlink location).
-    """
-    try:
-        os.remove(dst)
-    except FileNotFoundError:
-        pass
-    os.symlink(os.path.abspath(src), os.path.abspath(dst))
-
-
 def maybe_path(x):
     """Return None if *x* is an empty list or None, otherwise return *x* unchanged.
 

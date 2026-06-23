@@ -54,7 +54,7 @@ Defaults live in `config/config.yaml`. A starting template for user runs is at `
 | `params_annotate_snps` | `annotate_snps_pseudobulk` | `min_het_reads`, `min_hom_dp`, `min_vaf_thres`, `filter_nz_OTH`, `filter_hom_ALT` |
 | `params_longphase` | `phase_snps_longphase` | `min_mapq`, `extra_params` (`--pb` or `--ont`) |
 | `params_process_anndata` | `process_rna_anndata` | `gene_id_colname`, `min_frac_barcodes` |
-| `params_phase_and_concat` | `phase_and_concat_{bulk,single_cell}` | `min_depth` (bulk), `gamma` (bulk), `exon_only` |
+| `params_phase_and_concat` | `phase_and_concat_{bulk,nonbulk}` | `min_depth` (bulk), `gamma` (bulk), `exon_only` |
 | `params_mosdepth` | `run_mosdepth` | `read_quality`, `extra_params` |
 | `params_count_reads` | `rd_correct` | `gc_correct`, `gc_correct_method` (`lowess`/`median`), `rt_correct`, `samplesize`, `routlier`, `doutlier`, `min_mappability` |
 | `params_combine_counts` | `combine_counts`, `combine_counts_nonbulk` | `min_switchprob`, `nu`, `switchprob_ps`, `min_snp_reads`, `min_snp_per_block`, `gene_aware_binning`, `nsnp_multi` (sc only), `max_blocksize` (bulk only), `median_normalization` (bulk only), `rdr_outlier_quantile` (bulk only), `phase_flip_test` (bulk only), `phase_flip_epsilon` (bulk only), `phase_flip_alpha` (bulk only) |
@@ -142,11 +142,11 @@ All QC plots are written flat in `qc_dir`, with the pipeline stage, assay (or `b
 
 ### `snps.tsv.gz`
 
-`#CHR`, `POS`, `POS0`, `START`, `END`, `GT`, `PHASE` (0 = B-allele is ALT, 1 = B-allele is REF), `region_id`, `feature_id`, `feature_type` (exon/intron/intergenic). Bulk also carries `PS` (phase set) when the phaser (longphase) emits it.
+`#CHR`, `POS`, `POS0`, `START`, `END`, `GT`, `PHASE` (0 = B-allele is ALT, 1 = B-allele is REF), `region_id`, `feature_id` (`;`-joined list of all overlapping GTF genes, `intergenic` if none; GTF-derived for every assay), `feature_type` (exon/intron/intergenic). Bulk also carries `PS` (phase set) when the phaser (longphase) emits it.
 
 ### `bb.tsv.gz`
 
-`#CHR`, `START`, `END`, `#SNPS`, `region_id`, `switchprobs`.
+`#CHR`, `START`, `END`, `#SNPS`, `region_id`, `switchprobs`, `feature_id` (deduped `;`-joined union of the bin's SNP genes). `cnv_segments.tsv` carries the same `feature_id` column.
 
 ### `multi_snp.tsv.gz`
 

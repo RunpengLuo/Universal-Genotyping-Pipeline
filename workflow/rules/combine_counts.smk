@@ -23,7 +23,6 @@ rule combine_counts:
         region_bed=config["region_bed"],
         blacklist_bed=config["blacklist_bed"] or [],
         genome_size=config["genome_size"],
-        gtf_file=config["gtf_file"],
     output:
         bb_file=config["bb_dir"] + f"/{bulk_stream}/bb.tsv.gz",
         tot_mtx_bb=config["bb_dir"] + f"/{bulk_stream}/bb.Tallele.npz",
@@ -91,7 +90,6 @@ rule combine_counts_nonbulk:
         ),
         region_bed=config["region_bed"],
         genome_size=config["genome_size"],
-        gtf_file=config["gtf_file"],
     output:
         bb_file=[config["bb_dir"] + f"/{at}/bb.tsv.gz" for at in assay_types],
         sample_file=[config["bb_dir"] + f"/{at}/sample_ids.tsv" for at in assay_types],
@@ -158,7 +156,6 @@ rule cnv_segmentation:
         ],
         region_bed=lambda wc: config["region_bed"],
         genome_size=lambda wc: config["genome_size"],
-        gtf_file=lambda wc: config["gtf_file"],
         bb_file=lambda wc: config["bb_file"] or [],
     output:
         cnv_segments=config["bb_dir"] + "/{assay_type}/cnv_segments.tsv",

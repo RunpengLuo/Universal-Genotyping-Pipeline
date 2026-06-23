@@ -54,7 +54,6 @@ all_barcodes = snakemake_handle.input["all_barcodes"]
 barcodes_full_path = snakemake_handle.input["barcodes_full"]
 region_bed = snakemake_handle.input["region_bed"]
 genome_size = snakemake_handle.input["genome_size"]
-gtf_file = maybe_path(snakemake_handle.input["gtf_file"])
 sample_file = snakemake_handle.input["sample_file"]
 bb_file = snakemake_handle.input["bb_file"]
 
@@ -79,9 +78,8 @@ out_sample_file = snakemake_handle.output["sample_file"]
 sample_df = pd.read_table(sample_file)
 rep_ids = sample_df["REP_ID"].tolist()
 
-is_bulk_assay = assay_type in BULK_ASSAYS
 is_rna_assay = ASSAY_TYPE2MODALITY[assay_type] == "RNA"
-assert not is_bulk_assay, "bulk sample CNV segmentation unsupported yet"
+assert assay_type not in BULK_ASSAYS, "bulk sample CNV segmentation unsupported yet"
 
 cell_rep_idx = cell_rep_idx_from_mapping(
     read_full_barcodes(barcodes_full_path), rep_ids
@@ -91,14 +89,9 @@ logging.info(f"cnv segmentation, sample name={sample_name}, assay_type={assay_ty
 logging.info(f"rep_ids={rep_ids}")
 snps = pd.read_table(snp_info, sep="\t")
 
-if is_bulk_assay:
-    tot_mtx = np.load(tot_mtx_snp)["mat"].astype(np.int32)
-    a_mtx = np.load(a_mtx_snp)["mat"].astype(np.int32)
-    b_mtx = np.load(b_mtx_snp)["mat"].astype(np.int32)
-else:
-    tot_mtx = load_npz(tot_mtx_snp)
-    a_mtx = load_npz(a_mtx_snp)
-    b_mtx = load_npz(b_mtx_snp)
+tot_mtx = load_npz(tot_mtx_snp)
+a_mtx = load_npz(a_mtx_snp)
+b_mtx = load_npz(b_mtx_snp)
 
 bb_df = pd.read_table(bb_file, sep="\t")
 bb_df = sort_df_chr(bb_df, pos="START")
@@ -108,6 +101,13 @@ logging.info(f"#BB blocks={num_bbs}")
 
 snps["RAW_SNP_IDX"] = np.arange(len(snps))
 snps = snp_to_region(snps, bb_df, assay_type, region_id="bb_id")
+
+if "feature_id" in snps.columns:
+    bb_df["feature_id"] = (
+        bb_df["bb_id"]
+        .map(snps.groupby("bb_id")["feature_id"].agg(merge_feature_ids))
+        .fillna("intergenic")
+    )
 
 raw_snp_ids = snps["RAW_SNP_IDX"].to_numpy()
 tot_mtx = tot_mtx[raw_snp_ids, :]
@@ -135,7 +135,6 @@ logging.info(
 )
 
 pdf_path = os.path.join(qc_dir, f"cnv_segmentation.af_cnv-B_{assay_type}.{assay_type}.{run_id}.pdf")
-_pseudobulk = not is_bulk_assay
 with PdfPages(pdf_path) as pdf:
     plot_allele_freqs(
         snps,
@@ -144,7 +143,7 @@ with PdfPages(pdf_path) as pdf:
         b_mtx,
         genome_size,
         qc_dir,
-        apply_pseudobulk=_pseudobulk,
+        apply_pseudobulk=True,
         cell_rep_idx=cell_rep_idx,
         allele="cnv-B",
         unit="snp",
@@ -159,7 +158,7 @@ with PdfPages(pdf_path) as pdf:
         b_mtx_bb,
         genome_size,
         qc_dir,
-        apply_pseudobulk=_pseudobulk,
+        apply_pseudobulk=True,
         cell_rep_idx=cell_rep_idx,
         allele="cnv-B",
         unit="bb",
@@ -169,49 +168,43 @@ with PdfPages(pdf_path) as pdf:
     )
 logging.info(f"saved 2-page BAF PDF to {pdf_path}")
 
-if not is_bulk_assay:
-    if is_rna_assay:
-        adata: sc.AnnData = sc.read_h5ad(h5ad_file)
-        barcodes = np.asarray(read_barcodes(all_barcodes), dtype=str)
-        missing = barcodes[~np.isin(barcodes, adata.obs_names)]
-        assert len(missing) == 0, (
-            f"Missing {len(missing)} barcodes, e.g. {missing[:5]}, bug!"
-        )
-        adata = adata[barcodes, :].copy()
-
-        adata = feature_to_blocks(
-            adata, bb_df, assay_type, block_idx="bb_id", drop_cols=False
-        )
-        counts = adata.var["bb_id"].value_counts()
-        bb_df[f"#{feature_type}"] = bb_df["bb_id"].map(counts).fillna(0).astype(int)
-        x_count = matrix_segmentation(adata.X.T, adata.var["bb_id"].to_numpy(), num_bbs)
-        logging.info(
-            f"Feature-level matrix: shape={adata.X.shape}, sparsity={_sparsity(adata.X):.4f}"
-        )
-    else:
-        # scATAC: per-cell Xcount from raw 10x fragments (no tile h5ad)
-        frag_files = [locate_atac_fragment_file(d) for d in ranger_dirs]
-        bb_grid = bb_df[["#CHR", "START", "END", "bb_id"]].copy()
-        x_count = atac_fragments_to_bb(
-            frag_files,
-            rep_ids,
-            read_full_barcodes(barcodes_full_path),
-            bb_grid,
-            num_bbs,
-        )
-    logging.info(
-        f"BB-level X matrix: shape={x_count.shape}, sparsity={_sparsity(x_count):.4f}"
+if is_rna_assay:
+    adata: sc.AnnData = sc.read_h5ad(h5ad_file)
+    barcodes = np.asarray(read_barcodes(all_barcodes), dtype=str)
+    missing = barcodes[~np.isin(barcodes, adata.obs_names)]
+    assert len(missing) == 0, (
+        f"Missing {len(missing)} barcodes, e.g. {missing[:5]}, bug!"
     )
+    adata = adata[barcodes, :].copy()
 
-if not is_bulk_assay:
-    save_npz(out_x_count, x_count.astype(COUNT_DTYPE))
-    save_npz(out_tot_mtx_bb, tot_mtx_bb.astype(COUNT_DTYPE))
-    save_npz(out_a_mtx_bb, a_mtx_bb.astype(COUNT_DTYPE))
-    save_npz(out_b_mtx_bb, b_mtx_bb.astype(COUNT_DTYPE))
+    adata = feature_to_blocks(
+        adata, bb_df, assay_type, block_idx="bb_id", drop_cols=False
+    )
+    counts = adata.var["bb_id"].value_counts()
+    bb_df[f"#{feature_type}"] = bb_df["bb_id"].map(counts).fillna(0).astype(int)
+    x_count = matrix_segmentation(adata.X.T, adata.var["bb_id"].to_numpy(), num_bbs)
+    logging.info(
+        f"Feature-level matrix: shape={adata.X.shape}, sparsity={_sparsity(adata.X):.4f}"
+    )
 else:
-    np.savez_compressed(out_tot_mtx_bb, mat=tot_mtx_bb.astype(COUNT_DTYPE))
-    np.savez_compressed(out_a_mtx_bb, mat=a_mtx_bb.astype(COUNT_DTYPE))
-    np.savez_compressed(out_b_mtx_bb, mat=b_mtx_bb.astype(COUNT_DTYPE))
+    # scATAC: per-cell Xcount from raw 10x fragments (no tile h5ad)
+    frag_files = [locate_atac_fragment_file(d) for d in ranger_dirs]
+    bb_grid = bb_df[["#CHR", "START", "END", "bb_id"]].copy()
+    x_count = atac_fragments_to_bb(
+        frag_files,
+        rep_ids,
+        read_full_barcodes(barcodes_full_path),
+        bb_grid,
+        num_bbs,
+    )
+logging.info(
+    f"BB-level X matrix: shape={x_count.shape}, sparsity={_sparsity(x_count):.4f}"
+)
+
+save_npz(out_x_count, x_count.astype(COUNT_DTYPE))
+save_npz(out_tot_mtx_bb, tot_mtx_bb.astype(COUNT_DTYPE))
+save_npz(out_a_mtx_bb, a_mtx_bb.astype(COUNT_DTYPE))
+save_npz(out_b_mtx_bb, b_mtx_bb.astype(COUNT_DTYPE))
 bb_df.to_csv(cnv_segments, header=True, sep="\t", index=False)
 shutil.copy2(all_barcodes, barcodes_out)
 shutil.copy2(barcodes_full_path, barcodes_full_out)
