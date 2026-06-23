@@ -39,6 +39,12 @@ rule phase_and_concat_bulk:
         a_mtx_snp=config["allele_dir"] + f"/{bulk_stream}/snp.Aallele.npz",
         b_mtx_snp=config["allele_dir"] + f"/{bulk_stream}/snp.Ballele.npz",
         sample_file=config["allele_dir"] + f"/{bulk_stream}/sample_ids.tsv",
+        qc_pdf=report(
+            config["qc_dir"] + f"/phase_and_concat.{bulk_stream}.pdf",
+            category="QC plots",
+            subcategory="phasing / allele freq (bulk)",
+            labels={"stream": bulk_stream},
+        ),
     params:
         qc_dir=config["qc_dir"],
         sample_name=SAMPLE_ID,
@@ -107,6 +113,12 @@ rule phase_and_concat_nonbulk:
         unique_snp_ids=config["allele_dir"] + "/{assay_type}/unique_snp_ids.npy",
         cell_snp_Aallele=config["allele_dir"] + "/{assay_type}/cell_snp_Aallele.npz",
         cell_snp_Ballele=config["allele_dir"] + "/{assay_type}/cell_snp_Ballele.npz",
+        qc_pdf=report(
+            config["qc_dir"] + "/phase_and_concat.{assay_type}.pdf",
+            category="QC plots",
+            subcategory="phasing / allele freq",
+            labels={"assay": "{assay_type}"},
+        ),
     wildcard_constraints:
         assay_type="(scRNA|scATAC|VISIUM|VISIUM3prime)",
     params:

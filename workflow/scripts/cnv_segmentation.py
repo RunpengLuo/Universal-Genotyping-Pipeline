@@ -134,7 +134,7 @@ logging.info(
     f"B sparsity={_sparsity(b_mtx_bb):.4f}"
 )
 
-pdf_path = os.path.join(qc_dir, f"cnv_segmentation.af_cnv-B_{assay_type}.{assay_type}.{run_id}.pdf")
+pdf_path = snakemake_handle.output["qc_pdf"]
 with PdfPages(pdf_path) as pdf:
     plot_allele_freqs(
         snps,

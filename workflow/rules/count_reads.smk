@@ -82,7 +82,18 @@ rule rd_correct:
     output:
         dp_corrected=config["pileup_dir"] + "/{assay_type}/window.dp.npz",
         window_df=config["pileup_dir"] + "/{assay_type}/window.tsv.gz",
-        depth_stats=config["pileup_dir"] + "/{assay_type}/depth_statistics.tsv",
+        depth_stats=report(
+            config["pileup_dir"] + "/{assay_type}/depth_statistics.tsv",
+            category="QC stats",
+            subcategory="depth",
+            labels={"table": "depth statistics", "assay": "{assay_type}"},
+        ),
+        qc_pdf=report(
+            config["qc_dir"] + "/rd_correction.{assay_type}.pdf",
+            category="QC plots",
+            subcategory="read-depth correction",
+            labels={"assay": "{assay_type}"},
+        ),
     wildcard_constraints:
         assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
     params:

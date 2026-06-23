@@ -161,7 +161,7 @@ plot_snp_depth_histogram(
     name_prefix="phase_and_concat",
 )
 
-af_pdf_path = os.path.join(qc_dir, f"phase_and_concat.snp_allele_freq.{assay_type}.{run_id}.pdf")
+af_pdf_path = snakemake_handle.output["qc_pdf"]
 with PdfPages(af_pdf_path) as pdf:
     plot_allele_freqs(
         snps,

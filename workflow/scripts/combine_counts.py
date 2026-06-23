@@ -249,7 +249,7 @@ if gene_aware_binning and "feature_id" in snps.columns:
 else:
     bb_gene_count = None
 
-pdf_path = os.path.join(qc_dir, f"combine_counts.combine_counts.bulk.{run_id}.pdf")
+pdf_path = snakemake_handle.output["qc_pdf"]
 with PdfPages(pdf_path) as pdf:
     plot_segmentation_qc(
         bbs,

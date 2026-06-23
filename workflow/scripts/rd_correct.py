@@ -179,7 +179,7 @@ else:
 
 rd_ylim = max(np.nanquantile(dp_corrected, 0.99), 1.0) * 1.1
 
-rd_pdf = PdfPages(os.path.join(qc_dir, f"rd_correction.rd_correct.{assay_type}.{run_id}.pdf"))
+rd_pdf = PdfPages(snakemake_handle.output["qc_pdf"])
 plot_rd_1d_scatter(
     win_df,
     dp_raw,

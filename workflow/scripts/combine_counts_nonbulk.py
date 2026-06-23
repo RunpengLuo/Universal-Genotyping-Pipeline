@@ -32,6 +32,7 @@ from io_utils import *
 from aggregation_utils import *
 from combine_counts_utils import *
 from plot_utils import plot_allele_freqs
+from matplotlib.backends.backend_pdf import PdfPages
 
 from switchprobs import *
 
@@ -81,6 +82,7 @@ out_b_mtx_multi = list(snakemake_handle.output["b_mtx_multi"])
 out_all_barcodes = list(snakemake_handle.output["all_barcodes"])
 out_barcodes_full = list(snakemake_handle.output["barcodes_full"])
 out_x_count = list(snakemake_handle.output["x_count"])
+out_qc_pdf = list(snakemake_handle.output["qc_pdf"])
 
 n_assays = len(nonbulk_assays)
 
@@ -246,6 +248,7 @@ for k in range(n_assays):
         save_npz(xcount_out[assay], x_count)
         logging.info(f"{assay} Xcount (h5ad): shape={x_count.shape}, nnz={x_count.nnz}")
 
+    pdf = PdfPages(out_qc_pdf[k])
     plot_allele_freqs(
         bbs,
         rep_ids_list[k],
@@ -259,6 +262,7 @@ for k in range(n_assays):
         unit="bb",
         run_id=f"{assay}.{run_id}",
         name_prefix="combine_counts",
+        pdf=pdf,
     )
 
     # ---- per-assay multi-SNP pre-grouping (diagnostic; every nsnp_multi SNPs) ----
@@ -311,7 +315,9 @@ for k in range(n_assays):
         unit="multi-snp",
         run_id=f"{assay}.{run_id}",
         name_prefix="combine_counts",
+        pdf=pdf,
     )
+    pdf.close()
 
     shutil.copy2(barcode_files[k], out_all_barcodes[k])
     shutil.copy2(barcode_full_files[k], out_barcodes_full[k])

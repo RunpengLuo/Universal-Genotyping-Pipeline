@@ -106,7 +106,12 @@ rule concat_and_extract_phased_het_snps:
     output:
         phased_vcf=config["phase_dir"] + "/phased_het_snps.vcf.gz",
         phased_vcf_tbi=config["phase_dir"] + "/phased_het_snps.vcf.gz.tbi",
-        snp_stats=config["phase_dir"] + "/germline_snp_statistics.tsv",
+        snp_stats=report(
+            config["phase_dir"] + "/germline_snp_statistics.tsv",
+            category="QC stats",
+            subcategory="phasing",
+            labels={"table": "germline SNP statistics"},
+        ),
         lst_file=temp(config["phase_dir"] + "/phased_snps.lst"),
     threads: 1
     log:
