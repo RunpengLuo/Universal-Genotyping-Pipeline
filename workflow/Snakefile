@@ -268,14 +268,6 @@ if _has_config:
     include: "rules/count_reads.smk"
     include: "rules/combine_counts.smk"
 
-    if workflow_mode == "copytyping_preprocess":
-
-        ruleorder: cnv_segmentation > combine_counts_nonbulk
-
-    else:
-
-        ruleorder: combine_counts_nonbulk > cnv_segmentation
-
     rule all:
         input:
             final_targets,

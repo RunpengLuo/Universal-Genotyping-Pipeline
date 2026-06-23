@@ -10,3 +10,4 @@ third_party
 .claude/
 __pycache__/
 test*
+*.log
