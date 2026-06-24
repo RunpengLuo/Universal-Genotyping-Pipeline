@@ -98,7 +98,6 @@ column per replicate. Single-cell writes per-assay sparse matrices under `allele
 - `barcodes.tsv.gz` — cell barcode list (single-cell only).
 - `barcodes.full.tsv.gz` — 2-col `REP_ID`/`BARCODE` mapping in matrix-column order (single-cell only).
 - `unique_snp_ids.npy` — SNP identifiers as `{chr}_{pos}` (single-cell only).
-- `cell_snp_Aallele.npz`, `cell_snp_Ballele.npz` — per-cell allele count matrices (single-cell only).
 
 ### AnnData (`bb_dir/{assay_type}/`)
 

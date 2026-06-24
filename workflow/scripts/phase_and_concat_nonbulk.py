@@ -63,8 +63,6 @@ tot_mtx_snp = snakemake_handle.output["tot_mtx_snp"]
 a_mtx_snp = snakemake_handle.output["a_mtx_snp"]
 b_mtx_snp = snakemake_handle.output["b_mtx_snp"]
 unique_snp_ids = snakemake_handle.output["unique_snp_ids"]
-cell_snp_Aallele = snakemake_handle.output["cell_snp_Aallele"]
-cell_snp_Ballele = snakemake_handle.output["cell_snp_Ballele"]
 out_all_barcodes = snakemake_handle.output["all_barcodes"]
 out_barcodes_full = snakemake_handle.output["barcodes_full"]
 sample_file = snakemake_handle.output["sample_file"]
@@ -219,8 +217,6 @@ save_npz(a_mtx_snp, a_mtx)
 save_npz(b_mtx_snp, b_mtx)
 snp_ids = snps["#CHR"].astype(str) + "_" + snps["POS"].astype(str)
 np.save(unique_snp_ids, snp_ids.to_numpy())
-save_npz(cell_snp_Aallele, a_mtx)
-save_npz(cell_snp_Ballele, b_mtx)
 all_barcodes.to_csv(out_all_barcodes, sep="\t", header=False, index=False)
 barcodes_full.to_csv(out_barcodes_full, sep="\t", header=True, index=False)
 sample_df = pd.DataFrame({"SAMPLE": [f"{sample_name}_{rep_id}" for rep_id in rep_ids]})

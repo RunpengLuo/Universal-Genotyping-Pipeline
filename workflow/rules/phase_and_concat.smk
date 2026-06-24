@@ -111,8 +111,6 @@ rule phase_and_concat_nonbulk:
         b_mtx_snp=config["allele_dir"] + "/{assay_type}/snp.Ballele.npz",
         sample_file=config["allele_dir"] + "/{assay_type}/sample_ids.tsv",
         unique_snp_ids=config["allele_dir"] + "/{assay_type}/unique_snp_ids.npy",
-        cell_snp_Aallele=config["allele_dir"] + "/{assay_type}/cell_snp_Aallele.npz",
-        cell_snp_Ballele=config["allele_dir"] + "/{assay_type}/cell_snp_Ballele.npz",
         qc_pdf=report(
             config["qc_dir"] + "/phase_and_concat.{assay_type}.pdf",
             category="QC plots",
