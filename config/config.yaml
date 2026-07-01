@@ -113,7 +113,7 @@ params_combine_counts:
   nu: 1
   switchprob_ps: 5e-2
   nsnp_multi: 2
-  min_snp_reads: 1000
+  min_snp_reads: [500, 1000]
   min_snp_per_block: 10
   max_blocksize: 500000
   # true = bins grow by whole genes (GTF feature_id); a gene is never split across

@@ -87,6 +87,9 @@ if _has_config:
     # bulk allele/combine outputs live under allele_dir/{stream}/ (WGS family or WES)
     bulk_stream = "bulkWES" if "bulkWES" in assay_types else "bulkWGS"
 
+    _msr = config["params_combine_counts"]["min_snp_reads"]
+    MSR_LIST = [int(m) for m in (_msr if isinstance(_msr, list) else [_msr])]
+
     if workflow_mode in ["single_cell_genotyping", "copytyping_preprocess"]:
         assert (
             sample_df["PATH_to_barcodes"].notna().all()
@@ -225,26 +228,34 @@ if _has_config:
 
     final_targets = []
     if workflow_mode == "bulk_genotyping":
-        final_targets += [
-            config["bb_dir"] + f"/{bulk_stream}/bb.tsv.gz",
-            config["bb_dir"] + f"/{bulk_stream}/sample_ids.tsv",
-            config["bb_dir"] + f"/{bulk_stream}/bb.Tallele.npz",
-            config["bb_dir"] + f"/{bulk_stream}/bb.Aallele.npz",
-            config["bb_dir"] + f"/{bulk_stream}/bb.Ballele.npz",
-            config["bb_dir"] + f"/{bulk_stream}/bb.depth.npz",
-            config["bb_dir"] + f"/{bulk_stream}/bb.rdr.npz",
-        ]
+        final_targets += expand(
+            config["bb_dir"] + f"/{bulk_stream}/MSR{{msr}}/{{f}}",
+            msr=MSR_LIST,
+            f=[
+                "bb.tsv.gz",
+                "sample_ids.tsv",
+                "bb.Tallele.npz",
+                "bb.Aallele.npz",
+                "bb.Ballele.npz",
+                "bb.depth.npz",
+                "bb.rdr.npz",
+            ],
+        )
     elif workflow_mode == "single_cell_genotyping":
         for assay_type in assay_types:
-            final_targets += [
-                config["bb_dir"] + f"/{assay_type}/bb.tsv.gz",
-                config["bb_dir"] + f"/{assay_type}/sample_ids.tsv",
-                config["bb_dir"] + f"/{assay_type}/bb.Tallele.npz",
-                config["bb_dir"] + f"/{assay_type}/bb.Aallele.npz",
-                config["bb_dir"] + f"/{assay_type}/bb.Ballele.npz",
-                config["bb_dir"] + f"/{assay_type}/bb.Xcount.npz",
-                config["bb_dir"] + f"/{assay_type}/barcodes.tsv.gz",
-            ]
+            final_targets += expand(
+                config["bb_dir"] + f"/{assay_type}/MSR{{msr}}/{{f}}",
+                msr=MSR_LIST,
+                f=[
+                    "bb.tsv.gz",
+                    "sample_ids.tsv",
+                    "bb.Tallele.npz",
+                    "bb.Aallele.npz",
+                    "bb.Ballele.npz",
+                    "bb.Xcount.npz",
+                    "barcodes.tsv.gz",
+                ],
+            )
     elif workflow_mode == "copytyping_preprocess":
         for assay_type in assay_types:
             final_targets += [

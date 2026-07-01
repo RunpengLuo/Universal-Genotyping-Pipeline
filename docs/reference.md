@@ -57,7 +57,7 @@ Defaults live in `config/config.yaml`. A starting template for user runs is at `
 | `params_phase_and_concat` | `phase_and_concat_{bulk,nonbulk}` | `min_depth` (bulk), `gamma` (bulk), `exon_only` |
 | `params_mosdepth` | `run_mosdepth` | `read_quality`, `extra_params` |
 | `params_count_reads` | `rd_correct` | `gc_correct`, `gc_correct_method` (`lowess`/`median`), `rt_correct`, `samplesize`, `routlier`, `doutlier`, `min_mappability` |
-| `params_combine_counts` | `combine_counts`, `combine_counts_nonbulk` | `min_switchprob`, `nu`, `switchprob_ps`, `min_snp_reads`, `min_snp_per_block`, `gene_aware_binning`, `nsnp_multi` (sc only), `max_blocksize` (bulk only), `median_normalization` (bulk only), `rdr_outlier_quantile` (bulk only), `phase_flip_test` (bulk only), `phase_flip_epsilon` (bulk only), `phase_flip_alpha` (bulk only) |
+| `params_combine_counts` | `combine_counts`, `combine_counts_nonbulk` | `min_switchprob`, `nu`, `switchprob_ps`, `min_snp_reads` (scalar or list; list ⇒ one `MSR{msr}/` subdir per value), `min_snp_per_block`, `gene_aware_binning`, `nsnp_multi` (sc only), `max_blocksize` (bulk only), `median_normalization` (bulk only), `rdr_outlier_quantile` (bulk only), `phase_flip_test` (bulk only), `phase_flip_epsilon` (bulk only), `phase_flip_alpha` (bulk only) |
 | `threads` | All multi-thread rules | `genotype`, `phase`, `pileup`, `mosdepth` |
 
 ### Output directories
@@ -103,22 +103,28 @@ column per replicate. Single-cell writes per-assay sparse matrices under `allele
 
 - `{assay_type}.h5ad` — AnnData with cells x features (single-cell only; produced by `process_anndata`).
 
-### Final Bins — bulk: `bb_dir/{stream}/`; single-cell & copytyping: per-assay `bb_dir/{assay_type}/`
+### Final Bins — bulk: `bb_dir/{stream}/MSR{msr}/`; single-cell & copytyping: per-assay `bb_dir/{assay_type}/MSR{msr}/`
+
+`min_snp_reads` (config `params_combine_counts`) is a scalar **or list**. A single
+`combine_counts` job loads/preprocesses once and writes one `MSR{msr}/` subdir per
+value (`msr` = the `min_snp_reads` integer), so binning-size sweeps come for cheap.
+Each subdir is a self-contained drop-in for HATCHet3/CalicoST. (Copytyping's
+`cnv_segmentation` is not MSR-driven and keeps a flat `bb_dir/{assay_type}/`.)
 
 Common:
 - `sample_ids.tsv` — sample metadata. For bulk and single-cell it carries an `assay_type` column and its row order matches the (sample / replicate×assay) matrix columns.
 
-**Bulk (`bulk_genotyping`):** all bulk assays jointly segmented on one shared bin grid, written under `bb_dir/{stream}/` (`stream` = `bulkWGS` or `bulkWES`).
+**Bulk (`bulk_genotyping`):** all bulk assays jointly segmented on one shared bin grid, written under `bb_dir/{stream}/MSR{msr}/` (`stream` = `bulkWGS` or `bulkWES`).
 - `bb.tsv.gz` — bin annotations (one shared grid for all bulk assays).
 - `bb.{Tallele,Aallele,Ballele,depth,rdr}.npz` — allele, depth, and RDR matrices. Columns concatenate all bulk samples (per assay, normal first); `rdr` holds the tumor columns only, normalized per assay against that assay's own normal. (BAF is not stored — derive it from `Ballele`/`Tallele`.)
 
-**Single-cell (`single_cell_genotyping`):** all of the sample's non-bulk assays are jointly segmented on one shared grid (one pseudobulk column per replicate×assay). Everything lives under `bb_dir/{assay_type}/`; the shared grid and combined sample sheet are duplicated into each sub-dir.
-- `{assay_type}/bb.tsv.gz` — the one shared bin grid (joint across assays; identical copy in each sub-dir).
-- `{assay_type}/sample_ids.tsv` — one row per replicate×assay (identical copy in each sub-dir).
-- `{assay_type}/bb.{Tallele,Aallele,Ballele}.npz` — per-assay allele count matrices (bins × cells) on the shared grid. (BAF is not stored — derive it from `Ballele`/`Tallele`.)
-- `{assay_type}/bb.Xcount.npz` — per-assay native-count matrix per bb bin (bins × cells, sparse int32), same shape/column order as `{assay_type}/bb.{T,A,B}allele.npz`. **scATAC**: deduped ATAC fragment counts (each fragment counted once by its midpoint, from raw fragments). **scRNA / VISIUM / VISIUM3prime**: UMI counts, summed from the `process_rna_anndata` h5ad (each gene assigned to its largest-overlap bin, as in copytyping).
-- `{assay_type}/multi_snp.tsv.gz`, `{assay_type}/multi_snp.{Tallele,Aallele,Ballele}.npz` — per-assay multi-SNP diagnostic groups.
-- `{assay_type}/barcodes.tsv.gz`, `{assay_type}/barcodes.full.tsv.gz` — per-assay, copied from `allele_dir`.
+**Single-cell (`single_cell_genotyping`):** all of the sample's non-bulk assays are jointly segmented on one shared grid (one pseudobulk column per replicate×assay). Everything lives under `bb_dir/{assay_type}/MSR{msr}/`; the shared grid and combined sample sheet are duplicated into each sub-dir.
+- `{assay_type}/MSR{msr}/bb.tsv.gz` — the one shared bin grid (joint across assays; identical copy in each sub-dir).
+- `{assay_type}/MSR{msr}/sample_ids.tsv` — one row per replicate×assay (identical copy in each sub-dir).
+- `{assay_type}/MSR{msr}/bb.{Tallele,Aallele,Ballele}.npz` — per-assay allele count matrices (bins × cells) on the shared grid. (BAF is not stored — derive it from `Ballele`/`Tallele`.)
+- `{assay_type}/MSR{msr}/bb.Xcount.npz` — per-assay native-count matrix per bb bin (bins × cells, sparse int32), same shape/column order as `bb.{T,A,B}allele.npz`. **scATAC**: deduped ATAC fragment counts (each fragment counted once by its midpoint, from raw fragments). **scRNA / VISIUM / VISIUM3prime**: UMI counts, summed from the `process_rna_anndata` h5ad (each gene assigned to its largest-overlap bin, as in copytyping).
+- `{assay_type}/MSR{msr}/multi_snp.tsv.gz`, `multi_snp.{Tallele,Aallele,Ballele}.npz` — per-assay multi-SNP diagnostic groups (MSR-independent; identical across subdirs).
+- `{assay_type}/MSR{msr}/barcodes.tsv.gz`, `barcodes.full.tsv.gz` — per-assay, copied from `allele_dir`.
 
 **Copytyping (`copytyping_preprocess`):** per assay under `bb_dir/{assay_type}/`.
 - `cnv_segments.tsv` — BB block annotations.

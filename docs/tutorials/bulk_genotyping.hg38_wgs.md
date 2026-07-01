@@ -100,11 +100,11 @@ By default, we apply quadratic median regression to correct GC content and repli
 
 ### Combine counts
 
-`min_snp_reads` and `min_snp_per_block` balanced the bin size and phase-switch errors from reference phasing. Use bb BAF and RDR genome-level plot for diagnostic purpose under `<qc_dir>/combine_counts.combine_counts.bulk.*.pdf`. If the bins are pretty sparse or noisy, please decrease or increase the parameters accordingly. We recommend leaving them as default.
+`min_snp_reads` and `min_snp_per_block` balance the bin size against phase-switch errors from reference phasing. `min_snp_reads` accepts a **list**: one `combine_counts` job then loads/preprocesses once and writes one bin grid per value under `bb_dir/{stream}/MSR{msr}/`, with a QC PDF per value at `<qc_dir>/combine_counts.{stream}.MSR{msr}.pdf`. Compare the bb BAF/RDR genome plots across `MSR{msr}` and keep the subdir whose bins are neither too sparse nor too noisy for your downstream tool.
 
 ```yaml
 params_combine_counts:
-  min_snp_reads: 1000
+  min_snp_reads: [500, 1000]
   min_snp_per_block: 10
 ```
 

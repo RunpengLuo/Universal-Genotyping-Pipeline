@@ -4,14 +4,6 @@
 # Non-bulk: combine_counts_nonbulk + cnv_segmentation
 ##################################################
 
-# binning-parameter tag for QC plot filenames (distinguishes MSR/MSPB sweeps that
-# share one qc_dir)
-_cc_tag = (
-    f"MSR{config['params_combine_counts']['min_snp_reads']}"
-    f"_MSPB{config['params_combine_counts']['min_snp_per_block']}"
-)
-
-
 if workflow_mode == "bulk_genotyping":
 
     rule combine_counts:
@@ -37,18 +29,17 @@ if workflow_mode == "bulk_genotyping":
             blacklist_bed=config["blacklist_bed"] or [],
             genome_size=config["genome_size"],
         output:
-            bb_file=config["bb_dir"] + f"/{bulk_stream}/bb.tsv.gz",
-            tot_mtx_bb=config["bb_dir"] + f"/{bulk_stream}/bb.Tallele.npz",
-            a_mtx_bb=config["bb_dir"] + f"/{bulk_stream}/bb.Aallele.npz",
-            b_mtx_bb=config["bb_dir"] + f"/{bulk_stream}/bb.Ballele.npz",
-            dp_mtx_bb=config["bb_dir"] + f"/{bulk_stream}/bb.depth.npz",
-            rdr_mtx_bb=config["bb_dir"] + f"/{bulk_stream}/bb.rdr.npz",
-            sample_file=config["bb_dir"] + f"/{bulk_stream}/sample_ids.tsv",
+            bb_file=expand(config["bb_dir"] + f"/{bulk_stream}/MSR{{msr}}/bb.tsv.gz", msr=MSR_LIST),
+            tot_mtx_bb=expand(config["bb_dir"] + f"/{bulk_stream}/MSR{{msr}}/bb.Tallele.npz", msr=MSR_LIST),
+            a_mtx_bb=expand(config["bb_dir"] + f"/{bulk_stream}/MSR{{msr}}/bb.Aallele.npz", msr=MSR_LIST),
+            b_mtx_bb=expand(config["bb_dir"] + f"/{bulk_stream}/MSR{{msr}}/bb.Ballele.npz", msr=MSR_LIST),
+            dp_mtx_bb=expand(config["bb_dir"] + f"/{bulk_stream}/MSR{{msr}}/bb.depth.npz", msr=MSR_LIST),
+            rdr_mtx_bb=expand(config["bb_dir"] + f"/{bulk_stream}/MSR{{msr}}/bb.rdr.npz", msr=MSR_LIST),
+            sample_file=expand(config["bb_dir"] + f"/{bulk_stream}/MSR{{msr}}/sample_ids.tsv", msr=MSR_LIST),
             qc_pdf=report(
-                config["qc_dir"] + f"/combine_counts.{bulk_stream}.{_cc_tag}.pdf",
+                expand(config["qc_dir"] + f"/combine_counts.{bulk_stream}.MSR{{msr}}.pdf", msr=MSR_LIST),
                 category="QC plots",
                 subcategory="bulk binning",
-                labels={"stream": bulk_stream, "binning": _cc_tag},
             ),
         params:
             qc_dir=config["qc_dir"],
@@ -56,7 +47,7 @@ if workflow_mode == "bulk_genotyping":
             nu=config["params_combine_counts"]["nu"],
             min_switchprob=config["params_combine_counts"]["min_switchprob"],
             switchprob_ps=config["params_combine_counts"]["switchprob_ps"],
-            min_snp_reads=config["params_combine_counts"]["min_snp_reads"],
+            min_snp_reads=MSR_LIST,
             min_snp_per_block=config["params_combine_counts"]["min_snp_per_block"],
             gene_aware_binning=config["params_combine_counts"]["gene_aware_binning"],
             median_normalization=config["params_combine_counts"]["median_normalization"],
@@ -68,7 +59,7 @@ if workflow_mode == "bulk_genotyping":
             run_id=_run_id,
         threads: 1
         log:
-            config["log_dir"] + f"/combine_counts.{_run_id}.log",
+            config["log_dir"] + f"/combine_counts.{bulk_stream}.{_run_id}.log",
         conda:
             "../envs/base.yaml"
         script:
@@ -116,38 +107,38 @@ elif workflow_mode == "single_cell_genotyping":
             region_bed=config["region_bed"],
             genome_size=config["genome_size"],
         output:
-            bb_file=[config["bb_dir"] + f"/{at}/bb.tsv.gz" for at in assay_types],
+            bb_file=[config["bb_dir"] + f"/{at}/MSR{msr}/bb.tsv.gz" for at in assay_types for msr in MSR_LIST],
             sample_file=[
-                config["bb_dir"] + f"/{at}/sample_ids.tsv" for at in assay_types
+                config["bb_dir"] + f"/{at}/MSR{msr}/sample_ids.tsv" for at in assay_types for msr in MSR_LIST
             ],
             tot_mtx_bb=[
-                config["bb_dir"] + f"/{at}/bb.Tallele.npz" for at in assay_types
+                config["bb_dir"] + f"/{at}/MSR{msr}/bb.Tallele.npz" for at in assay_types for msr in MSR_LIST
             ],
-            a_mtx_bb=[config["bb_dir"] + f"/{at}/bb.Aallele.npz" for at in assay_types],
-            b_mtx_bb=[config["bb_dir"] + f"/{at}/bb.Ballele.npz" for at in assay_types],
+            a_mtx_bb=[config["bb_dir"] + f"/{at}/MSR{msr}/bb.Aallele.npz" for at in assay_types for msr in MSR_LIST],
+            b_mtx_bb=[config["bb_dir"] + f"/{at}/MSR{msr}/bb.Ballele.npz" for at in assay_types for msr in MSR_LIST],
             multi_snp_file=[
-                config["bb_dir"] + f"/{at}/multi_snp.tsv.gz" for at in assay_types
+                config["bb_dir"] + f"/{at}/MSR{msr}/multi_snp.tsv.gz" for at in assay_types for msr in MSR_LIST
             ],
             tot_mtx_multi=[
-                config["bb_dir"] + f"/{at}/multi_snp.Tallele.npz" for at in assay_types
+                config["bb_dir"] + f"/{at}/MSR{msr}/multi_snp.Tallele.npz" for at in assay_types for msr in MSR_LIST
             ],
             a_mtx_multi=[
-                config["bb_dir"] + f"/{at}/multi_snp.Aallele.npz" for at in assay_types
+                config["bb_dir"] + f"/{at}/MSR{msr}/multi_snp.Aallele.npz" for at in assay_types for msr in MSR_LIST
             ],
             b_mtx_multi=[
-                config["bb_dir"] + f"/{at}/multi_snp.Ballele.npz" for at in assay_types
+                config["bb_dir"] + f"/{at}/MSR{msr}/multi_snp.Ballele.npz" for at in assay_types for msr in MSR_LIST
             ],
             all_barcodes=[
-                config["bb_dir"] + f"/{at}/barcodes.tsv.gz" for at in assay_types
+                config["bb_dir"] + f"/{at}/MSR{msr}/barcodes.tsv.gz" for at in assay_types for msr in MSR_LIST
             ],
             barcodes_full=[
-                config["bb_dir"] + f"/{at}/barcodes.full.tsv.gz" for at in assay_types
+                config["bb_dir"] + f"/{at}/MSR{msr}/barcodes.full.tsv.gz" for at in assay_types for msr in MSR_LIST
             ],
-            x_count=[config["bb_dir"] + f"/{at}/bb.Xcount.npz" for at in assay_types],
+            x_count=[config["bb_dir"] + f"/{at}/MSR{msr}/bb.Xcount.npz" for at in assay_types for msr in MSR_LIST],
             qc_pdf=report(
                 [
-                    config["qc_dir"] + f"/combine_counts.{at}.{_cc_tag}.pdf"
-                    for at in assay_types
+                    config["qc_dir"] + f"/combine_counts.{at}.MSR{msr}.pdf"
+                    for at in assay_types for msr in MSR_LIST
                 ],
                 category="QC plots",
                 subcategory="single-cell binning",
@@ -162,7 +153,7 @@ elif workflow_mode == "single_cell_genotyping":
             min_switchprob=config["params_combine_counts"]["min_switchprob"],
             switchprob_ps=config["params_combine_counts"]["switchprob_ps"],
             nsnp_multi=config["params_combine_counts"]["nsnp_multi"],
-            min_snp_reads=config["params_combine_counts"]["min_snp_reads"],
+            min_snp_reads=MSR_LIST,
             min_snp_per_block=config["params_combine_counts"]["min_snp_per_block"],
             gene_aware_binning=config["params_combine_counts"]["gene_aware_binning"],
             run_id=_run_id,
