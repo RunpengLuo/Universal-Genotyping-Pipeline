@@ -22,7 +22,7 @@ Assays: `bulkWGS`, `bulkWGS-lr`, `bulkWES`
 
 All bulk replicates are piled up against one shared phased het-SNP VCF, so step 6 runs **once** and builds a single joint allele matrix (under `allele_dir/{stream}/` where stream is `bulkWGS` for the WGS family or `bulkWES`, one pseudobulk column per replicate). Step 9 reads it directly — no per-assay union. Depth/RDR (steps 7–8) stay per-assay.
 
-**Outputs** (`bb_dir/{stream}/MSR{msr}/`, one subdir per `min_snp_reads` value — the sweep runs in a single job with shared preprocessing): `bb.tsv.gz`, `bb.{Tallele,Aallele,Ballele,rdr,depth}.npz`, `sample_ids.tsv`
+**Outputs** (`bb_dir/MSR{msr}/{stream}/`, one `MSR{msr}/` subdir per `min_snp_reads` value — the sweep runs in a single job with shared preprocessing): `bb.tsv.gz`, `bb.{Tallele,Aallele,Ballele,rdr,depth}.npz`, `sample_ids.tsv`
 
 ---
 
@@ -42,7 +42,7 @@ Assays: `scRNA`, `scATAC`, `VISIUM`, `VISIUM3prime`
 | 8. Phase and concat | `phase_and_concat_nonbulk` | `scripts/phase_and_concat_nonbulk.py` |
 | 9. Adaptive binning (+ per-assay `bb.Xcount.npz`: scATAC from raw fragments, RNA from the h5ad) | `combine_counts_nonbulk` | `scripts/combine_counts_nonbulk.py` |
 
-**Outputs** (all per-assay under `bb_dir/{assay}/MSR{msr}/`, one subdir per `min_snp_reads` value — the sweep runs in a single job with shared preprocessing): `bb.tsv.gz` (the one shared grid, joint across the sample's assays, duplicated into each sub-dir), `sample_ids.tsv` (likewise duplicated), `bb.{Tallele,Aallele,Ballele}.npz` (bins × cells), `bb.Xcount.npz` (per-cell native counts per bb bin — scATAC from raw fragments, scRNA/VISIUM UMIs from the h5ad), `multi_snp.*` (MSR-independent), `barcodes{,.full}.tsv.gz`
+**Outputs** (all per-assay under `bb_dir/MSR{msr}/{assay}/`, one `MSR{msr}/` subdir per `min_snp_reads` value — the sweep runs in a single job with shared preprocessing): `bb.tsv.gz` (the one shared grid, joint across the sample's assays, duplicated into each sub-dir), `sample_ids.tsv` (likewise duplicated), `bb.{Tallele,Aallele,Ballele}.npz` (bins × cells), `bb.Xcount.npz` (per-cell native counts per bb bin — scATAC from raw fragments, scRNA/VISIUM UMIs from the h5ad), `multi_snp.*` (MSR-independent), `barcodes{,.full}.tsv.gz`
 
 ---
 

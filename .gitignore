@@ -8,6 +8,8 @@ tmp/
 CLAUDE.md
 third_party
 .claude/
+.vscode/
+AGENTS.md
 __pycache__/
 test*
 *.log

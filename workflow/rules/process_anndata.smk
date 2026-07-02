@@ -20,7 +20,7 @@ rule process_rna_anndata:
         ),
         gtf_file=lambda wc: config["gtf_file"],
     output:
-        h5ad_file=config["bb_dir"] + "/{assay_type}/{assay_type}.h5ad",
+        h5ad_file=config["bb_dir"] + "/{assay_type}.h5ad",
     params:
         assay_type=lambda wc: wc.assay_type,
         rep_ids=lambda wc: assay2rep_ids[wc.assay_type],

@@ -99,11 +99,11 @@ column per replicate. Single-cell writes per-assay sparse matrices under `allele
 - `barcodes.full.tsv.gz` — 2-col `REP_ID`/`BARCODE` mapping in matrix-column order (single-cell only).
 - `unique_snp_ids.npy` — SNP identifiers as `{chr}_{pos}` (single-cell only).
 
-### AnnData (`bb_dir/{assay_type}/`)
+### AnnData (`bb_dir/`)
 
-- `{assay_type}.h5ad` — AnnData with cells x features (single-cell only; produced by `process_anndata`).
+- `{assay_type}.h5ad` — AnnData with cells x features (single-cell only; produced by `process_anndata`). MSR-independent, so it lives flat at `bb_dir/{assay_type}.h5ad`.
 
-### Final Bins — bulk: `bb_dir/{stream}/MSR{msr}/`; single-cell & copytyping: per-assay `bb_dir/{assay_type}/MSR{msr}/`
+### Final Bins — bulk: `bb_dir/MSR{msr}/{stream}/`; single-cell: per-assay `bb_dir/MSR{msr}/{assay_type}/`; copytyping: flat `bb_dir/{assay_type}/`
 
 `min_snp_reads` (config `params_combine_counts`) is a scalar **or list**. A single
 `combine_counts` job loads/preprocesses once and writes one `MSR{msr}/` subdir per
@@ -114,17 +114,17 @@ Each subdir is a self-contained drop-in for HATCHet3/CalicoST. (Copytyping's
 Common:
 - `sample_ids.tsv` — sample metadata. For bulk and single-cell it carries an `assay_type` column and its row order matches the (sample / replicate×assay) matrix columns.
 
-**Bulk (`bulk_genotyping`):** all bulk assays jointly segmented on one shared bin grid, written under `bb_dir/{stream}/MSR{msr}/` (`stream` = `bulkWGS` or `bulkWES`).
+**Bulk (`bulk_genotyping`):** all bulk assays jointly segmented on one shared bin grid, written under `bb_dir/MSR{msr}/{stream}/` (`stream` = `bulkWGS` or `bulkWES`).
 - `bb.tsv.gz` — bin annotations (one shared grid for all bulk assays).
 - `bb.{Tallele,Aallele,Ballele,depth,rdr}.npz` — allele, depth, and RDR matrices. Columns concatenate all bulk samples (per assay, normal first); `rdr` holds the tumor columns only, normalized per assay against that assay's own normal. (BAF is not stored — derive it from `Ballele`/`Tallele`.)
 
-**Single-cell (`single_cell_genotyping`):** all of the sample's non-bulk assays are jointly segmented on one shared grid (one pseudobulk column per replicate×assay). Everything lives under `bb_dir/{assay_type}/MSR{msr}/`; the shared grid and combined sample sheet are duplicated into each sub-dir.
-- `{assay_type}/MSR{msr}/bb.tsv.gz` — the one shared bin grid (joint across assays; identical copy in each sub-dir).
-- `{assay_type}/MSR{msr}/sample_ids.tsv` — one row per replicate×assay (identical copy in each sub-dir).
-- `{assay_type}/MSR{msr}/bb.{Tallele,Aallele,Ballele}.npz` — per-assay allele count matrices (bins × cells) on the shared grid. (BAF is not stored — derive it from `Ballele`/`Tallele`.)
-- `{assay_type}/MSR{msr}/bb.Xcount.npz` — per-assay native-count matrix per bb bin (bins × cells, sparse int32), same shape/column order as `bb.{T,A,B}allele.npz`. **scATAC**: deduped ATAC fragment counts (each fragment counted once by its midpoint, from raw fragments). **scRNA / VISIUM / VISIUM3prime**: UMI counts, summed from the `process_rna_anndata` h5ad (each gene assigned to its largest-overlap bin, as in copytyping).
-- `{assay_type}/MSR{msr}/multi_snp.tsv.gz`, `multi_snp.{Tallele,Aallele,Ballele}.npz` — per-assay multi-SNP diagnostic groups (MSR-independent; identical across subdirs).
-- `{assay_type}/MSR{msr}/barcodes.tsv.gz`, `barcodes.full.tsv.gz` — per-assay, copied from `allele_dir`.
+**Single-cell (`single_cell_genotyping`):** all of the sample's non-bulk assays are jointly segmented on one shared grid (one pseudobulk column per replicate×assay). Everything lives under `bb_dir/MSR{msr}/{assay_type}/`; the shared grid and combined sample sheet are duplicated into each sub-dir.
+- `MSR{msr}/{assay_type}/bb.tsv.gz` — the one shared bin grid (joint across assays; identical copy in each sub-dir).
+- `MSR{msr}/{assay_type}/sample_ids.tsv` — one row per replicate×assay (identical copy in each sub-dir).
+- `MSR{msr}/{assay_type}/bb.{Tallele,Aallele,Ballele}.npz` — per-assay allele count matrices (bins × cells) on the shared grid. (BAF is not stored — derive it from `Ballele`/`Tallele`.)
+- `MSR{msr}/{assay_type}/bb.Xcount.npz` — per-assay native-count matrix per bb bin (bins × cells, sparse int32), same shape/column order as `bb.{T,A,B}allele.npz`. **scATAC**: deduped ATAC fragment counts (each fragment counted once by its midpoint, from raw fragments). **scRNA / VISIUM / VISIUM3prime**: UMI counts, summed from the `process_rna_anndata` h5ad (each gene assigned to its largest-overlap bin, as in copytyping).
+- `MSR{msr}/{assay_type}/multi_snp.tsv.gz`, `multi_snp.{Tallele,Aallele,Ballele}.npz` — per-assay multi-SNP diagnostic groups (MSR-independent; identical across subdirs).
+- `MSR{msr}/{assay_type}/barcodes.tsv.gz`, `barcodes.full.tsv.gz` — per-assay, copied from `allele_dir`.
 
 **Copytyping (`copytyping_preprocess`):** per assay under `bb_dir/{assay_type}/`.
 - `cnv_segments.tsv` — BB block annotations.

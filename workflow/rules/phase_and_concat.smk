@@ -90,7 +90,7 @@ rule phase_and_concat_nonbulk:
             otherwise=config["het_snp_vcf"],
         ),
         h5ad_file=lambda wc: (
-            config["bb_dir"] + f"/{wc.assay_type}/{wc.assay_type}.h5ad"
+            config["bb_dir"] + f"/{wc.assay_type}.h5ad"
             if ASSAY_TYPE2MODALITY[wc.assay_type] == "RNA"
             else []
         ),

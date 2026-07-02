@@ -100,7 +100,7 @@ By default, we apply quadratic median regression to correct GC content and repli
 
 ### Combine counts
 
-`min_snp_reads` and `min_snp_per_block` balance the bin size against phase-switch errors from reference phasing. `min_snp_reads` accepts a **list**: one `combine_counts` job then loads/preprocesses once and writes one bin grid per value under `bb_dir/{stream}/MSR{msr}/`, with a QC PDF per value at `<qc_dir>/combine_counts.{stream}.MSR{msr}.pdf`. Compare the bb BAF/RDR genome plots across `MSR{msr}` and keep the subdir whose bins are neither too sparse nor too noisy for your downstream tool.
+`min_snp_reads` and `min_snp_per_block` balance the bin size against phase-switch errors from reference phasing. `min_snp_reads` accepts a **list**: one `combine_counts` job then loads/preprocesses once and writes one bin grid per value under `bb_dir/MSR{msr}/{stream}/`, with a QC PDF per value at `<qc_dir>/combine_counts.{stream}.MSR{msr}.pdf`. Compare the bb BAF/RDR genome plots across `MSR{msr}` and keep the subdir whose bins are neither too sparse nor too noisy for your downstream tool.
 
 ```yaml
 params_combine_counts:
@@ -134,7 +134,7 @@ Defaults are auto-loaded from `config/config.yaml`. The `--configfile` and `--co
 
 ## 5. Results
 
-Final outputs required by HATCHet3 can be found in `<out_dir>/<bb_dir>/{stream}/` (`stream` = `bulkWGS` for the WGS family or `bulkWES`; e.g. `bb.tsv.gz`, `bb.{Tallele,Aallele,Ballele,depth,rdr}.npz`). See [docs/reference.md](../reference.md) for the full output specification including intermediate files.
+Final outputs required by HATCHet3 can be found in `<out_dir>/<bb_dir>/MSR{msr}/{stream}/` (`stream` = `bulkWGS` for the WGS family or `bulkWES`; e.g. `bb.tsv.gz`, `bb.{Tallele,Aallele,Ballele,depth,rdr}.npz`). See [docs/reference.md](../reference.md) for the full output specification including intermediate files.
 
 ## 6. Rerunning from intermediate results
 

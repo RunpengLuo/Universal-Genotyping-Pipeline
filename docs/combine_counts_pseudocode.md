@@ -27,7 +27,7 @@ $$T^{bb}_{k}=\!\!\sum_{\beta(s)=k}\!\!T_s,\quad \text{BAF}_k=\frac{B^{bb}_k}{T^{
 
 Drop NaN bins, re-index, assign per-bin switch probs.
 
-## 3. Output (`bb_dir/{stream}/MSR{ρ}/`, one subdir per $\rho$)
+## 3. Output (`bb_dir/MSR{ρ}/{stream}/`, one `MSR{ρ}/` subdir per $\rho$)
 
 `bb.tsv.gz` (bin table) · `bb.{Tallele,Aallele,Ballele,depth,rdr}.npz` · `sample_ids.tsv` · QC PDF `combine_counts.{stream}.MSR{ρ}.pdf`.
 

@@ -229,7 +229,7 @@ if _has_config:
     final_targets = []
     if workflow_mode == "bulk_genotyping":
         final_targets += expand(
-            config["bb_dir"] + f"/{bulk_stream}/MSR{{msr}}/{{f}}",
+            config["bb_dir"] + f"/MSR{{msr}}/{bulk_stream}/{{f}}",
             msr=MSR_LIST,
             f=[
                 "bb.tsv.gz",
@@ -244,7 +244,7 @@ if _has_config:
     elif workflow_mode == "single_cell_genotyping":
         for assay_type in assay_types:
             final_targets += expand(
-                config["bb_dir"] + f"/{assay_type}/MSR{{msr}}/{{f}}",
+                config["bb_dir"] + f"/MSR{{msr}}/{assay_type}/{{f}}",
                 msr=MSR_LIST,
                 f=[
                     "bb.tsv.gz",

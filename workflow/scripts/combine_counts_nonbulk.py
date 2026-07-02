@@ -6,9 +6,9 @@ on ONE shared bin grid. Each (replicate x assay) is pseudobulked into one column
 satisfy every (rep, assay) -- exactly the bulk multi-sample pattern (see combine_counts.py),
 but with single cells pseudobulked per replicate first.
 
-The shared grid ``bb.tsv.gz`` and combined ``sample_ids.tsv`` are flat in ``bb_dir``;
-per-assay (n_bins x n_cells) matrices live under ``bb_dir/{assay}/`` (``bb.{T,A,B}allele.npz``,
-``multi_snp.*``, ``barcodes*``). Input for HATCHet3 and CalicoST.
+All outputs live under ``bb_dir/MSR{msr}/{assay}/``: the shared grid ``bb.tsv.gz`` and combined
+``sample_ids.tsv`` (duplicated per assay) plus the per-assay (n_bins x n_cells) matrices
+(``bb.{T,A,B}allele.npz``, ``multi_snp.*``, ``barcodes*``). Input for HATCHet3 and CalicoST.
 """
 
 import os, logging, shutil

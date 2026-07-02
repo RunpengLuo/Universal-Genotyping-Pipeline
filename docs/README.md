@@ -45,7 +45,7 @@ Bulk WGS/WES. Genotypes SNPs (bcftools), phases, computes allele counts and bias
 2. Set `workflow_mode: bulk_genotyping` in config.
 3. **WGS:** Set `window_bed` to a pre-filtered window BED (e.g., build using `resources/scripts/build_wgs_window_bed.py` or use pre-built `resources/data/windows.1kbp.hg38.bed.gz`).
 4. **WES:** Set `window_bed` to a WES window BED built using `resources/scripts/build_wes_window_bed.py` (requires `--wes_targets_bed` pointing to vendor capture targets).
-5. Outputs in `bb_dir/{stream}/MSR{msr}/` (`stream` = `bulkWGS` for the WGS family or `bulkWES`). `min_snp_reads` may be a list; a single job loads once and writes one `MSR{msr}/` subdir per value (see [reference.md](reference.md#final-bins)):
+5. Outputs in `bb_dir/MSR{msr}/{stream}/` (`stream` = `bulkWGS` for the WGS family or `bulkWES`). `min_snp_reads` may be a list; a single job loads once and writes one `MSR{msr}/` subdir per value (see [reference.md](reference.md#final-bins)):
    - `bb.tsv.gz` — bin annotations (one shared grid for all bulk assays).
    - `bb.{Tallele,Aallele,Ballele,depth,rdr}.npz` — allele, depth, and RDR matrices; columns concatenate all bulk samples (per assay, normal first), `rdr` holds the tumor columns. RDR is normalized per assay against that assay's own normal. (BAF is not stored — derive from `Ballele`/`Tallele`.)
    - `sample_ids.tsv` — sample metadata, with an `assay_type` column; row order matches the matrix columns.
@@ -58,13 +58,13 @@ scRNA, scATAC, VISIUM, or VISIUM3prime. Pseudobulk genotyping via cellsnp-lite, 
 
 1. Sample sheet with non-bulk samples. Multiome: same `REP_ID` for scRNA + scATAC. Fill in `PATH_to_barcodes` and `PATH_to_10x_ranger`.
 2. Set `workflow_mode: single_cell_genotyping` in config.
-3. All of the sample's non-bulk assays are jointly segmented on **one shared bin grid** (one pseudobulk column per replicate×assay). Everything lives under per-assay `bb_dir/{assay_type}/MSR{msr}/` (one subdir per `min_snp_reads` value; a single job loads once and sweeps); the shared grid and sample sheet are duplicated into each sub-dir:
-   - `{assay_type}/MSR{msr}/bb.tsv.gz` — the one shared bin grid (joint across assays; identical copy in each sub-dir).
-   - `{assay_type}/MSR{msr}/sample_ids.tsv` — sample metadata (one row per replicate×assay; identical copy in each sub-dir).
-   - `{assay_type}/MSR{msr}/bb.{Tallele,Aallele,Ballele}.npz` — per-assay allele count matrices (bins × cells).
-   - `{assay_type}/MSR{msr}/bb.Xcount.npz` — per-assay native-count matrix per bb bin (same shape/order as the allele matrices). scATAC: deduped fragment counts from raw fragments. scRNA/VISIUM: UMI counts from the `process_rna_anndata` h5ad (gene → largest-overlap bin).
-   - `{assay_type}/MSR{msr}/multi_snp.tsv.gz`, `multi_snp.{Tallele,Aallele,Ballele}.npz` — per-assay multi-SNP groups (MSR-independent; identical across subdirs).
-   - `{assay_type}/MSR{msr}/barcodes.tsv.gz`, `barcodes.full.tsv.gz` — per-assay cell barcodes.
+3. All of the sample's non-bulk assays are jointly segmented on **one shared bin grid** (one pseudobulk column per replicate×assay). Everything lives under per-assay `bb_dir/MSR{msr}/{assay_type}/` (one `MSR{msr}/` subdir per `min_snp_reads` value; a single job loads once and sweeps); the shared grid and sample sheet are duplicated into each sub-dir:
+   - `MSR{msr}/{assay_type}/bb.tsv.gz` — the one shared bin grid (joint across assays; identical copy in each sub-dir).
+   - `MSR{msr}/{assay_type}/sample_ids.tsv` — sample metadata (one row per replicate×assay; identical copy in each sub-dir).
+   - `MSR{msr}/{assay_type}/bb.{Tallele,Aallele,Ballele}.npz` — per-assay allele count matrices (bins × cells).
+   - `MSR{msr}/{assay_type}/bb.Xcount.npz` — per-assay native-count matrix per bb bin (same shape/order as the allele matrices). scATAC: deduped fragment counts from raw fragments. scRNA/VISIUM: UMI counts from the `process_rna_anndata` h5ad (gene → largest-overlap bin).
+   - `MSR{msr}/{assay_type}/multi_snp.tsv.gz`, `multi_snp.{Tallele,Aallele,Ballele}.npz` — per-assay multi-SNP groups (MSR-independent; identical across subdirs).
+   - `MSR{msr}/{assay_type}/barcodes.tsv.gz`, `barcodes.full.tsv.gz` — per-assay cell barcodes.
 
 To reuse genotyped and phased SNPs from bulk data, set `het_snp_vcf` to a prior run's `phase/phased_het_snps.vcf.gz`.
 
