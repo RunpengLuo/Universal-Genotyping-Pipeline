@@ -43,7 +43,7 @@ def _plot_cov_panel(
     reads,
     xlabel,
     show_ylabel,
-    rep_id,
+    label,
     rmse=None,
     is_before=False,
     xlim=None,
@@ -82,11 +82,11 @@ def _plot_cov_panel(
     metrics = f"MAD={mad:.2f}  r={r_pearson:.4f}  rho={r_spearman:.4f}"
     if rmse is not None and is_before:
         metrics = f"RMSE={rmse:.2f}  " + metrics
-    logging.info(f"  {xlabel:<8s} {rep_id:<8s}: {metrics}")
+    logging.info(f"  {xlabel:<8s} {label:<16s}: {metrics}")
     ax.set_xlabel(xlabel)
     if show_ylabel:
         ax.set_ylabel("Observed Readcov")
-    ax.set_title(f"{rep_id}\n{metrics}", fontsize=8)
+    ax.set_title(f"{label}\n{metrics}", fontsize=8)
     if xlim is not None:
         ax.set_xlim(*xlim)
     else:
@@ -100,7 +100,7 @@ def plot_rd_2d_kde(
     gc,
     dp_before,
     dp_after,
-    rep_ids,
+    labels,
     pdf,
     gc_rmse=None,
     mappability=None,
@@ -122,7 +122,7 @@ def plot_rd_2d_kde(
     title_prefix : str
         Optional prefix for page titles (e.g. ``"target — "``).
     """
-    nsamples = len(rep_ids)
+    nsamples = len(labels)
     panel_w = max(5, 5 * nsamples)
 
     # Build list of (row_label, covariate, xlabel)
@@ -146,7 +146,7 @@ def plot_rd_2d_kde(
             squeeze=False,
         )
         for ri, (row_label, covariate, xlabel) in enumerate(rows):
-            for si, rep_id in enumerate(rep_ids):
+            for si, label in enumerate(labels):
                 rmse = (
                     gc_rmse[si] if (gc_rmse is not None and row_label == "GC") else None
                 )
@@ -159,7 +159,7 @@ def plot_rd_2d_kde(
                     dp_mat[:, si],
                     xlabel,
                     show_ylabel=(si == 0),
-                    rep_id=rep_id,
+                    label=label,
                     rmse=rmse,
                     is_before=is_before,
                     **kw,
@@ -217,7 +217,7 @@ def plot_rd_1d_scatter(
             ax.grid(axis="y", alpha=0.2)
             ax.set_title(f"{title} — {val_type} ({unit})", fontsize=10)
             ax.set_ylabel(val_type, fontsize=10)
-        fig.suptitle(f"SAMPLE {label}", fontsize=12, y=1.0)
+        fig.suptitle(str(label), fontsize=12, y=1.0)
         fig.tight_layout()
         pdf.savefig(fig, dpi=dpi)
         plt.close(fig)
