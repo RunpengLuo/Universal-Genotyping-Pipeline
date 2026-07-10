@@ -73,7 +73,6 @@ if workflow_mode == "bulk_genotyping":
             min_snp_reads=MSR_LIST,
             min_snp_per_block=config["params_combine_counts"]["min_snp_per_block"],
             gene_aware_binning=config["params_combine_counts"]["gene_aware_binning"],
-            median_normalization=config["params_combine_counts"]["median_normalization"],
             rdr_outlier_quantile=config["params_combine_counts"]["rdr_outlier_quantile"],
             max_blocksize=config["params_combine_counts"]["max_blocksize"],
             phase_flip_test=config["params_combine_counts"]["phase_flip_test"],

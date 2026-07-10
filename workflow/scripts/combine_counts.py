@@ -4,7 +4,8 @@ All bulk assays present in the run (e.g. bulkWGS + bulkWGS-lr) are segmented on 
 shared bin grid: ``adaptive_segmentation`` requires ``min_snp_reads`` in every tumor
 sample, so stacking all assays' tumor columns yields bins that jointly satisfy every
 bulk sample. Allele counts are aggregated per bin across all samples; read depth and
-RDR are computed per assay, normalizing each assay's tumors by that assay's own normal.
+RDR are computed per assay, normalizing each tumor by the RDR base column named in its
+``RDR_BASE_REP_ID`` (median-normalized when unset).
 
 The allele matrices come as one joint set from phase_and_concat_bulk (read directly, no
 union); depth/window inputs stay per-assay (index-aligned to ``params.bulk_assays``).
@@ -40,6 +41,7 @@ from aggregation_utils import (
 from combine_counts_utils import (
     aggregate_window_depth_to_bins,
     build_assay_blocks,
+    build_rdr_base_map,
     compute_bb_rdr,
     load_bulk_snp_matrices,
     setup_phaseset_groups,
@@ -72,7 +74,6 @@ genome_size = snakemake_handle.input["genome_size"]
 qc_dir = snakemake_handle.params["qc_dir"]
 run_id = snakemake_handle.params["run_id"]
 bulk_assays = list(snakemake_handle.params["bulk_assays"])
-median_normalization = bool(snakemake_handle.params["median_normalization"])
 phase_flip_test = bool(snakemake_handle.params["phase_flip_test"])
 phase_flip_epsilon = float(snakemake_handle.params["phase_flip_epsilon"])
 phase_flip_alpha = float(snakemake_handle.params["phase_flip_alpha"])
@@ -113,6 +114,7 @@ logging.info(
 col_assay = sample_df["assay_type"].tolist()
 col_repid = sample_df["REP_ID"].tolist()
 assay_blocks, tumor_cols_all = build_assay_blocks(sample_df, bulk_assays)
+base_map = build_rdr_base_map(sample_df)
 logging.info(f"{total_samples} bulk samples, {len(tumor_cols_all)} tumor columns")
 
 has_feature = "feature_id" in snps.columns
@@ -130,10 +132,10 @@ if phase_flip_test:
     )
     grp_cols.append("phase_group")
 
-window_df = (
-    pd.concat([w[["#CHR", "START", "END", "region_id"]] for w in window_df_list], ignore_index=True)
-    .drop_duplicates(["#CHR", "START", "END"])
-)
+window_df = pd.concat(
+    [w[["#CHR", "START", "END", "region_id"]] for w in window_df_list],
+    ignore_index=True,
+).drop_duplicates(["#CHR", "START", "END"])
 window_df = sort_df_chr(window_df, ch="#CHR", pos="START").reset_index(drop=True)
 
 gene_aware_binning = gene_aware_binning_param and has_feature
@@ -227,17 +229,24 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
 
     logging.info("aggregating corrected window depth into adaptive bins (per assay)")
     bb_dp, bb_bases = aggregate_window_depth_to_bins(
-        assay_blocks, window_df, window_df_list, dp_corrected_list, num_bbs, total_samples
+        assay_blocks,
+        window_df,
+        window_df_list,
+        dp_corrected_list,
+        num_bbs,
+        total_samples,
     )
 
-    logging.info(f"compute bb RDR, median_normalization={median_normalization}")
+    logging.info(
+        f"compute bb RDR, {len(base_map)}/{len(tumor_cols_all)} tumors with RDR base"
+    )
     bb_rdr = compute_bb_rdr(
         assay_blocks,
         window_df_list,
         dp_corrected_list,
         bb_dp,
         tumor_cols_all,
-        median_normalization,
+        base_map,
         rdr_outlier_quantile,
         col_repid,
     )
@@ -252,8 +261,11 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         _genic = _genic.explode("feature_id")
         _genic = _genic[_genic["feature_id"] != "intergenic"]
         bb_gene_count = (
-            _genic.groupby("bb_id")["feature_id"].nunique()
-            .reindex(range(num_bbs)).fillna(0).to_numpy()
+            _genic.groupby("bb_id")["feature_id"]
+            .nunique()
+            .reindex(range(num_bbs))
+            .fillna(0)
+            .to_numpy()
         )
     else:
         bb_gene_count = None

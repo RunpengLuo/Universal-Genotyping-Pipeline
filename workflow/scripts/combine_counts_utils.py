@@ -302,9 +302,8 @@ def setup_phaseset_groups(snps):
 def build_assay_blocks(sample_df, bulk_assays):
     """Group joint sample columns by assay into per-assay block descriptors.
 
-    Each block records the assay's column ``offset``, size ``n``, matched
-    ``normal_col`` (or None), and ``tumor_cols``. Returns
-    ``(assay_blocks, tumor_cols_all)``.
+    Each block records the assay's column ``offset``, size ``n``, and
+    ``tumor_cols``. Returns ``(assay_blocks, tumor_cols_all)``.
     """
     col_assay = sample_df["assay_type"].tolist()
     col_stype = sample_df["sample_type"].tolist()
@@ -313,19 +312,48 @@ def build_assay_blocks(sample_df, bulk_assays):
         cols = [i for i, a in enumerate(col_assay) if a == at]
         assert cols, f"no samples for assay {at} in joint sample sheet"
         stypes = [col_stype[i] for i in cols]
-        has_normal_k = "normal" in stypes
         assay_blocks.append(
             {
                 "assay": at,
                 "offset": cols[0],
                 "n": len(cols),
-                "has_normal": has_normal_k,
-                "normal_col": cols[0] if has_normal_k else None,
                 "tumor_cols": [cols[i] for i, st in enumerate(stypes) if st == "tumor"],
             }
         )
     tumor_cols_all = [c for blk in assay_blocks for c in blk["tumor_cols"]]
     return assay_blocks, tumor_cols_all
+
+
+def build_rdr_base_map(sample_df):
+    """Map each tumor column to its RDR base (denominator) column.
+
+    A tumor row's optional ``RDR_BASE_REP_ID`` names the ``REP_ID`` of the
+    sample used as its RDR baseline. Returns ``{tumor_col: base_col}``; a tumor
+    with an unset ``RDR_BASE_REP_ID`` is omitted (median-normalized downstream).
+    """
+    col_repid = sample_df["REP_ID"].tolist()
+    col_stype = sample_df["sample_type"].tolist()
+    repid_to_col = {rid: i for i, rid in enumerate(col_repid)}
+
+    has_col = "RDR_BASE_REP_ID" in sample_df.columns
+    col_base_rep = (
+        sample_df["RDR_BASE_REP_ID"].tolist() if has_col else [None] * len(col_repid)
+    )
+
+    base_map = {}
+    for i in range(len(col_repid)):
+        if col_stype[i] != "tumor":
+            continue
+        brep = col_base_rep[i]
+        if has_col and pd.notna(brep) and str(brep) != "":
+            assert brep in repid_to_col, (
+                f"RDR_BASE_REP_ID={brep!r} for tumor {col_repid[i]!r} is not a REP_ID"
+            )
+            assert repid_to_col[brep] != i, (
+                f"RDR_BASE_REP_ID={brep!r} for tumor {col_repid[i]!r} is itself"
+            )
+            base_map[i] = repid_to_col[brep]
+    return base_map
 
 
 def aggregate_window_depth_to_bins(
@@ -345,7 +373,9 @@ def aggregate_window_depth_to_bins(
             on=["#CHR", "START", "END"],
             how="left",
         )
-        assert w["bin_id"].notna().all(), f"{blk['assay']} windows missing from scaffold"
+        assert w["bin_id"].notna().all(), (
+            f"{blk['assay']} windows missing from scaffold"
+        )
         bin_ids = w["bin_id"].to_numpy().astype(np.int64)
         win_lengths = (w["END"] - w["START"]).to_numpy(dtype=np.float64)
         total_len_per_bin = np.bincount(bin_ids, weights=win_lengths, minlength=num_bbs)
@@ -365,42 +395,48 @@ def compute_bb_rdr(
     dp_corrected_list,
     bb_dp,
     tumor_cols_all,
-    median_normalization,
+    base_map,
     rdr_outlier_quantile,
     col_repid,
 ):
-    """Per-assay bin RDR for every tumor column.
+    """Per-bin RDR for every tumor column.
 
-    Tumors are normalized by their own assay's matched normal (library-size
-    corrected) when one is present and ``median_normalization`` is False;
-    otherwise each tumor column is median-centered. Entries above the
-    ``1 - rdr_outlier_quantile`` quantile are set to NaN. Returns a
+    Each tumor with an RDR base column (from ``base_map``) is normalized by that
+    base column, library-size corrected; a tumor without a base is
+    median-centered. The base may live in any column (e.g. a different
+    assay/platform), so library sizes are computed globally per column. Entries
+    above the ``1 - rdr_outlier_quantile`` quantile are set to NaN. Returns a
     ``(num_bbs, len(tumor_cols_all))`` array column-aligned to ``tumor_cols_all``.
     """
-    num_bbs = bb_dp.shape[0]
+    num_bbs, total_samples = bb_dp.shape
     bb_rdr = np.full((num_bbs, len(tumor_cols_all)), np.nan, dtype=np.float32)
     rdr_pos = {c: i for i, c in enumerate(tumor_cols_all)}
+
+    # global per-column total aligned bases for library-size correction
+    col_total_bases = np.full(total_samples, np.nan, dtype=np.float64)
     for blk, win_a, dp_a in zip(assay_blocks, window_df_list, dp_corrected_list):
-        if blk["has_normal"] and not median_normalization:
-            win_sizes = (win_a["END"] - win_a["START"]).to_numpy(dtype=np.float64)
-            total_bases = np.nansum(dp_a * win_sizes[:, None], axis=0)
-            library_correction = total_bases[0] / total_bases
-            logging.info(f"  {blk['assay']} library factor: {library_correction}")
-            normal_bb_dp = bb_dp[:, blk["normal_col"]]
-            for c in blk["tumor_cols"]:
-                with np.errstate(invalid="ignore", divide="ignore"):
-                    bb_rdr[:, rdr_pos[c]] = (
-                        bb_dp[:, c] / normal_bb_dp * library_correction[c - blk["offset"]]
-                    )
+        win_sizes = (win_a["END"] - win_a["START"]).to_numpy(dtype=np.float64)
+        tb = np.nansum(dp_a * win_sizes[:, None], axis=0)
+        for s in range(blk["n"]):
+            col_total_bases[blk["offset"] + s] = tb[s]
+
+    for c in tumor_cols_all:
+        m = base_map.get(c)
+        if m is not None:
+            lib = col_total_bases[m] / col_total_bases[c]
+            logging.info(
+                f"  bb RDR {col_repid[c]} / base {col_repid[m]}: library factor={lib:.4f}"
+            )
+            with np.errstate(invalid="ignore", divide="ignore"):
+                bb_rdr[:, rdr_pos[c]] = bb_dp[:, c] / bb_dp[:, m] * lib
         else:
-            for c in blk["tumor_cols"]:
-                col = bb_dp[:, c]
-                valid_i = np.isfinite(col) & (col > 0)
-                if valid_i.any():
-                    med = np.median(col[valid_i])
-                    logging.info(f"  bb median-centering {col_repid[c]}: median={med:.4f}")
-                    with np.errstate(invalid="ignore", divide="ignore"):
-                        bb_rdr[valid_i, rdr_pos[c]] = col[valid_i] / med
+            col = bb_dp[:, c]
+            valid_i = np.isfinite(col) & (col > 0)
+            if valid_i.any():
+                med = np.median(col[valid_i])
+                logging.info(f"  bb median-centering {col_repid[c]}: median={med:.4f}")
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    bb_rdr[valid_i, rdr_pos[c]] = col[valid_i] / med
 
     if rdr_outlier_quantile > 0:
         rdr_upper = np.nanquantile(bb_rdr, 1 - rdr_outlier_quantile)

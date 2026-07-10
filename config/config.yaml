@@ -119,8 +119,8 @@ params_combine_counts:
   # true = bins grow by whole genes (GTF feature_id); a gene is never split across
   # bins. false = legacy window/SNP-granular binning.
   gene_aware_binning: true
-  # true = median-center (ignore matched normal)
-  median_normalization: false
+  # RDR baseline is per tumor via the sample sheet RDR_BASE_REP_ID column
+  # (tumor divided by that sample); tumors with RDR_BASE_REP_ID unset are median-centered.
   rdr_outlier_quantile: 0.002
   phase_flip_test: true
   phase_flip_epsilon: 0.05

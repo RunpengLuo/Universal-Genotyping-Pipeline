@@ -61,7 +61,7 @@ if _has_config:
 
     sample_df = pd.read_table(config["sample_file"])
     required_cols = ["SAMPLE", "REP_ID", "assay_type", "sample_type", "PATH_to_bam"]
-    optional_cols = ["PATH_to_barcodes", "PATH_to_10x_ranger"]
+    optional_cols = ["PATH_to_barcodes", "PATH_to_10x_ranger", "RDR_BASE_REP_ID"]
     missing_cols = [c for c in required_cols if c not in sample_df.columns]
     assert not missing_cols, f"missing columns: {missing_cols}"
     assert sample_df["REP_ID"].notna().all(), "REP_ID has missing values"
@@ -83,6 +83,29 @@ if _has_config:
     rep_ids = sample_df["REP_ID"].unique().tolist()
     assay_types = sample_df["assay_type"].unique().tolist()
     modalities = sample_df["modality"].unique().tolist()
+
+    # Optional per-tumor RDR baseline: RDR_BASE_REP_ID names the REP_ID of the sample
+    # each tumor is divided by for RDR. Unset -> that tumor is median-normalized.
+    all_rep_ids = set(sample_df["REP_ID"])
+    for _, row in sample_df.iterrows():
+        brep = row["RDR_BASE_REP_ID"]
+        if pd.isna(brep) or str(brep) == "":
+            if row["sample_type"] == "tumor":
+                print(
+                    f"NOTE: tumor REP_ID={row['REP_ID']!r} has no RDR_BASE_REP_ID; "
+                    "RDR uses median normalization"
+                )
+            continue
+        assert row["sample_type"] == "tumor", (
+            f"RDR_BASE_REP_ID set on non-tumor row REP_ID={row['REP_ID']!r}"
+        )
+        assert brep in all_rep_ids, (
+            f"RDR_BASE_REP_ID={brep!r} for tumor {row['REP_ID']!r} is not a "
+            f"REP_ID in sample {SAMPLE_ID}"
+        )
+        assert brep != row["REP_ID"], (
+            f"RDR_BASE_REP_ID={brep!r} for tumor {row['REP_ID']!r} is itself"
+        )
 
     # bulk allele/combine outputs live under allele_dir/{stream}/ (WGS family or WES)
     bulk_stream = "bulkWES" if "bulkWES" in assay_types else "bulkWGS"
@@ -122,6 +145,7 @@ if _has_config:
 
     assay2rep_ids = {}
     assay2sample_types = {}
+    assay2base_reps = {}
     for assay_type, rows in sample_df.groupby("assay_type", sort=False):
         # bulk assays ordered normal-first so column 0 is the matched normal
         if assay_type in BULK_ASSAYS:
@@ -130,11 +154,15 @@ if _has_config:
             )
         assay2rep_ids[assay_type] = rows["REP_ID"].tolist()
         assay2sample_types[assay_type] = rows["sample_type"].tolist()
+        assay2base_reps[assay_type] = [
+            "" if pd.isna(v) else str(v) for v in rows["RDR_BASE_REP_ID"].tolist()
+        ]
 
     for assay_type in ALLOWED_ASSAY_TYPES:
         if assay_type not in assay2rep_ids:
             assay2rep_ids[assay_type] = []
             assay2sample_types[assay_type] = []
+            assay2base_reps[assay_type] = []
 
     get_data = {}
     for rep_id, rep_df in sample_df.groupby(by="REP_ID", sort=False):

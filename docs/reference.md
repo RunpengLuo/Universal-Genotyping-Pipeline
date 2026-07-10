@@ -57,7 +57,7 @@ Defaults live in `config/config.yaml`. A starting template for user runs is at `
 | `params_phase_and_concat` | `phase_and_concat_{bulk,nonbulk}` | `min_depth` (bulk), `gamma` (bulk), `exon_only` |
 | `params_mosdepth` | `run_mosdepth` | `read_quality`, `extra_params` |
 | `params_count_reads` | `rd_correct` | `gc_correct`, `gc_correct_method` (`lowess`/`median`), `rt_correct`, `samplesize`, `routlier`, `doutlier`, `min_mappability` |
-| `params_combine_counts` | `combine_counts`, `combine_counts_nonbulk` | `min_switchprob`, `nu`, `switchprob_ps`, `min_snp_reads` (scalar or list; list ⇒ one `MSR{msr}/` subdir per value), `min_snp_per_block`, `gene_aware_binning`, `nsnp_multi` (sc only), `max_blocksize` (bulk only), `median_normalization` (bulk only), `rdr_outlier_quantile` (bulk only), `phase_flip_test` (bulk only), `phase_flip_epsilon` (bulk only), `phase_flip_alpha` (bulk only) |
+| `params_combine_counts` | `combine_counts`, `combine_counts_nonbulk` | `min_switchprob`, `nu`, `switchprob_ps`, `min_snp_reads` (scalar or list; list ⇒ one `MSR{msr}/` subdir per value), `min_snp_per_block`, `gene_aware_binning`, `nsnp_multi` (sc only), `max_blocksize` (bulk only), `rdr_outlier_quantile` (bulk only), `phase_flip_test` (bulk only), `phase_flip_epsilon` (bulk only), `phase_flip_alpha` (bulk only) |
 | `threads` | All multi-thread rules | `genotype`, `phase`, `pileup`, `mosdepth` |
 
 ### Output directories

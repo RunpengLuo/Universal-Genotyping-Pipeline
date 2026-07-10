@@ -51,6 +51,7 @@ rule phase_and_concat_bulk:
         col_assays=[at for at in assay_types for rid in assay2rep_ids[at]],
         col_reps=[rid for at in assay_types for rid in assay2rep_ids[at]],
         col_sample_types=[st for at in assay_types for st in assay2sample_types[at]],
+        col_base_reps=[br for at in assay_types for br in assay2base_reps[at]],
         min_depth=config["params_phase_and_concat"]["min_depth"],
         gamma=config["params_phase_and_concat"]["gamma"],
         exon_only=config["params_phase_and_concat"]["exon_only"],

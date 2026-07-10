@@ -72,6 +72,7 @@ sample_name = snakemake_handle.params["sample_name"]
 col_assays = list(snakemake_handle.params["col_assays"])
 col_reps = list(snakemake_handle.params["col_reps"])
 col_sample_types = list(snakemake_handle.params["col_sample_types"])
+col_base_reps = list(snakemake_handle.params["col_base_reps"])
 min_depth = int(snakemake_handle.params["min_depth"])
 gamma = float(snakemake_handle.params["gamma"])
 exon_only = snakemake_handle.params["exon_only"]
@@ -214,6 +215,7 @@ sample_df = pd.DataFrame(
         "REP_ID": col_reps,
         "sample_type": col_sample_types,
         "assay_type": col_assays,
+        "RDR_BASE_REP_ID": col_base_reps,
     }
 )
 sample_df.to_csv(out_sample_file, sep="\t", header=True, index=False)
