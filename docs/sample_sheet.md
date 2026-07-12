@@ -151,8 +151,10 @@ New sheets should use JSON; TSV exists so existing sheets keep running.
 
 ## Validation
 
-Checked before the DAG is built; errors name the record by `sample_id`, `dataset_id`, and
-`assay_type`:
+`resources/scripts/validate_sample_file.py <sample_file>` runs these checks without starting the
+workflow (`--check-files` also stats every local path; `--sample-id` / `--workflow-mode` narrow the
+scope). The same checks run before the DAG is built; errors name the record by `sample_id`,
+`dataset_id`, and `assay_type`:
 
 - Missing required key; unknown record or `files` key; `assay_type` / `sample_type` out of range.
 - A required file missing for the assay type, or one it does not consume.

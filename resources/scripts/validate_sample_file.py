@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""Validate a JSON (or legacy TSV) sample file without running the workflow.
+
+Runpeng Luo (2026-07-12)
+
+Runs the same parser and the same checks the Snakefile runs at DAG build, so a
+malformed sample file is caught in a second rather than mid-run. Every sample_id
+is validated in each workflow mode its assay types belong to, unless --sample-id
+or --workflow-mode narrows it. With --check-files, every path in every record is
+stat'ed as well; without it, only the schema is checked.
+
+Dependencies:
+  Python 3 standard library; config/const.py and workflow/scripts/parse_workflow_args.py
+  of this repo (located relative to this script).
+
+Usage:
+  python resources/scripts/validate_sample_file.py samples.json
+  python resources/scripts/validate_sample_file.py samples.tsv --check-files
+  python resources/scripts/validate_sample_file.py samples.json --sample-id HG008
+      sample_file       # .json sample file, or a legacy .tsv sheet
+      --sample-id       # only this sample_id (default: every one in the file)
+      --workflow-mode   # only this mode (default: every mode the assays allow)
+      --check-files     # also stat every path in every record
+
+Inputs
+  sample file: docs/sample_sheet.md
+Outputs:
+  a per-(sample_id, mode) report on stdout; exit status 1 if anything failed
+Notes/References:
+  Schema and validation rules: docs/sample_sheet.md
+"""
+
+import argparse
+import collections
+import os
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(REPO, "config"))
+sys.path.insert(0, os.path.join(REPO, "workflow", "scripts"))
+
+from const import BULK_ASSAYS, NONBULK_ASSAYS, is_url  # noqa: E402
+from parse_workflow_args import parse_sample_file, validate_records  # noqa: E402
+
+# a mode can only run the assay types it supports
+MODE_ASSAYS = {
+    "bulk_genotyping": BULK_ASSAYS,
+    "single_cell_genotyping": NONBULK_ASSAYS,
+    "copytyping_preprocess": NONBULK_ASSAYS,
+}
+
+
+def check_files(records):
+    """Stat every local path; remote URLs are not fetched.
+
+    Returns:
+        (missing, n_local, n_remote): the paths that do not exist, and how many
+        were checked vs skipped.
+    """
+    missing, n_local, n_remote = [], 0, 0
+    for rec in records:
+        for key, path in rec["files"].items():
+            if is_url(path):
+                n_remote += 1
+                continue
+            n_local += 1
+            if not os.path.exists(path):
+                missing.append(
+                    f"{rec['sample_id']}/{rec['dataset_id']}/{rec['assay_type']}"
+                    f" files.{key}: {path}"
+                )
+    return missing, n_local, n_remote
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("sample_file")
+    ap.add_argument("--sample-id", default=None)
+    ap.add_argument("--workflow-mode", default=None, choices=sorted(MODE_ASSAYS))
+    ap.add_argument("--check-files", action="store_true")
+    args = ap.parse_args()
+
+    try:
+        records = parse_sample_file(args.sample_file)
+    except (ValueError, OSError) as e:
+        print(f"FAIL parse: {e}")
+        return 1
+
+    sample_ids = sorted({r["sample_id"] for r in records})
+    assays = collections.Counter(r["assay_type"] for r in records)
+    print(f"{args.sample_file}")
+    print(f"  {len(records)} records, {len(sample_ids)} sample_id(s)")
+    print(f"  assays: {dict(assays)}")
+
+    if args.sample_id:
+        if args.sample_id not in sample_ids:
+            print(f"FAIL: sample_id={args.sample_id!r} is not in the file")
+            return 1
+        sample_ids = [args.sample_id]
+    modes = [args.workflow_mode] if args.workflow_mode else sorted(MODE_ASSAYS)
+
+    ok = failed = 0
+    for sample_id in sample_ids:
+        for mode in modes:
+            present = sorted(
+                {
+                    r["assay_type"]
+                    for r in records
+                    if r["sample_id"] == sample_id
+                    and r["assay_type"] in MODE_ASSAYS[mode]
+                }
+            )
+            if not present:
+                continue
+            try:
+                validate_records(records, args.sample_file, mode, sample_id, present)
+                ok += 1
+            except ValueError as e:
+                failed += 1
+                print(f"  FAIL {sample_id} [{mode}]: {e}")
+
+    print(f"\nvalidated: {ok} (sample_id, mode) combo(s) OK, {failed} failed")
+
+    missing = []
+    if args.check_files:
+        scoped = [r for r in records if r["sample_id"] in set(sample_ids)]
+        missing, n_local, n_remote = check_files(scoped)
+        print(f"\nfiles: {n_local} local checked, {n_remote} remote skipped")
+        if missing:
+            print(f"{len(missing)} missing:")
+            for m in missing[:20]:
+                print(f"  {m}")
+            if len(missing) > 20:
+                print(f"  ... and {len(missing) - 20} more")
+        elif n_local:
+            print("  all local files exist")
+
+    return 1 if (failed or missing) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
