@@ -30,10 +30,10 @@ snakemake --profile /path/to/workflow/profile/ \
     -s /path/to/workflow/Snakefile \
     --configfile /path/to/my_config.yaml \
     --directory <output_dir> \
-    --config sample_file=/path/to/samples.tsv sample_id=<PATIENT_ID>
+    --config sample_file=/path/to/samples.json sample_id=<PATIENT_ID>
 ```
 
-Defaults are auto-loaded from `config/config.yaml`. Pass `--configfile` with your run-specific config (see `resources/templates/config.yaml`) to override paths and settings. `--config` flags override individual keys. `sample_id` must match a `SAMPLE` value in the sample sheet.
+Defaults are auto-loaded from `config/config.yaml`. Pass `--configfile` with your run-specific config (see `resources/templates/config.yaml`) to override paths and settings. `--config` flags override individual keys. `sample_id` must match a `sample_id` value in the sample file.
 
 ---
 
@@ -41,7 +41,7 @@ Defaults are auto-loaded from `config/config.yaml`. Pass `--configfile` with you
 
 Bulk WGS/WES. Genotypes SNPs (bcftools), phases, computes allele counts and bias-corrected RDR.
 
-1. Sample sheet with `assay_type` = `bulkWGS`, `bulkWGS-lr`, or `bulkWES`, including normal and tumor.
+1. Sample file with `assay_type` = `bulkWGS`, `bulkWGS-lr`, or `bulkWES`, including normal and tumor.
 2. Set `workflow_mode: bulk_genotyping` in config.
 3. **WGS:** Set `window_bed` to a pre-filtered window BED (e.g., build using `resources/scripts/build_wgs_window_bed.py` or use pre-built `resources/data/windows.1kbp.hg38.bed.gz`).
 4. **WES:** Set `window_bed` to a WES window BED built using `resources/scripts/build_wes_window_bed.py` (requires `--wes_targets_bed` pointing to vendor capture targets).
@@ -56,7 +56,7 @@ Bulk WGS/WES. Genotypes SNPs (bcftools), phases, computes allele counts and bias
 
 scRNA, scATAC, VISIUM, or VISIUM3prime. Pseudobulk genotyping via cellsnp-lite, per-cell pileup, binned allele counts.
 
-1. Sample sheet with non-bulk samples. Multiome: same `REP_ID` for scRNA + scATAC. Fill in `PATH_to_barcodes` and `PATH_to_10x_ranger`.
+1. Sample file with non-bulk records (see [sample_sheet.md](sample_sheet.md)). Multiome: same `dataset_id` for scRNA + scATAC. Give each record a `files` map: scRNA needs `barcodes` + `matrix_h5`, scATAC needs `barcodes` + `fragments`, VISIUM adds `tissue_positions`, `scalefactors`, and the two images.
 2. Set `workflow_mode: single_cell_genotyping` in config.
 3. All of the sample's non-bulk assays are jointly segmented on **one shared bin grid** (one pseudobulk column per replicate×assay). Everything lives under per-assay `bb_dir/MSR{msr}/{assay_type}/` (one `MSR{msr}/` subdir per `min_snp_reads` value; a single job loads once and sweeps); the shared grid and sample sheet are duplicated into each sub-dir:
    - `MSR{msr}/{assay_type}/bb.tsv.gz` — the one shared bin grid (joint across assays; identical copy in each sub-dir).
@@ -74,7 +74,7 @@ To reuse genotyped and phased SNPs from bulk data, set `het_snp_vcf` to a prior 
 
 Skips genotyping. Aggregates per-cell allele counts onto pre-computed BB blocks.
 
-1. Sample sheet with non-bulk samples.
+1. Sample file with non-bulk records.
 2. Set `workflow_mode: copytyping_preprocess`. Provide `het_snp_vcf` and `bb_file` in config.
 3. Outputs in `bb_dir/{assay_type}/`:
    - `cnv_segments.tsv` — BB block annotations.

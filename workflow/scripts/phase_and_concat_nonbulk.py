@@ -52,7 +52,7 @@ h5ad_file = snakemake_handle.input["h5ad_file"]
 qc_dir = snakemake_handle.params["qc_dir"]
 sample_name = snakemake_handle.params["sample_name"]
 assay_type = snakemake_handle.params["assay_type"]
-rep_ids = snakemake_handle.params["rep_ids"]
+dataset_ids = snakemake_handle.params["dataset_ids"]
 sample_types = snakemake_handle.params["sample_types"]
 exon_only = snakemake_handle.params["exon_only"]
 run_id = snakemake_handle.params["run_id"]
@@ -70,7 +70,7 @@ sample_file = snakemake_handle.output["sample_file"]
 is_rna_assay = ASSAY_TYPE2MODALITY[assay_type] == "RNA"
 
 ##################################################
-logging.info(f"sample_name={sample_name}, assay_type={assay_type}, rep_ids={rep_ids}")
+logging.info(f"sample_name={sample_name}, assay_type={assay_type}, dataset_ids={dataset_ids}")
 
 snps = read_VCF(snp_vcf, addkey=True, add_phase1=True, add_pos0=True)
 parent_keys = pd.Index(snps["KEY"])
@@ -79,9 +79,9 @@ assert not parent_keys.duplicated().any(), "invalid bi-allelic SNP VCF file"
 barcodes_list = []
 tot_mtx_list = []
 ad_mtx_list = []
-for idx, rep_id in enumerate(rep_ids):
+for idx, dataset_id in enumerate(dataset_ids):
     barcodes = pd.read_table(sample_tsvs[idx], sep="\t", header=None, names=["BARCODE"])
-    barcodes["BARCODE"] = barcodes["BARCODE"].astype(str) + f"_{rep_id}"
+    barcodes["BARCODE"] = barcodes["BARCODE"].astype(str) + f"_{dataset_id}"
     barcodes_list.append(barcodes)
     tot_canon, ad_canon = canon_mat_one_replicate(
         parent_keys, vcf_files[idx], tot_mtx_files[idx], ad_mtx_files[idx], len(barcodes)
@@ -91,12 +91,12 @@ for idx, rep_id in enumerate(rep_ids):
 
 all_barcodes = pd.concat(barcodes_list, axis=0, ignore_index=True)
 cell_rep_idx = np.repeat(
-    np.arange(len(rep_ids), dtype=np.int64),
+    np.arange(len(dataset_ids), dtype=np.int64),
     [len(b) for b in barcodes_list],
 )
 barcodes_full = pd.DataFrame(
     {
-        "REP_ID": np.array(rep_ids, dtype=str)[cell_rep_idx],
+        "REP_ID": np.array(dataset_ids, dtype=str)[cell_rep_idx],
         "BARCODE": all_barcodes["BARCODE"].to_numpy(),
     }
 )
@@ -150,7 +150,7 @@ b_mtx = b_mtx[snp_mask, :]
 
 plot_snp_depth_histogram(
     tot_mtx,
-    rep_ids,
+    dataset_ids,
     qc_dir,
     f"{assay_type}.{run_id}",
     ref_mtx=ref_mtx,
@@ -163,7 +163,7 @@ af_pdf_path = snakemake_handle.output["qc_pdf"]
 with PdfPages(af_pdf_path) as pdf:
     plot_allele_freqs(
         snps,
-        rep_ids,
+        dataset_ids,
         tot_mtx,
         ref_mtx,
         genome_size,
@@ -180,7 +180,7 @@ with PdfPages(af_pdf_path) as pdf:
     )
     plot_allele_freqs(
         snps,
-        rep_ids,
+        dataset_ids,
         tot_mtx,
         b_mtx,
         genome_size,
@@ -219,9 +219,9 @@ snp_ids = snps["#CHR"].astype(str) + "_" + snps["POS"].astype(str)
 np.save(unique_snp_ids, snp_ids.to_numpy())
 all_barcodes.to_csv(out_all_barcodes, sep="\t", header=False, index=False)
 barcodes_full.to_csv(out_barcodes_full, sep="\t", header=True, index=False)
-sample_df = pd.DataFrame({"SAMPLE": [f"{sample_name}_{rep_id}" for rep_id in rep_ids]})
+sample_df = pd.DataFrame({"SAMPLE": [f"{sample_name}_{dataset_id}" for dataset_id in dataset_ids]})
 sample_df["SAMPLE_NAME"] = sample_name
-sample_df["REP_ID"] = rep_ids
+sample_df["REP_ID"] = dataset_ids
 sample_df["sample_type"] = sample_types
 sample_df.to_csv(sample_file, sep="\t", header=True, index=False)
 logging.info("finished.")

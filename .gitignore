@@ -4,6 +4,7 @@ third_party/
 tmp/
 .snakemake/
 .ruff_cache/
+.pytest_cache/
 .envs/
 CLAUDE.md
 third_party
@@ -12,4 +13,6 @@ third_party
 AGENTS.md
 __pycache__/
 test*
+!tests/
+!tests/*.py
 *.log

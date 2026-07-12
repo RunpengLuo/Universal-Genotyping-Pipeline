@@ -1,3 +1,57 @@
+def file_input(paths):
+    """Rule input for sample-file path(s); accepts one path or a list.
+
+    Local paths pass through unchanged. URLs are wrapped in storage(), which
+    downloads the file once into .snakemake/storage/ and deletes the local copy
+    once no remaining job needs it (default --keep-storage-local-copies=False).
+    """
+    if isinstance(paths, (list, tuple)):
+        return [file_input(p) for p in paths]
+    return storage(str(paths)) if is_url(paths) else str(paths)
+
+
+def alignment_input(files):
+    """Rule input for the .bam/.cram of one files map, or a list of files maps."""
+    if isinstance(files, (list, tuple)):
+        return [alignment_input(f) for f in files]
+    return file_input(files["alignment"])
+
+
+def alignment_index_input(files):
+    """Rule input for the .bai/.crai of one files map, or a list of files maps."""
+    if isinstance(files, (list, tuple)):
+        return [alignment_index_input(f) for f in files]
+    return file_input(files["alignment_index"])
+
+
+def download_slots(files):
+    """Storage-retrieval cost of a job: 1 when any of its files is a URL, else 0.
+
+    Gated by the `downloads` resource (profile/config.yaml), so at most N jobs that
+    must fetch remote inputs run at once. That caps both concurrent HTTP requests
+    (NCBI returns 503 under heavy parallelism) and peak local disk, which holds
+    roughly `downloads` x the largest alignment.
+    """
+    if isinstance(files, (list, tuple)):
+        return int(any(download_slots(f) for f in files))
+    return int(any(is_url(v) for v in files.values()))
+
+
+def spatial_layout(assay_type, dataset_ids):
+    """Space Ranger `spatial/` members of each rep, for staging before squidpy.
+
+    Returns (names, paths): names[i] lists the spatial/ filenames of rep i, and
+    paths is those files flattened in the same order, so a rule can pass paths
+    as an input list and names as a param and still pair them up.
+    """
+    names, paths = [], []
+    for dataset_id in dataset_ids:
+        layout = get_visium_layout(get_data[(assay_type, dataset_id)], assay_type)
+        names.append(list(layout.keys()))
+        paths.extend(layout.values())
+    return names, paths
+
+
 def cli_flag(params_dict, key, flag_name, is_bool=False):
     """Return CLI flag list for a nullable config param, or [] if null.
 

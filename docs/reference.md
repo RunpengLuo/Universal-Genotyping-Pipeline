@@ -2,17 +2,31 @@
 
 ## Sample File
 
-TSV with one row per replicate. Template at `resources/templates/samples.tsv`.
+JSON, one record per (`dataset_id`, `assay_type`). Full spec: **[sample_sheet.md](sample_sheet.md)**.
+Template at `resources/templates/samples.json`. Legacy `.tsv` sheets are still parsed
+(`resources/templates/samples.tsv`), with single-cell files derived from `PATH_to_10x_ranger` and
+therefore local-only.
 
-| Column | Required | Description |
-|--------|----------|-------------|
-| `SAMPLE` | Yes | Patient ID (matched by `sample_id` in config). |
-| `REP_ID` | Yes | Unique per row; multiome pairs share a `REP_ID`. |
-| `assay_type` | Yes | `bulkWGS`, `bulkWGS-lr`, `bulkWES`, `scATAC`, `scRNA`, `VISIUM`, or `VISIUM3prime`. |
-| `sample_type` | Yes | `normal` or `tumor`. |
-| `PATH_to_bam` | Yes | Path to `.bam` file. |
-| `PATH_to_barcodes` | Non-bulk | Path to `barcodes.tsv.gz`. |
-| `PATH_to_10x_ranger` | Non-bulk | Path to Cell Ranger / Space Ranger `outs/` directory. |
+Every input file is named explicitly in a per-record `files` map, and any of them may be an
+`http(s)` URL: Snakemake fetches each remote file once, shares it across the rules that need it,
+and deletes the local copy when no job needs it any more.
+
+For GIAB HG008 the file can be generated from the dataset manifests (the generator lives
+with the data, not in this repo):
+
+```sh
+python ~/Research/datasets/GIAB/giab_samplesheet.py \
+  --tumor-json bulk_wgs.json --normal-json bulk_wgs.normal.json \
+  --single-cell-json single_cell.json \
+  --build GRCh38 GRCh38-GIABv3 --output samples.json
+```
+
+It emits all released bulk tumor datasets (every passage) plus the normals they reference, and,
+with `--single-cell-json`, the 10x multiome datasets as an scRNA + scATAC record pair sharing one
+`dataset_id`. Each tumor's `rdr_base_dataset_id` is wired to a same-platform normal, preferring the
+same build, then the same dataset id, then pancreatic over duodenal; ambiguous, cross-build, and
+unmatched cases are logged to stderr. Passing >1 `--build` appends a build tag to every
+`dataset_id`, since a dataset id is reused across builds.
 
 ---
 
@@ -26,8 +40,8 @@ Defaults live in `config/config.yaml`. A starting template for user runs is at `
 |-----|----------|-------------|
 | `workflow_mode` | Yes | `bulk_genotyping` \| `single_cell_genotyping` \| `copytyping_preprocess`. |
 | `assay_types` | Yes | List of assay types to run (e.g. `["bulkWGS"]`, `["scRNA","scATAC"]`). |
-| `sample_id` | Yes | Selects which `SAMPLE` from the sample sheet to process. |
-| `sample_file` | Yes | Path to `samples.tsv`. |
+| `sample_id` | Yes | Selects which `sample_id` from the sample file to process. |
+| `sample_file` | Yes | Path to `samples.json` (see [sample_sheet.md](sample_sheet.md)). |
 | `chromosomes` | Yes | List of chromosomes (default `[1..22]`; X handled separately by phasing tools). |
 | `reference_version` | Yes | `hg19` \| `hg38` \| `chm13v2`. |
 | `reference` | Yes | Genome FASTA. |
@@ -41,8 +55,12 @@ Defaults live in `config/config.yaml`. A starting template for user runs is at `
 | `snp_targets` | Bulk genotyping | Per-chromosome position files; build via `resources/scripts/build_snp_targets.sh`. |
 | `phasing_panel` | eagle/shapeit | Per-chromosome BCF reference panel directory. |
 | `phaser` | Genotyping | `eagle` \| `shapeit` \| `longphase`. |
+| `long_read_phasing` | Optional | Default `false`. `true` requires `phaser: longphase` and a long-read dataset; `false` forbids `longphase`, so population phasing is used even when long-read data is present. |
+| `genotype_dataset_ids` | Optional | List of `dataset_id`s whose alignments are piled up to call germline SNPs. Empty -> auto: a normal before a tumor, short-read before long-read (`bcftools mpileup` defaults suit short reads). Listing >1 pools them in one `mpileup`; they must share an `@RG SM` tag. |
+| `phase_dataset_ids` | Optional | The `dataset_id` (one) whose alignment `longphase` reads. Empty -> auto: a long-read normal, else a long-read tumor. Ignored by panel phasers. |
 | `gmap_path` | eagle/shapeit | Full gmap path; use `{chrname}` placeholder for per-chrom files (SHAPEIT5) or a literal path for the single-file case (Eagle2). |
-| `het_snp_vcf` | copytyping_preprocess | Pre-computed phased het SNP VCF (e.g. from a prior bulk run). |
+| `het_snp_vcf` | Optional (required for `copytyping_preprocess`) | Pre-computed het SNP VCF. Set in any mode to skip genotyping. |
+| `het_snp_vcf_phased` | Optional | Default `false`. `true` declares `het_snp_vcf` already phased, so phasing is skipped too; `false` splits it per chromosome and phases it. Must be `true` for `copytyping_preprocess`, which never genotypes or phases. |
 | `bb_file` | copytyping_preprocess | Pre-computed BB block annotations TSV. |
 
 ### Parameter blocks
@@ -84,7 +102,7 @@ All output directories (`snp_dir`, `phase_dir`, `pileup_dir`, `allele_dir`, `bb_
 
 ### Pileup (`pileup_dir/`)
 
-One subdirectory per `{assay_type}_{rep_id}` with cellsnp-lite output.
+One subdirectory per `{assay_type}_{dataset_id}` with cellsnp-lite output.
 
 ### Allele Counts (`allele_dir/{stream_or_assay}/`)
 
@@ -159,7 +177,7 @@ All QC plots are written flat in `qc_dir`, with the pipeline stage, assay (or `b
 
 ### `sample_ids.tsv`
 
-`SAMPLE` (`{patient_id}_{rep_id}`), `SAMPLE_NAME` (patient ID), `REP_ID`, `sample_type`.
+`SAMPLE` (`{patient_id}_{dataset_id}`), `SAMPLE_NAME` (patient ID), `REP_ID`, `sample_type`.
 
 ### `barcodes.tsv.gz`
 

@@ -48,15 +48,14 @@ b_mtx_snp_files = list(snakemake_handle.input["b_mtx_snp"])
 sample_files = list(snakemake_handle.input["sample_file"])
 barcode_files = list(snakemake_handle.input["all_barcodes"])
 barcode_full_files = list(snakemake_handle.input["barcodes_full"])
-ranger_dirs = list(snakemake_handle.input["ranger_dirs"])
+frag_files = list(snakemake_handle.input["frag_files"])
 h5ad_files = list(snakemake_handle.input["h5ad_files"])
 gmap_file = maybe_path(snakemake_handle.input["gmap_file"])
 region_bed = snakemake_handle.input["region_bed"]
 genome_size = snakemake_handle.input["genome_size"]
 
 # parameters
-ranger_assays = list(snakemake_handle.params["ranger_assays"])  # parallel to ranger_dirs
-ranger_reps = list(snakemake_handle.params["ranger_reps"])
+frag_reps = list(snakemake_handle.params["frag_reps"])  # parallel to frag_files
 h5ad_assays = list(snakemake_handle.params["h5ad_assays"])  # parallel to h5ad_files (RNA-family)
 qc_dir = snakemake_handle.params["qc_dir"]
 run_id = snakemake_handle.params["run_id"]
@@ -273,11 +272,9 @@ for j, min_snp_reads in enumerate(msr_list):
 
         # per-cell Xcount per bb bin: scATAC from raw fragments, RNA from the h5ad
         if assay == "scATAC":
-            _idx = [i for i, a in enumerate(ranger_assays) if a == assay]
-            frag_files = [locate_atac_fragment_file(ranger_dirs[i]) for i in _idx]
             x_count = atac_fragments_to_bb(
                 frag_files,
-                [ranger_reps[i] for i in _idx],
+                frag_reps,
                 read_full_barcodes(barcode_full_files[k]),
                 bb_grid,
                 num_bbs,

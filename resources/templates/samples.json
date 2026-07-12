@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "samples": [
+    {
+      "sample_id": "HT001",
+      "dataset_id": "N1",
+      "assay_type": "bulkWGS",
+      "sample_type": "normal",
+      "platform": "Illumina PCR-free",
+      "reference_version": "GRCh38",
+      "files": {
+        "alignment": "/path/to/HT001/normal.bam",
+        "alignment_index": "/path/to/HT001/normal.bam.bai"
+      }
+    },
+    {
+      "sample_id": "HT001",
+      "dataset_id": "T1",
+      "rdr_base_dataset_id": "N1",
+      "passage_id": "p23",
+      "assay_type": "bulkWGS",
+      "sample_type": "tumor",
+      "platform": "Illumina PCR-free",
+      "reference_version": "GRCh38",
+      "files": {
+        "alignment": "https://example.org/HT001/tumor_p23.bam",
+        "alignment_index": "https://example.org/HT001/tumor_p23.bam.bai"
+      },
+      "meta": {
+        "note": "bam is fetched on demand and deleted after the last job that needs it"
+      }
+    },
+    {
+      "sample_id": "HT001",
+      "dataset_id": "U1",
+      "passage_id": "p23",
+      "assay_type": "scRNA",
+      "sample_type": "tumor",
+      "platform": "10x Genomics multiome",
+      "reference_version": "GRCh38",
+      "files": {
+        "alignment": "/path/to/HT001/multiome/outs/gex_possorted_bam.bam",
+        "alignment_index": "/path/to/HT001/multiome/outs/gex_possorted_bam.bam.bai",
+        "barcodes": "/path/to/HT001/multiome/outs/filtered_feature_bc_matrix/barcodes.tsv.gz",
+        "matrix_h5": "/path/to/HT001/multiome/outs/filtered_feature_bc_matrix.h5"
+      }
+    },
+    {
+      "sample_id": "HT001",
+      "dataset_id": "U1",
+      "passage_id": "p23",
+      "assay_type": "scATAC",
+      "sample_type": "tumor",
+      "platform": "10x Genomics multiome",
+      "reference_version": "GRCh38",
+      "files": {
+        "alignment": "/path/to/HT001/multiome/outs/atac_possorted_bam.bam",
+        "alignment_index": "/path/to/HT001/multiome/outs/atac_possorted_bam.bam.bai",
+        "barcodes": "/path/to/HT001/multiome/outs/filtered_feature_bc_matrix/barcodes.tsv.gz",
+        "fragments": "/path/to/HT001/multiome/outs/atac_fragments.tsv.gz"
+      }
+    },
+    {
+      "sample_id": "HT002",
+      "dataset_id": "V1",
+      "assay_type": "VISIUM",
+      "sample_type": "tumor",
+      "platform": "10x Genomics Visium",
+      "reference_version": "GRCh38",
+      "files": {
+        "alignment": "/path/to/HT002/visium/outs/possorted_genome_bam.bam",
+        "alignment_index": "/path/to/HT002/visium/outs/possorted_genome_bam.bam.bai",
+        "barcodes": "/path/to/HT002/visium/outs/filtered_feature_bc_matrix/barcodes.tsv.gz",
+        "matrix_h5": "/path/to/HT002/visium/outs/filtered_feature_bc_matrix.h5",
+        "tissue_positions": "/path/to/HT002/visium/outs/spatial/tissue_positions.csv",
+        "scalefactors": "/path/to/HT002/visium/outs/spatial/scalefactors_json.json",
+        "image_hires": "/path/to/HT002/visium/outs/spatial/tissue_hires_image.png",
+        "image_lowres": "/path/to/HT002/visium/outs/spatial/tissue_lowres_image.png"
+      }
+    },
+    {
+      "sample_id": "HT003",
+      "dataset_id": "N1",
+      "assay_type": "bulkWGS",
+      "sample_type": "normal",
+      "files": {
+        "alignment": "/path/to/HT003/normal.bam",
+        "alignment_index": "/path/to/HT003/normal.bam.bai"
+      }
+    },
+    {
+      "sample_id": "HT003",
+      "dataset_id": "T1",
+      "rdr_base_dataset_id": "N1",
+      "assay_type": "bulkWES",
+      "sample_type": "tumor",
+      "files": {
+        "alignment": "/path/to/HT003/tumor.cram",
+        "alignment_index": "/path/to/HT003/tumor.cram.crai"
+      }
+    }
+  ]
+}

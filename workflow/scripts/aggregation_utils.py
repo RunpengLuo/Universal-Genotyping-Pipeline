@@ -1,4 +1,3 @@
-import os
 import heapq
 import logging
 
@@ -854,15 +853,6 @@ def feature_to_blocks(
     else:
         adata.var[block_idx] = adata.var[block_idx].astype(feature_df[block_idx].dtype)
     return adata
-
-
-def locate_atac_fragment_file(ranger_dir):
-    """Return the 10x ATAC fragment file inside a cellranger dir, or None."""
-    for fname in ("atac_fragments.tsv.gz", "fragments.tsv.gz"):
-        fpath = os.path.join(ranger_dir, fname)
-        if os.path.exists(fpath):
-            return fpath
-    return None
 
 
 def rna_h5ad_to_bb(h5ad_file, barcodes, bb_df, num_bbs, assay_type):

@@ -49,7 +49,7 @@ tot_mtx_snp = snakemake_handle.input["tot_mtx_snp"]
 a_mtx_snp = snakemake_handle.input["a_mtx_snp"]
 b_mtx_snp = snakemake_handle.input["b_mtx_snp"]
 h5ad_file = snakemake_handle.input["h5ad_file"]
-ranger_dirs = snakemake_handle.input["ranger_dirs"]
+frag_files = list(snakemake_handle.input["frag_files"])
 all_barcodes = snakemake_handle.input["all_barcodes"]
 barcodes_full_path = snakemake_handle.input["barcodes_full"]
 region_bed = snakemake_handle.input["region_bed"]
@@ -76,17 +76,17 @@ out_sample_file = snakemake_handle.output["sample_file"]
 
 
 sample_df = pd.read_table(sample_file)
-rep_ids = sample_df["REP_ID"].tolist()
+dataset_ids = sample_df["REP_ID"].tolist()
 
 is_rna_assay = ASSAY_TYPE2MODALITY[assay_type] == "RNA"
 assert assay_type not in BULK_ASSAYS, "bulk sample CNV segmentation unsupported yet"
 
 cell_rep_idx = cell_rep_idx_from_mapping(
-    read_full_barcodes(barcodes_full_path), rep_ids
+    read_full_barcodes(barcodes_full_path), dataset_ids
 )
 
 logging.info(f"cnv segmentation, sample name={sample_name}, assay_type={assay_type}")
-logging.info(f"rep_ids={rep_ids}")
+logging.info(f"dataset_ids={dataset_ids}")
 snps = pd.read_table(snp_info, sep="\t")
 
 tot_mtx = load_npz(tot_mtx_snp)
@@ -138,7 +138,7 @@ pdf_path = snakemake_handle.output["qc_pdf"]
 with PdfPages(pdf_path) as pdf:
     plot_allele_freqs(
         snps,
-        rep_ids,
+        dataset_ids,
         tot_mtx,
         b_mtx,
         genome_size,
@@ -153,7 +153,7 @@ with PdfPages(pdf_path) as pdf:
     )
     plot_allele_freqs(
         bb_df,
-        rep_ids,
+        dataset_ids,
         tot_mtx_bb,
         b_mtx_bb,
         genome_size,
@@ -188,11 +188,10 @@ if is_rna_assay:
     )
 else:
     # scATAC: per-cell Xcount from raw 10x fragments (no tile h5ad)
-    frag_files = [locate_atac_fragment_file(d) for d in ranger_dirs]
     bb_grid = bb_df[["#CHR", "START", "END", "bb_id"]].copy()
     x_count = atac_fragments_to_bb(
         frag_files,
-        rep_ids,
+        dataset_ids,
         read_full_barcodes(barcodes_full_path),
         bb_grid,
         num_bbs,

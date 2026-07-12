@@ -16,3 +16,5 @@ dependencies:
   # injected `snakemake` script global (the old `from snakemake.script import
   # snakemake` import was removed in 9.x). Project standardizes on Snakemake 9+.
   - snakemake>=9
+  - snakemake-storage-plugin-http
+  - pytest

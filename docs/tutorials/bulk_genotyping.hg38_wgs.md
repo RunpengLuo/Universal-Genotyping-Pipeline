@@ -6,17 +6,40 @@ This tutorial walks through running the `bulk_genotyping` pipeline on paired nor
 
 Install [conda](https://github.com/conda-forge/miniforge) and [Snakemake](https://snakemake.readthedocs.io/) (>= 9). We recommend using the [libmamba solver](https://www.anaconda.com/blog/a-faster-conda-for-a-growing-community) for faster dependency resolution (`conda config --set solver libmamba`).
 
-## 2. Sample sheet
+## 2. Sample file
 
-Create a TSV file (e.g., `samples.tsv`) with one row per BAM. For bulk WGS you need five columns:
+Create a JSON file (e.g., `samples.json`) with one record per BAM. For bulk WGS each record needs
+`sample_id`, `dataset_id`, `assay_type`, `sample_type`, and a `files` map holding the `bam`:
 
-```tsv
-SAMPLE	REP_ID	assay_type	sample_type	PATH_to_bam
-HT001	N1	bulkWGS	normal	/data/HT001/normal.bam
-HT001	T1	bulkWGS	tumor	/data/HT001/tumor.bam
+```json
+{
+  "version": 1,
+  "samples": [
+    {
+      "sample_id": "HT001",
+      "dataset_id": "N1",
+      "assay_type": "bulkWGS",
+      "sample_type": "normal",
+      "files": { "bam": "/data/HT001/normal.bam" }
+    },
+    {
+      "sample_id": "HT001",
+      "dataset_id": "T1",
+      "rdr_base_dataset_id": "N1",
+      "assay_type": "bulkWGS",
+      "sample_type": "tumor",
+      "files": { "bam": "/data/HT001/tumor.bam" }
+    }
+  ]
+}
 ```
 
-You may specify data from multiple patients in same sample sheet, but the workflow will only process one patient at a time depends on specified `sample_id` in config file. See [docs/reference.md](../reference.md) for detailed format.
+`rdr_base_dataset_id` points the tumor at the normal it is divided by for RDR; omit it to
+median-normalize instead. A `bam` may also be an `http(s)` URL, fetched on demand.
+
+You may specify data from multiple patients in the same sample file, but the workflow processes one
+patient at a time, chosen by `sample_id` in the config. See [docs/sample_sheet.md](../sample_sheet.md)
+for the full format.
 
 ## 3. Config
 
@@ -33,7 +56,7 @@ assay_types: ["bulkWGS"]
 
 ```yaml
 sample_id: HT001
-sample_file: /path/to/samples.tsv
+sample_file: /path/to/samples.json
 chromosomes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
 ```
 
@@ -127,7 +150,7 @@ snakemake --profile /path/to/profile/ \
     -s /path/to/workflow/Snakefile \
     --configfile /path/to/my_config.yaml \
     --directory /path/to/output_dir \
-    --config sample_file=/path/to/samples.tsv sample_id=HT001
+    --config sample_file=/path/to/samples.json sample_id=HT001
 ```
 
 Defaults are auto-loaded from `config/config.yaml`. The `--configfile` and `--config` flags override specific values, so you can reuse the same config for different patients.
@@ -145,7 +168,7 @@ snakemake --profile /path/to/profile/ \
     -s /path/to/workflow/Snakefile \
     --configfile /path/to/my_config.yaml \
     --directory /path/to/output_dir \
-    --config sample_file=/path/to/samples.tsv sample_id=HT001 \
+    --config sample_file=/path/to/samples.json sample_id=HT001 \
     --rerun-incomplete
 ```
 

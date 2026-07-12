@@ -170,15 +170,15 @@ def read_full_barcodes(path: str):
     return pd.read_table(path, sep="\t", header=0, dtype=str)
 
 
-def cell_rep_idx_from_mapping(rep2bc: pd.DataFrame, rep_ids):
+def cell_rep_idx_from_mapping(rep2bc: pd.DataFrame, dataset_ids):
     """Convert a REP_ID,BARCODE DataFrame into an int64 array of rep indices.
 
-    Categorical mapping with explicit ``rep_ids`` order ensures the codes
-    align with the position of each rep in the caller's rep_ids list.
+    Categorical mapping with explicit ``dataset_ids`` order ensures the codes
+    align with the position of each rep in the caller's dataset_ids list.
     """
-    cats = pd.Categorical(rep2bc["REP_ID"], categories=list(rep_ids))
+    cats = pd.Categorical(rep2bc["REP_ID"], categories=list(dataset_ids))
     codes = np.asarray(cats.codes, dtype=np.int64)
-    assert (codes >= 0).all(), "barcodes.full contains REP_ID values outside rep_ids"
+    assert (codes >= 0).all(), "barcodes.full contains REP_ID values outside dataset_ids"
     return codes
 
 

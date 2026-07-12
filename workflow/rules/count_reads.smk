@@ -28,7 +28,6 @@ rule window_bed_to_3bed:
             level=logging.INFO,
             format="%(asctime)s %(levelname)s %(message)s",
         )
-
         df = pd.read_table(
             str(input.window_bed), sep="\t", usecols=["#CHR", "START", "END"]
         )
@@ -39,23 +38,28 @@ rule window_bed_to_3bed:
 
 rule run_mosdepth:
     input:
-        bam=lambda wc: get_data[(wc.assay_type, wc.rep_id)][1],
+        alignment=lambda wc: alignment_input(get_data[(wc.assay_type, wc.dataset_id)]),
+        alignment_index=lambda wc: alignment_index_input(
+            get_data[(wc.assay_type, wc.dataset_id)]
+        ),
         windows_bed=config["pileup_dir"] + "/windows.bed.gz",
     output:
         mosdepth_file=config["pileup_dir"]
-        + "/{assay_type}/out_mosdepth/{rep_id}.regions.bed.gz",
-    threads: config["threads"]["mosdepth"]
-    wildcard_constraints:
-        assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
-    params:
-        out_prefix=config["pileup_dir"] + "/{assay_type}/out_mosdepth/{rep_id}",
-        read_quality=config["params_mosdepth"]["read_quality"],
-        extra_params=config["params_mosdepth"]["extra_params"],
+        + "/{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz",
     log:
         config["log_dir"]
-        + f"/run_mosdepth/run_mosdepth.{{assay_type}}_{{rep_id}}.{_run_id}.log",
+        + f"/run_mosdepth/run_mosdepth.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
+    wildcard_constraints:
+        assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
     conda:
         "../envs/tools.yaml"
+    threads: config["threads"]["mosdepth"]
+    resources:
+        downloads=lambda wc: download_slots(get_data[(wc.assay_type, wc.dataset_id)]),
+    params:
+        out_prefix=config["pileup_dir"] + "/{assay_type}/out_mosdepth/{dataset_id}",
+        read_quality=config["params_mosdepth"]["read_quality"],
+        extra_params=config["params_mosdepth"]["extra_params"],
     shell:
         r"""
         mosdepth \
@@ -63,7 +67,7 @@ rule run_mosdepth:
             -Q {params.read_quality} \
             --by {input.windows_bed} \
             {params.extra_params} \
-            {params.out_prefix} {input.bam} > {log} 2>&1
+            {params.out_prefix} {input.alignment} > {log} 2>&1
         """
 
 
@@ -72,8 +76,8 @@ rule rd_correct:
     input:
         mosdepth_files=lambda wc: [
             config["pileup_dir"]
-            + f"/{wc.assay_type}/out_mosdepth/{rep_id}.regions.bed.gz"
-            for rep_id in assay2rep_ids[wc.assay_type]
+            + f"/{wc.assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz"
+            for dataset_id in assay2dataset_ids[wc.assay_type]
         ],
         window_bed=config["window_bed"] or [],
         genome_size=config["genome_size"],
@@ -94,14 +98,19 @@ rule rd_correct:
             subcategory="read-depth correction",
             labels={"assay": "{assay_type}"},
         ),
+    log:
+        config["log_dir"] + f"/rd_correct.{{assay_type}}.{_run_id}.log",
     wildcard_constraints:
         assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
+    conda:
+        "../envs/base.yaml"
     params:
         qc_dir=config["qc_dir"],
-        sample_name=SAMPLE_ID,
-        rep_ids=lambda wc: assay2rep_ids[wc.assay_type],
+        sample_name=sample_id,
+        dataset_ids=lambda wc: assay2dataset_ids[wc.assay_type],
         sample_ids=lambda wc: [
-            f"{SAMPLE_ID}_{rep_id}" for rep_id in assay2rep_ids[wc.assay_type]
+            f"{sample_id}_{dataset_id}"
+            for dataset_id in assay2dataset_ids[wc.assay_type]
         ],
         mosdepth_dir=lambda wc: config["pileup_dir"] + f"/{wc.assay_type}/out_mosdepth",
         chromosomes=config["chromosomes"],
@@ -114,9 +123,5 @@ rule rd_correct:
         rt_correct=_rdr_cfg["rt_correct"],
         assay_type=lambda wc: wc.assay_type,
         run_id=_run_id,
-    log:
-        config["log_dir"] + f"/rd_correct.{{assay_type}}.{_run_id}.log",
-    conda:
-        "../envs/base.yaml"
     script:
         """../scripts/rd_correct.py"""

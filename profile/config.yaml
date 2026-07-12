@@ -7,3 +7,15 @@ verbose: false
 rerun-triggers:
   - mtime
   - input
+
+# Remote inputs (docs/sample_sheet.md). At most `downloads` jobs that must fetch a
+# URL run at once, so peak local disk is about downloads x the largest alignment,
+# and the host sees at most that many concurrent requests (NCBI answers 503 when
+# hammered). Raise for a fast link and a big scratch disk; 1 serializes retrieval.
+resources:
+  - downloads=2
+
+# Local copies are deleted once no remaining job needs them. Set to keep them.
+keep-storage-local-copies: false
+# Move retrievals off the working dir (e.g. a scratch disk) if space is tight.
+local-storage-prefix: .snakemake/storage

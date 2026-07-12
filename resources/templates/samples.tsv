@@ -1,11 +1,5 @@
-SAMPLE	REP_ID	assay_type	sample_type	PATH_to_bam	RDR_BASE_REP_ID	PATH_to_barcodes	PATH_to_10x_ranger
-HT001	N1	bulkWGS	normal	s1.bam
-HT001	T1	bulkWGS	tumor	s2.bam	N1
-HT001	U1	scRNA	tumor	s1.bam		/path/to/barcodes.tsv.gz	/path/to/outs
-HT001	U1	scATAC	tumor	s2.bam		/path/to/barcodes.tsv.gz	/path/to/outs
-HT001	U2	VISIUM	tumor	s3.bam		/path/to/barcodes.tsv.gz	/path/to/outs
-HT001	U3	VISIUM	tumor	s4.bam		/path/to/barcodes.tsv.gz	/path/to/outs
-HT002	N1	bulkWGS	normal	s5.bam
-HT002	T1	bulkWES	tumor	s6.bam
-HT003	T1	bulkWGS	tumor	s7.bam
-HT003	U1	scRNA	tumor	s8.bam		/path/to/barcodes.tsv.gz	/path/to/outs
+SAMPLE	REP_ID	RDR_BASE_REP_ID	passage	assay_type	sample_type	PATH_to_bam	PATH_to_barcodes	PATH_to_10x_ranger
+HT001	N1			bulkWGS	normal	/path/to/HT001/normal.bam
+HT001	T1	N1	p23	bulkWGS	tumor	https://example.org/HT001/tumor.bam
+HT001	U1		p23	scRNA	tumor	/path/to/HT001/multiome/outs/gex_possorted_bam.bam	/path/to/HT001/multiome/outs/filtered_feature_bc_matrix/barcodes.tsv.gz	/path/to/HT001/multiome/outs
+HT001	U1		p23	scATAC	tumor	/path/to/HT001/multiome/outs/atac_possorted_bam.bam	/path/to/HT001/multiome/outs/filtered_feature_bc_matrix/barcodes.tsv.gz	/path/to/HT001/multiome/outs

@@ -711,7 +711,7 @@ def plot_segmentation_qc(
 
 def plot_snp_depth_histogram(
     tot_mtx,
-    rep_ids,
+    dataset_ids,
     qc_dir,
     run_id,
     ref_mtx=None,
@@ -729,7 +729,7 @@ def plot_snp_depth_histogram(
     tot_mtx : ndarray or sparse
         Total depth matrix (SNPs x samples/cells), already filtered to the
         SNPs of interest.
-    rep_ids : list[str]
+    dataset_ids : list[str]
         Sample / replicate identifiers.
     qc_dir : str
         Output directory for the PDF.
@@ -743,7 +743,7 @@ def plot_snp_depth_histogram(
         If False, columns are cells; see *cell_rep_idx*.
     cell_rep_idx : np.ndarray or None
         Length-n_cells int array mapping each cell column to a rep index in
-        ``rep_ids``. Only consulted when ``is_bulk=False``. When provided,
+        ``dataset_ids``. Only consulted when ``is_bulk=False``. When provided,
         cells are pseudobulked within each rep — one row per rep. When
         ``None``, all cells collapse into a single "pseudobulk" row.
     """
@@ -755,16 +755,16 @@ def plot_snp_depth_histogram(
     if is_bulk:
         depth_mat = tot_mtx
         ref_count_mat = ref_mtx
-        row_labels = list(rep_ids)
+        row_labels = list(dataset_ids)
     elif cell_rep_idx is not None:
-        n_groups = len(rep_ids)
+        n_groups = len(dataset_ids)
         depth_mat = pseudobulk_by_groups(tot_mtx, cell_rep_idx, n_groups)
         ref_count_mat = (
             pseudobulk_by_groups(ref_mtx, cell_rep_idx, n_groups)
             if has_af
             else None
         )
-        row_labels = list(rep_ids)
+        row_labels = list(dataset_ids)
     else:
         # legacy global-pseudobulk path: one row aggregating all cells
         if issparse(tot_mtx):
@@ -832,7 +832,7 @@ def plot_snp_depth_histogram(
 
 def plot_allele_freqs(
     pos_df,
-    rep_ids,
+    dataset_ids,
     tot_mtx,
     b_mtx,
     genome_size,
@@ -855,7 +855,7 @@ def plot_allele_freqs(
     ``cell_rep_idx``:
 
     - ``apply_pseudobulk=False`` — columns of the matrices are samples;
-      multi-row scatter, one row per ``rep_ids`` entry.
+      multi-row scatter, one row per ``dataset_ids`` entry.
     - ``apply_pseudobulk=True`` and ``cell_rep_idx`` provided — cells are
       pseudobulked within each rep; multi-row scatter, one row per rep.
     - ``apply_pseudobulk=True`` and ``cell_rep_idx`` is ``None`` — all cells
@@ -865,13 +865,13 @@ def plot_allele_freqs(
     ----------
     pos_df : pd.DataFrame
         SNP/bin position DataFrame with ``#CHR`` and ``POS`` (or ``START``/``END``).
-    rep_ids : list[str]
+    dataset_ids : list[str]
         Replicate identifiers; used as row labels.
     tot_mtx, b_mtx : sparse or ndarray
         Total depth and B-allele count matrices.
     cell_rep_idx : np.ndarray or None
         Length-n_cells int array mapping each cell column to a rep index in
-        ``rep_ids``. See behavior matrix above.
+        ``dataset_ids``. See behavior matrix above.
     genome_size : str
         Path to chromosome sizes file.
     plot_dir : str
@@ -913,12 +913,12 @@ def plot_allele_freqs(
         return
 
     if per_rep_pseudobulk:
-        af_mat = compute_af_by_groups(tot_mtx, b_mtx, cell_rep_idx, len(rep_ids))
+        af_mat = compute_af_by_groups(tot_mtx, b_mtx, cell_rep_idx, len(dataset_ids))
     else:
         _tot_mtx = tot_mtx.tocsc() if issparse(tot_mtx) else tot_mtx
         _b_mtx = b_mtx.tocsc() if issparse(b_mtx) else b_mtx
         af_mat = np.column_stack(
-            [compute_af_per_sample(_tot_mtx, _b_mtx, i) for i in range(len(rep_ids))]
+            [compute_af_per_sample(_tot_mtx, _b_mtx, i) for i in range(len(dataset_ids))]
         )
     stem = f"af_{allele}_{unit}{suffix}"
     stem = f"{name_prefix}.{stem}" if name_prefix else stem
@@ -926,7 +926,7 @@ def plot_allele_freqs(
     plot_1d_multi_sample(
         pos_df,
         af_mat,
-        list(rep_ids),
+        list(dataset_ids),
         genome_size,
         plot_file,
         unit=unit,

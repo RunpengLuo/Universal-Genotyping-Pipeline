@@ -7,28 +7,24 @@ rule phase_and_concat_bulk:
         vcfs=[
             config["pileup_dir"] + f"/{at}_{rid}/cellSNP.base.vcf.gz"
             for at in assay_types
-            for rid in assay2rep_ids[at]
+            for rid in assay2dataset_ids[at]
         ],
         sample_tsvs=[
             config["pileup_dir"] + f"/{at}_{rid}/cellSNP.samples.tsv"
             for at in assay_types
-            for rid in assay2rep_ids[at]
+            for rid in assay2dataset_ids[at]
         ],
         tot_mtxs=[
             config["pileup_dir"] + f"/{at}_{rid}/cellSNP.tag.DP.mtx"
             for at in assay_types
-            for rid in assay2rep_ids[at]
+            for rid in assay2dataset_ids[at]
         ],
         ad_mtxs=[
             config["pileup_dir"] + f"/{at}_{rid}/cellSNP.tag.AD.mtx"
             for at in assay_types
-            for rid in assay2rep_ids[at]
+            for rid in assay2dataset_ids[at]
         ],
-        snp_vcf=(
-            config["phase_dir"] + "/phased_het_snps.vcf.gz"
-            if run_genotyping
-            else config["het_snp_vcf"]
-        ),
+        snp_vcf=phased_snp_vcf,
         region_bed=config["region_bed"],
         genome_size=config["genome_size"],
         gtf_file=config["gtf_file"],
@@ -45,21 +41,21 @@ rule phase_and_concat_bulk:
             subcategory="phasing / allele freq (bulk)",
             labels={"stream": bulk_stream},
         ),
+    log:
+        config["log_dir"] + f"/phase_and_concat.bulk.{_run_id}.log",
+    conda:
+        "../envs/base.yaml"
     params:
         qc_dir=config["qc_dir"],
-        sample_name=SAMPLE_ID,
-        col_assays=[at for at in assay_types for rid in assay2rep_ids[at]],
-        col_reps=[rid for at in assay_types for rid in assay2rep_ids[at]],
+        sample_name=sample_id,
+        col_assays=[at for at in assay_types for rid in assay2dataset_ids[at]],
+        col_reps=[rid for at in assay_types for rid in assay2dataset_ids[at]],
         col_sample_types=[st for at in assay_types for st in assay2sample_types[at]],
         col_base_reps=[br for at in assay_types for br in assay2base_reps[at]],
         min_depth=config["params_phase_and_concat"]["min_depth"],
         gamma=config["params_phase_and_concat"]["gamma"],
         exon_only=config["params_phase_and_concat"]["exon_only"],
         run_id=_run_id,
-    log:
-        config["log_dir"] + f"/phase_and_concat.bulk.{_run_id}.log",
-    conda:
-        "../envs/base.yaml"
     script:
         """../scripts/phase_and_concat_bulk.py"""
 
@@ -70,26 +66,22 @@ rule phase_and_concat_bulk:
 rule phase_and_concat_nonbulk:
     input:
         vcfs=lambda wc: [
-            config["pileup_dir"] + f"/{wc.assay_type}_{rep_id}/cellSNP.base.vcf.gz"
-            for rep_id in assay2rep_ids[wc.assay_type]
+            config["pileup_dir"] + f"/{wc.assay_type}_{dataset_id}/cellSNP.base.vcf.gz"
+            for dataset_id in assay2dataset_ids[wc.assay_type]
         ],
         sample_tsvs=lambda wc: [
-            config["pileup_dir"] + f"/{wc.assay_type}_{rep_id}/cellSNP.samples.tsv"
-            for rep_id in assay2rep_ids[wc.assay_type]
+            config["pileup_dir"] + f"/{wc.assay_type}_{dataset_id}/cellSNP.samples.tsv"
+            for dataset_id in assay2dataset_ids[wc.assay_type]
         ],
         tot_mtxs=lambda wc: [
-            config["pileup_dir"] + f"/{wc.assay_type}_{rep_id}/cellSNP.tag.DP.mtx"
-            for rep_id in assay2rep_ids[wc.assay_type]
+            config["pileup_dir"] + f"/{wc.assay_type}_{dataset_id}/cellSNP.tag.DP.mtx"
+            for dataset_id in assay2dataset_ids[wc.assay_type]
         ],
         ad_mtxs=lambda wc: [
-            config["pileup_dir"] + f"/{wc.assay_type}_{rep_id}/cellSNP.tag.AD.mtx"
-            for rep_id in assay2rep_ids[wc.assay_type]
+            config["pileup_dir"] + f"/{wc.assay_type}_{dataset_id}/cellSNP.tag.AD.mtx"
+            for dataset_id in assay2dataset_ids[wc.assay_type]
         ],
-        snp_vcf=lambda wc: branch(
-            run_genotyping,
-            then=config["phase_dir"] + "/phased_het_snps.vcf.gz",
-            otherwise=config["het_snp_vcf"],
-        ),
+        snp_vcf=phased_snp_vcf,
         h5ad_file=lambda wc: (
             config["bb_dir"] + f"/{wc.assay_type}.h5ad"
             if ASSAY_TYPE2MODALITY[wc.assay_type] == "RNA"
@@ -118,19 +110,19 @@ rule phase_and_concat_nonbulk:
             subcategory="phasing / allele freq",
             labels={"assay": "{assay_type}"},
         ),
+    log:
+        config["log_dir"] + f"/phase_and_concat.{{assay_type}}.{_run_id}.log",
     wildcard_constraints:
         assay_type="(scRNA|scATAC|VISIUM|VISIUM3prime)",
+    conda:
+        "../envs/base.yaml"
     params:
         qc_dir=config["qc_dir"],
-        sample_name=SAMPLE_ID,
+        sample_name=sample_id,
         assay_type=lambda wc: wc.assay_type,
-        rep_ids=lambda wc: assay2rep_ids[wc.assay_type],
+        dataset_ids=lambda wc: assay2dataset_ids[wc.assay_type],
         sample_types=lambda wc: assay2sample_types[wc.assay_type],
         exon_only=config["params_phase_and_concat"]["exon_only"],
         run_id=_run_id,
-    log:
-        config["log_dir"] + f"/phase_and_concat.{{assay_type}}.{_run_id}.log",
-    conda:
-        "../envs/base.yaml"
     script:
         """../scripts/phase_and_concat_nonbulk.py"""

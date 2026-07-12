@@ -48,7 +48,7 @@ blacklist_bed = maybe_path(snakemake_handle.input.get("blacklist_bed", None))
 
 # parameters
 assay_type = str(snakemake_handle.params["assay_type"])
-rep_ids = [str(r) for r in snakemake_handle.params["rep_ids"]]
+dataset_ids = [str(r) for r in snakemake_handle.params["dataset_ids"]]
 sample_ids = [str(s) for s in snakemake_handle.params["sample_ids"]]
 mosdepth_dir = snakemake_handle.params["mosdepth_dir"]
 chromosomes = snakemake_handle.params["chromosomes"]
@@ -68,7 +68,7 @@ window_df = snakemake_handle.output["window_df"]
 
 run_id = getattr(snakemake_handle.params, "run_id", "")
 
-nsamples = len(rep_ids)
+nsamples = len(dataset_ids)
 target_chroms = {f"chr{c}" for c in chromosomes}
 join_keys = ["#CHR", "START", "END"]
 
@@ -83,8 +83,8 @@ assert "#CHR" in win_df.columns and "GC" in win_df.columns, (
 win_df = win_df[win_df["#CHR"].isin(target_chroms)].reset_index(drop=True)
 
 mos_dfs = []
-for rep_id in rep_ids:
-    mos_file = os.path.join(mosdepth_dir, f"{rep_id}.regions.bed.gz")
+for dataset_id in dataset_ids:
+    mos_file = os.path.join(mosdepth_dir, f"{dataset_id}.regions.bed.gz")
     mos_df = pd.read_table(
         mos_file, sep="\t", header=None, names=["#CHR", "START", "END", "DEPTH"]
     )
@@ -122,7 +122,7 @@ for _, row in depth_stats[depth_stats["#CHR"] == "TOTAL"].iterrows():
 gc_vals = win_df["GC"].to_numpy()
 
 rd_raw_ylim = max(np.nanquantile(dp_raw, 0.99), 1.0) * 1.1
-gc_corr_before, gc_std_before = compute_gc_rd_stats(dp_raw, gc_vals, rep_ids)
+gc_corr_before, gc_std_before = compute_gc_rd_stats(dp_raw, gc_vals, dataset_ids)
 
 logging.info(f"{n_windows} windows for bias correction")
 
@@ -147,8 +147,8 @@ if gc_correct:
 
     if gc_correct_method == "median":
         logging.info("applying correct_readcount_quadreg per sample")
-        for i, rep_id in enumerate(rep_ids):
-            logging.info(f"correcting {rep_id}")
+        for i, dataset_id in enumerate(dataset_ids):
+            logging.info(f"correcting {dataset_id}")
             dp_corrected[:, i], gc_rmse = correct_readcount_quadreg(
                 dp_raw[:, i],
                 gc_vals,
@@ -160,8 +160,8 @@ if gc_correct:
             gc_rmse_list.append(gc_rmse)
     else:
         logging.info("applying correct_readcount_lowess per sample")
-        for i, rep_id in enumerate(rep_ids):
-            logging.info(f"correcting {rep_id}")
+        for i, dataset_id in enumerate(dataset_ids):
+            logging.info(f"correcting {dataset_id}")
             dp_corrected[:, i], gc_rmse = correct_readcount_lowess(
                 dp_raw[:, i],
                 gc_vals,
@@ -184,7 +184,7 @@ plot_rd_1d_scatter(
     win_df,
     dp_raw,
     dp_corrected,
-    [f"{s} {r}" for s, r in zip(sample_ids, rep_ids)],
+    [f"{s} {r}" for s, r in zip(sample_ids, dataset_ids)],
     genome_size,
     rd_pdf,
     ylim_before=rd_raw_ylim,
@@ -196,7 +196,7 @@ plot_rd_2d_kde(
     gc_vals,
     dp_raw,
     dp_corrected,
-    [f"{s} {r}" for s, r in zip(sample_ids, rep_ids)],
+    [f"{s} {r}" for s, r in zip(sample_ids, dataset_ids)],
     rd_pdf,
     gc_rmse=gc_rmse_list,
     mappability=map_vals,

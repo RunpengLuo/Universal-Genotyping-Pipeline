@@ -1,4 +1,4 @@
-import os, logging
+import os, logging, tempfile
 
 snakemake_handle = snakemake
 
@@ -36,50 +36,83 @@ setup_logging(log_file)
 
 # inputs
 barcode_files = snakemake_handle.input["barcodes"]
-ranger_dirs = snakemake_handle.input["ranger_dirs"]
+matrix_h5_files = list(snakemake_handle.input["matrix_h5"])
+spatial_files = list(snakemake_handle.input.get("spatial_files", []))
 gtf_file = snakemake_handle.input["gtf_file"]
 gene_blacklist_file = maybe_path(snakemake_handle.input["gene_blacklist_file"])
 region_bed = snakemake_handle.input["region_bed"]
 
 # parameters
 assay_type = snakemake_handle.params["assay_type"]
-rep_ids = snakemake_handle.params["rep_ids"]
+dataset_ids = snakemake_handle.params["dataset_ids"]
+# per-dataset spatial/ filenames, aligned with spatial_files
+spatial_names = list(snakemake_handle.params["spatial_names"])
 gene_id_colname = str(snakemake_handle.params["gene_id_colname"])
 min_frac_barcodes = float(snakemake_handle.params["min_frac_barcodes"])
 
 # outputs
 out_h5ad_file = snakemake_handle.output["h5ad_file"]
 
-logging.info(f"prepare rna anndata, assay_type={assay_type}, rep_ids={rep_ids}")
+
+def stage_ranger_dir(tmp_dir, matrix_h5, names, paths):
+    """Symlink one dataset's files into a Space Ranger layout for squidpy.read.visium.
+
+    squidpy takes a directory, while the sample file names each spatial file
+    individually so remote files can be fetched. Recreate the layout it expects:
+    the feature matrix at the root, the rest under spatial/. Names come from
+    RANGER_* in const.py.
+
+    Args:
+        tmp_dir: Directory to populate.
+        matrix_h5: Path to this dataset's feature-barcode matrix.
+        names: Space Ranger filenames under spatial/, for this dataset.
+        paths: Paths supplying those files, in the same order.
+
+    Returns:
+        tmp_dir, ready to pass to squidpy.read.visium.
+    """
+    os.symlink(
+        os.path.abspath(matrix_h5),
+        os.path.join(tmp_dir, RANGER_MATRIX_H5[0]),
+    )
+    spatial_dir = os.path.join(tmp_dir, RANGER_SPATIAL_DIR)
+    os.makedirs(spatial_dir)
+    for name, path in zip(names, paths):
+        os.symlink(os.path.abspath(path), os.path.join(spatial_dir, name))
+    return tmp_dir
+
+
+logging.info(f"prepare rna anndata, assay_type={assay_type}, dataset_ids={dataset_ids}")
 
 adatas = {}
-for idx, rep_id in enumerate(rep_ids):
-    logging.info(f"process {assay_type}-{rep_id}")
+_spatial_offset = 0
+for idx, dataset_id in enumerate(dataset_ids):
+    logging.info(f"process {assay_type}-{dataset_id}")
     barcodes = read_barcodes(barcode_files[idx])
     barcodes = pd.Index(barcodes).astype(str)
 
-    ranger_dir = ranger_dirs[idx]
-    h5ad_file = os.path.join(ranger_dir, "filtered_feature_bc_matrix.h5")
-    assert os.path.exists(h5ad_file), f"missing {h5ad_file}"
+    matrix_h5 = matrix_h5_files[idx]
     if assay_type in SPATIAL_ASSAYS:
+        names = spatial_names[idx]
+        paths = spatial_files[_spatial_offset : _spatial_offset + len(names)]
+        _spatial_offset += len(names)
         # squidpy doesn't support load images from 3' data yet.
-        load_images = True if assay_type == "VISIUM" else False
-        if load_images:
-            assert os.path.isdir(os.path.join(ranger_dir, "spatial/")), (
-                f"missing spatial/ for {assay_type}"
+        load_images = assay_type == "VISIUM"
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ranger_dir = stage_ranger_dir(tmp_dir, matrix_h5, names, paths)
+            logging.info(f"staged {len(names) + 1} files for squidpy: {names}")
+            adata: sc.AnnData = sq.read.visium(
+                ranger_dir, load_images=load_images, library_id=dataset_id
             )
-        adata: sc.AnnData = sq.read.visium(
-            ranger_dir, load_images=load_images, library_id=rep_id
-        )
         adata.var_names_make_unique()
     else:
-        adata: sc.AnnData = sc.read_10x_h5(h5ad_file, gex_only=True)
+        adata: sc.AnnData = sc.read_10x_h5(matrix_h5, gex_only=True)
         adata.var_names_make_unique()
 
     adata.obs_names = adata.obs_names.astype(str)
     adata = adata[adata.obs_names.isin(barcodes), :].copy()
-    adata.obs_names = adata.obs_names.astype(str) + f"_{rep_id}"
-    adatas[rep_id] = adata
+    adata.obs_names = adata.obs_names.astype(str) + f"_{dataset_id}"
+    adatas[dataset_id] = adata
     logging.info(f"#barcodes={adata.n_obs}, #features={adata.n_vars}")
 
 if len(adatas) > 1:
@@ -92,7 +125,7 @@ if len(adatas) > 1:
         fill_value=0,
     )
 else:
-    adata = adatas[rep_ids[0]]
+    adata = adatas[dataset_ids[0]]
 adata.X = adata.X.tocsr()
 num_total_barcodes = adata.n_obs
 logging.info(f"#concat barcodes={num_total_barcodes}, #union features={adata.n_vars}")

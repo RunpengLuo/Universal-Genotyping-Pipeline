@@ -22,8 +22,12 @@ sample_id: sample_id
 sample_file: /path/to/sample.tsv
 chromosomes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
 
-# Input for copy-typing preprocess mode.
+# HET SNP VCF. When provided, genotyping is skipped.
+# Required for copytyping_preprocess.
 het_snp_vcf: null
+# phasing is skipped if set to true.
+het_snp_vcf_phased: false
+# prior segmentation file for copytyping_preprocess.
 bb_file: null
 
 ##################################################
@@ -73,9 +77,22 @@ params_annotate_snps:
   filter_hom_ALT: false
 
 ##################################################
+# Genotyping
+# dataset_ids whose alignments are piled up to call germline SNPs. Empty -> auto:
+# the highest-priority normal (short-read before long-read), else a tumor.
+# Listing >1 pools them in one bcftools mpileup; they must share an @RG SM tag.
+genotype_dataset_ids: []
+
+##################################################
 # Phasing
 # eagle | shapeit | longphase
 phaser: "eagle"
+# Guard: true requires phaser=longphase and a long-read dataset; false forbids
+# longphase, so population phasing is used even when long-read data is present.
+long_read_phasing: false
+# dataset_ids whose alignments longphase reads. Empty -> auto: a long-read normal,
+# else a long-read tumor. Ignored by panel phasers.
+phase_dataset_ids: []
 # Full gmap path; use {chrname} placeholder for SHAPEIT5 (per-chrom files),
 # or a literal path for Eagle2 (single file across all chroms).
 gmap_path: null
@@ -119,8 +136,6 @@ params_combine_counts:
   # true = bins grow by whole genes (GTF feature_id); a gene is never split across
   # bins. false = legacy window/SNP-granular binning.
   gene_aware_binning: true
-  # RDR baseline is per tumor via the sample sheet RDR_BASE_REP_ID column
-  # (tumor divided by that sample); tumors with RDR_BASE_REP_ID unset are median-centered.
   rdr_outlier_quantile: 0.002
   phase_flip_test: true
   phase_flip_epsilon: 0.05
