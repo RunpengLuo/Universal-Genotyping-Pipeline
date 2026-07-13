@@ -55,12 +55,11 @@ Defaults live in `config/config.yaml`. A starting template for user runs is at `
 | `snp_targets` | Bulk genotyping | Per-chromosome position files; build via `resources/scripts/build_snp_targets.sh`. |
 | `phasing_panel` | eagle/shapeit | Per-chromosome BCF reference panel directory. |
 | `phaser` | Genotyping | `eagle` \| `shapeit` \| `longphase`. |
-| `long_read_phasing` | Optional | Default `false`. `true` requires `phaser: longphase` and a long-read dataset; `false` forbids `longphase`, so population phasing is used even when long-read data is present. |
 | `genotype_dataset_ids` | Optional | List of `dataset_id`s whose alignments are piled up to call germline SNPs. Empty -> auto: a normal before a tumor, short-read before long-read (`bcftools mpileup` defaults suit short reads). Listing >1 pools them in one `mpileup`; they must share an `@RG SM` tag. |
 | `phase_dataset_ids` | Optional | The `dataset_id` (one) whose alignment `longphase` reads. Empty -> auto: a long-read normal, else a long-read tumor. Ignored by panel phasers. |
 | `gmap_path` | eagle/shapeit | Full gmap path; use `{chrname}` placeholder for per-chrom files (SHAPEIT5) or a literal path for the single-file case (Eagle2). |
 | `het_snp_vcf` | Optional (required for `copytyping_preprocess`) | Pre-computed het SNP VCF. Set in any mode to skip genotyping. |
-| `het_snp_vcf_phased` | Optional | Default `false`. `true` declares `het_snp_vcf` already phased, so phasing is skipped too; `false` splits it per chromosome and phases it. Must be `true` for `copytyping_preprocess`, which never genotypes or phases. |
+| `het_snp_vcf_phased` | Optional | Default `true`: `het_snp_vcf` is taken as already phased, so phasing is skipped too. Set `false` to split it per chromosome and phase it. Read only when `het_snp_vcf` is set; must stay `true` for `copytyping_preprocess`, which never genotypes or phases. |
 | `bb_file` | copytyping_preprocess | Pre-computed BB block annotations TSV. |
 
 ### Parameter blocks

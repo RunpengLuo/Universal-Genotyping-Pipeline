@@ -25,8 +25,8 @@ chromosomes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
 # HET SNP VCF. When provided, genotyping is skipped.
 # Required for copytyping_preprocess.
 het_snp_vcf: null
-# phasing is skipped if set to true.
-het_snp_vcf_phased: false
+# phasing is skipped if set to true. Only read when het_snp_vcf is set.
+het_snp_vcf_phased: true
 # prior segmentation file for copytyping_preprocess.
 bb_file: null
 
@@ -87,9 +87,6 @@ genotype_dataset_ids: []
 # Phasing
 # eagle | shapeit | longphase
 phaser: "eagle"
-# Guard: true requires phaser=longphase and a long-read dataset; false forbids
-# longphase, so population phasing is used even when long-read data is present.
-long_read_phasing: false
 # dataset_ids whose alignments longphase reads. Empty -> auto: a long-read normal,
 # else a long-read tumor. Ignored by panel phasers.
 phase_dataset_ids: []

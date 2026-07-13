@@ -470,7 +470,7 @@ def validate_mode(config, workflow_mode, assay_types):
         for key in ("het_snp_vcf", "bb_file"):
             if config.get(key) is None:
                 raise ValueError(f"{key} is required for copytyping_preprocess")
-        if not config.get("het_snp_vcf_phased", False):
+        if not config.get("het_snp_vcf_phased", True):
             raise ValueError(
                 "copytyping_preprocess requires a phased het_snp_vcf: set "
                 "het_snp_vcf_phased=true (it never genotypes or phases)"
@@ -590,26 +590,6 @@ def get_phase_records(config, records, sample_id):
     return lr[:1]
 
 
-def validate_phasing_mode(config, phaser):
-    """Check long_read_phasing against the configured phaser.
-
-    Raises:
-        ValueError: The flag and the phaser disagree.
-    """
-    long_read = bool(config.get("long_read_phasing", False))
-    if long_read and phaser not in LONGREAD_PHASER:
-        raise ValueError(
-            f"long_read_phasing=true requires phaser in {sorted(LONGREAD_PHASER)}, "
-            f"got {phaser!r}"
-        )
-    if not long_read and phaser in LONGREAD_PHASER:
-        raise ValueError(
-            f"phaser={phaser!r} is a long-read phaser; set long_read_phasing=true, "
-            "or choose a panel phaser to use population phasing"
-        )
-    return long_read
-
-
 def parse_phasing(config, records, sample_id, phaser, run_genotyping, run_phasing):
     """Resolve the genotyping alignment(s) and the phaser's reference inputs.
 
@@ -637,7 +617,6 @@ def parse_phasing(config, records, sample_id, phaser, run_genotyping, run_phasin
     if not run_phasing:
         return out
 
-    validate_phasing_mode(config, phaser)
     if phaser in PANEL_PHASER:
         gmap_path = config.get("gmap_path")
         assert gmap_path, f"gmap_path required for {phaser}"
@@ -742,25 +721,22 @@ def parse_workflow(config):
     bulk_stream = "bulkWES" if "bulkWES" in assay_types else "bulkWGS"
 
     # A supplied het_snp_vcf replaces genotyping in every mode; het_snp_vcf_phased
-    # declares whether it also replaces phasing.
+    # declares whether it also replaces phasing. It is read only when a VCF is given.
     het_snp_vcf = config.get("het_snp_vcf")
-    het_phased = bool(config.get("het_snp_vcf_phased", False))
     run_genotyping = het_snp_vcf is None
-    if het_snp_vcf is None:
-        if het_phased:
-            raise ValueError("het_snp_vcf_phased=true but het_snp_vcf is not set")
-    else:
+    run_phasing = True
+    if het_snp_vcf is not None:
         if not os.path.exists(het_snp_vcf):
             raise ValueError(f"het_snp_vcf does not exist: {het_snp_vcf}")
+        run_phasing = not bool(config.get("het_snp_vcf_phased", True))
         print(
             "NOTE: het_snp_vcf given -> skipping genotyping; "
             + (
-                "het_snp_vcf_phased=true -> skipping phasing too"
-                if het_phased
-                else "het_snp_vcf_phased=false -> the VCF will be phased"
+                "het_snp_vcf_phased=false -> the VCF will be phased"
+                if run_phasing
+                else "het_snp_vcf_phased=true -> skipping phasing too"
             )
         )
-    run_phasing = not het_phased
     phased_snp_vcf = (
         config["phase_dir"] + "/phased_het_snps.vcf.gz" if run_phasing else het_snp_vcf
     )
