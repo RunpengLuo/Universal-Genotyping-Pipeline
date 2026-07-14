@@ -56,12 +56,16 @@ A key optional here may still be required by the record's `assay_type` — see t
 | `sample_type` | string | Yes | `normal` or `tumor`. |
 | `platform` | string | No | Sequencing platform (e.g. `Illumina PCR-free`, `PacBio Revio HiFi`). Free text; a tumor and its `rdr_base_dataset_id` should agree, so RDR cancels platform GC/mappability bias. |
 | `reference_version` | string | No | Reference the `bam` is aligned to (e.g. `GRCh38-GIABv3`). Free text and independent of the config key of the same name; records selected for one run must be coordinate-compatible, see [Multi-dataset samples](#multi-dataset-samples). |
+| `cancer_type` | string | No | Tumor type of the individual (e.g. `BRCA_Basal`). Free text. |
 | `files` | object | Yes | Input files; see below. |
-| `meta` | object | No | Free-form provenance: any keys, never validated, never read by a rule (e.g. `source_url`, `note`, `clone_id`, `coverage`). |
 
 Only `sample_id`, `dataset_id`, `rdr_base_dataset_id`, `assay_type`, `sample_type`, and `files`
-change what the pipeline does. `passage_id`, `platform`, `reference_version`, and `meta` are provenance:
-validated for type, but no rule reads them.
+change what the pipeline does. `passage_id`, `platform`, `reference_version`, and `cancer_type` are
+provenance: coerced to string, but no rule reads them.
+
+A record may carry **any other key** — the table above is not a whitelist. Unrecognized keys are kept
+verbatim and never read, so a record can hold provenance freely (e.g. `source_url`, `clone_id`,
+`coverage`, or a nested `meta` object of your own).
 
 ## Files
 
@@ -82,14 +86,21 @@ value becomes a tracked Snakemake input.
 
 `alignment` is a `.bam` or a `.cram`; `alignment_index` is its `.bai` or `.crai`. Both are always
 required — nothing is inferred from a filename. The remaining requirements apply only to
-`single_cell_genotyping` and `copytyping_preprocess` runs. A file an assay type does not consume is
-rejected. Supporting new, non-10x data means adding a key here, not a column to every record.
+`single_cell_genotyping` and `copytyping_preprocess` runs. Supporting new, non-10x data means adding
+a key here, not a column to every record.
+
+The table is the set of files the pipeline **reads**, not a whitelist of what may appear. Any other
+key in `files` — an unlisted name such as `fastq_r1`, or a listed one the assay does not consume — is
+dropped at parse time with a `NOTE:` on stderr: no rule inputs it, it never claims a download slot,
+and `--check-files` does not stat it. Record-only paths are therefore free to live in `files`. The
+flip side: a typo'd key (`alignment_idx`) is silently dropped and then reported as the required key
+being missing.
 
 Spatial records are read by squidpy: the pipeline stages the named files into a Space Ranger layout
 and calls `squidpy.read.visium()` on it, so `obsm["spatial"]` and `uns["spatial"]` (scalefactors and
 both tissue images) are populated exactly as they would be from a local `outs/`. `VISIUM3prime`
 carries no images — squidpy cannot load them for 3' data — so `image_hires` / `image_lowres` are
-rejected on those records.
+ignored on those records.
 
 ## Remote inputs
 
@@ -156,8 +167,9 @@ workflow (`--check-files` also stats every local path; `--sample-id` / `--workfl
 scope). The same checks run before the DAG is built; errors name the record by `sample_id`,
 `dataset_id`, and `assay_type`:
 
-- Missing required key; unknown record or `files` key; `assay_type` / `sample_type` out of range.
-- A required file missing for the assay type, or one it does not consume.
+- Missing required key; `assay_type` / `sample_type` out of range.
+- A required file missing for the assay type. (Extra record keys and extra `files` keys are not
+  errors: they are kept and ignored, respectively.)
 - Duplicate `(dataset_id, assay_type)`; a `dataset_id` with >2 assays or a 2-assay `dataset_id` that
   is not an `scRNA` + `scATAC` pair; duplicate `dataset_id` in bulk mode.
 - `rdr_base_dataset_id` on a non-tumor record, naming itself, or naming a `dataset_id` absent from

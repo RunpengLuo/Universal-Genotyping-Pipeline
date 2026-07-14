@@ -33,15 +33,14 @@ from const import (
     BULK_ASSAYS,
     BULK_TARGETS,
     COPYTYPING_TARGETS,
-    FILE_KEYS,
     LONGREAD_ASSAYS,
     LONGREAD_PHASER,
     NONBULK_ASSAYS,
+    OPTIONAL_RECORD_KEYS,
     PANEL_PHASER,
     PROVENANCE_KEYS,
     RANGER_LAYOUT,
     RANGER_SPATIAL_DIR,
-    RECORD_KEYS,
     REFVERS,
     REQUIRED_FILES,
     REQUIRED_RECORD_KEYS,
@@ -94,7 +93,7 @@ def parse_sample_file_json(path):
         if not isinstance(rec, dict):
             raise ValueError(f"{path}: record {idx} is not an object")
         norm = dict(rec)
-        for key in ("sample_id", "dataset_id", "rdr_base_dataset_id", *PROVENANCE_KEYS):
+        for key in ("sample_id", "dataset_id", *OPTIONAL_RECORD_KEYS, *PROVENANCE_KEYS):
             if key in norm and norm[key] is not None:
                 norm[key] = str(norm[key])
         files = norm.get("files")
@@ -243,11 +242,6 @@ def validate_records(records, path, workflow_mode, sample_id, configured_assay_t
     for idx, rec in enumerate(records):
         at = _anchor(path, idx, rec)
 
-        unknown = set(rec) - RECORD_KEYS
-        if unknown:
-            raise ValueError(
-                f"{at}: unknown key(s) {sorted(unknown)}; allowed: {sorted(RECORD_KEYS)}"
-            )
         missing = [k for k in REQUIRED_RECORD_KEYS if rec.get(k) in (None, "")]
         if missing:
             raise ValueError(f"{at}: missing required key(s) {missing}")
@@ -261,21 +255,21 @@ def validate_records(records, path, workflow_mode, sample_id, configured_assay_t
             raise ValueError(f"{at}: sample_type must be 'normal' or 'tumor'")
         if not isinstance(rec["files"], dict):
             raise ValueError(f"{at}: files must be an object")
-        if "meta" in rec and not isinstance(rec["meta"], dict):
-            raise ValueError(f"{at}: meta must be an object")
 
-        files = rec["files"]
-        unknown = set(files) - set(FILE_KEYS)
-        if unknown:
-            raise ValueError(
-                f"{at}: unknown files key(s) {sorted(unknown)}; "
-                f"allowed: {sorted(FILE_KEYS)}"
+        # keys this assay never reads (record-only paths, e.g. FASTQs) are dropped,
+        # so no rule inputs them and --check-files does not stat them
+        files = {
+            k: v for k, v in rec["files"].items() if k in REQUIRED_FILES[assay_type]
+        }
+        ignored = set(rec["files"]) - set(files)
+        if ignored:
+            print(
+                f"NOTE: {at}: ignoring files key(s) {sorted(ignored)}; "
+                f"{assay_type} reads {sorted(REQUIRED_FILES[assay_type])}",
+                file=sys.stderr,
             )
-        unused = set(files) - REQUIRED_FILES[assay_type]
-        if unused:
-            raise ValueError(
-                f"{at}: files key(s) {sorted(unused)} are not used by {assay_type}"
-            )
+        rec["files"] = files
+
         required = REQUIRED_FILES[assay_type] if single_cell else ALIGNMENT_FILES
         for key in sorted(required):
             if not files.get(key):

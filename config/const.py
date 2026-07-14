@@ -90,37 +90,18 @@ WORKFLOW_MODES = ("bulk_genotyping", "single_cell_genotyping", "copytyping_prepr
 
 URL_SCHEMES = ("http://", "https://", "ftp://", "s3://")
 
-# sample-file schema; see docs/sample_sheet.md
-RECORD_KEYS = {
-    "sample_id",
-    "dataset_id",
-    "rdr_base_dataset_id",
-    "passage_id",
-    "assay_type",
-    "sample_type",
-    "platform",
-    "reference_version",
-    "files",
-    "meta",
-}
+# sample-file schema; see docs/sample_sheet.md. Records may carry any other key;
+# it is kept as-is and never read.
 REQUIRED_RECORD_KEYS = ("sample_id", "dataset_id", "assay_type", "sample_type", "files")
-# provenance-only; validated for type, never read by a rule
-PROVENANCE_KEYS = ("passage_id", "platform", "reference_version")
+# optional, read by a rule
+OPTIONAL_RECORD_KEYS = ("rdr_base_dataset_id",)
+# provenance-only; coerced to str, never read by a rule
+PROVENANCE_KEYS = ("passage_id", "platform", "reference_version", "cancer_type")
 
-FILE_KEYS = (
-    "alignment",
-    "alignment_index",
-    "barcodes",
-    "fragments",
-    "matrix_h5",
-    "tissue_positions",
-    "scalefactors",
-    "image_hires",
-    "image_lowres",
-)
 ALIGNMENT_FILES = {"alignment", "alignment_index"}
 
-# files required per assay type; non-alignment entries apply to single-cell modes only
+# files read per assay type; the union is the whole `files` vocabulary, and any other
+# key in a record's `files` is ignored. Non-alignment entries apply to single-cell modes only
 REQUIRED_FILES = {
     "bulkWGS": ALIGNMENT_FILES,
     "bulkWGS-lr": ALIGNMENT_FILES,
