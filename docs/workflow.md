@@ -1,61 +1,66 @@
 # Workflow
 
-Three workflow modes, set via `config["workflow_mode"]`. Each mode runs a subset of the pipeline stages.
+Three modes, set by `workflow_mode`. Each runs a subset of the stages below and writes its final bins under `bb_dir/`.
+
+Config keys and every output file: [reference.md](reference.md). Sample-file schema: [sample_sheet.md](sample_sheet.md).
+
+`{chrname}`, `{assay_type}`, `{dataset_id}` and `{modality}` are wildcards — one job each. `{stream}` and `{msr}` are not: `{stream}` is `bulkWES` if the run has any `bulkWES` record, else `bulkWGS`, and one binning job writes every `MSR{msr}/` subdirectory of the sweep.
+
+In **any** mode, setting `het_snp_vcf` skips genotyping, and phasing too unless `het_snp_vcf_phased: false`.
 
 ---
 
 ## `bulk_genotyping`
 
-Assays: `bulkWGS`, `bulkWGS-lr`, `bulkWES`
+Assays: `bulkWGS`, `bulkWGS-lr`, `bulkWES`. Needs bulk records (normal + tumor) and a `window_bed`.
 
-| Step | Rule | Script / Tool |
-|------|------|---------------|
-| 1. Genotype SNPs | `genotype_snps_bulk` | bcftools mpileup + call |
-| 2. Phase SNPs (per chr) | `phase_snps_{eagle,shapeit,longphase}` | eagle2 / shapeit5 / longphase |
-| 3. Concat phased VCFs | `concat_and_extract_phased_het_snps` | bcftools concat + view |
-| 4. Parse genetic map | `parse_genetic_map` | `scripts/parse_genetic_map.py` |
-| 5. Pileup at het SNPs | `pileup_snps_bulk_mode1b` | cellsnp-lite |
-| 6. Phase and concat (joint, all bulk assays) | `phase_and_concat_bulk` | `scripts/phase_and_concat_bulk.py` |
-| 7. Compute read depth | `run_mosdepth` | mosdepth |
-| 8. Bias correction | `rd_correct` | `scripts/rd_correct.py` |
-| 9. Adaptive binning | `combine_counts` | `scripts/combine_counts.py` |
+| Step | Rule | Output |
+|------|------|--------|
+| Genotype SNPs | `genotype_snps_bulk` | `snp_dir/chr{chrname}.vcf.gz` |
+| Phase SNPs | `phase_snps_{eagle,shapeit,longphase}` | `phase_dir/chr{chrname}.vcf.gz` |
+| Concat phased VCFs | `concat_and_extract_phased_het_snps` | `phase_dir/phased_het_snps.vcf.gz` |
+| Parse genetic map | `parse_genetic_map` | `phase_dir/genetic_map.tsv.gz` |
+| Pileup at het SNPs | `pileup_snps_bulk_mode1b` | `pileup_dir/{assay_type}_{dataset_id}/` |
+| Phase and concat (joint, all bulk assays) | `phase_and_concat_bulk` | `allele_dir/{stream}/` |
+| Compute read depth | `run_mosdepth` | `pileup_dir/{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz` |
+| Bias correction | `rd_correct` | `pileup_dir/{assay_type}/window.{dp.npz,tsv.gz}` |
+| Adaptive binning + RDR | `combine_counts` | `bb_dir/MSR{msr}/{stream}/` |
 
-All bulk replicates are piled up against one shared phased het-SNP VCF, so step 6 runs **once** and builds a single joint allele matrix (under `allele_dir/{stream}/` where stream is `bulkWGS` for the WGS family or `bulkWES`, one pseudobulk column per replicate). Step 9 reads it directly — no per-assay union. Depth/RDR (steps 7–8) stay per-assay.
-
-**Outputs** (`bb_dir/MSR{msr}/{stream}/`, one `MSR{msr}/` subdir per `min_snp_reads` value — the sweep runs in a single job with shared preprocessing): `bb.tsv.gz`, `bb.{Tallele,Aallele,Ballele,rdr,depth}.npz`, `sample_ids.tsv`
+Every bulk replicate is piled up against one shared phased het-SNP VCF, so `phase_and_concat_bulk` runs **once** and builds a single joint allele matrix — one pseudobulk column per replicate, all bulk assays segmented together. Depth and bias correction stay per-assay. RDR divides each tumor by `params_combine_counts.rdr_normalization` (`auto` \| `median` \| `normal`).
 
 ---
 
 ## `single_cell_genotyping`
 
-Assays: `scRNA`, `scATAC`, `VISIUM`, `VISIUM3prime`
+Assays: `scRNA`, `scATAC`, `VISIUM`, `VISIUM3prime`. A multiome pair is one `dataset_id` shared by an `scRNA` and an `scATAC` record.
 
-| Step | Rule | Script / Tool |
-|------|------|---------------|
-| 1. Pseudobulk genotyping | `genotype_snps_pseudobulk_mode1b` | cellsnp-lite |
-| 2. Annotate SNPs | `annotate_snps_pseudobulk` | `scripts/annotate_snps_pseudobulk.py` |
-| 3. Phase SNPs (per chr) | `phase_snps_{eagle,shapeit,longphase}` | eagle2 / shapeit5 / longphase |
-| 4. Concat phased VCFs | `concat_and_extract_phased_het_snps` | bcftools concat + view |
-| 5. Parse genetic map | `parse_genetic_map` | `scripts/parse_genetic_map.py` |
-| 6. Single-cell pileup | `pileup_snps_nonbulk_mode1a` | cellsnp-lite |
-| 7. Build RNA AnnData (RNA-family only; feeds the RNA `bb.Xcount.npz`) | `process_rna_anndata` | `scripts/process_rna_anndata.py` |
-| 8. Phase and concat | `phase_and_concat_nonbulk` | `scripts/phase_and_concat_nonbulk.py` |
-| 9. Adaptive binning (+ per-assay `bb.Xcount.npz`: scATAC from raw fragments, RNA from the h5ad) | `combine_counts_nonbulk` | `scripts/combine_counts_nonbulk.py` |
+| Step | Rule | Output |
+|------|------|--------|
+| Pseudobulk genotyping | `genotype_snps_pseudobulk_mode1b` | `snp_dir/pseudobulk_{modality}/` |
+| Annotate SNPs | `annotate_snps_pseudobulk` | `snp_dir/chr{chrname}.vcf.gz` |
+| Phase SNPs | `phase_snps_{eagle,shapeit,longphase}` | `phase_dir/chr{chrname}.vcf.gz` |
+| Concat phased VCFs | `concat_and_extract_phased_het_snps` | `phase_dir/phased_het_snps.vcf.gz` |
+| Parse genetic map | `parse_genetic_map` | `phase_dir/genetic_map.tsv.gz` |
+| Single-cell pileup | `pileup_snps_nonbulk_mode1a` | `pileup_dir/{assay_type}_{dataset_id}/` |
+| Build RNA AnnData | `process_rna_anndata` | `bb_dir/{assay_type}.h5ad` |
+| Phase and concat | `phase_and_concat_nonbulk` | `allele_dir/{assay_type}/` |
+| Adaptive binning + fragment/UMI counting | `combine_counts_nonbulk` | `bb_dir/MSR{msr}/{assay_type}/` |
 
-**Outputs** (all per-assay under `bb_dir/MSR{msr}/{assay}/`, one `MSR{msr}/` subdir per `min_snp_reads` value — the sweep runs in a single job with shared preprocessing): `bb.tsv.gz` (the one shared grid, joint across the sample's assays, duplicated into each sub-dir), `sample_ids.tsv` (likewise duplicated), `bb.{Tallele,Aallele,Ballele}.npz` (bins × cells), `bb.Xcount.npz` (per-cell native counts per bb bin — scATAC from raw fragments, scRNA/VISIUM UMIs from the h5ad), `multi_snp.*` (MSR-independent), `barcodes{,.full}.tsv.gz`
+All of the sample's non-bulk assays are segmented on **one shared bin grid** (one pseudobulk column per replicate x assay), duplicated into each per-assay subdirectory. `bb.Xcount.npz` counts native signal per bin: scATAC from the raw fragments, RNA from the h5ad.
+
+To reuse a bulk run's SNPs, point `het_snp_vcf` at its `phase/phased_het_snps.vcf.gz`.
 
 ---
 
 ## `copytyping_preprocess`
 
-Assays: `scRNA`, `scATAC`, `VISIUM`, `VISIUM3prime` (requires pre-computed het SNP VCF)
+Assays: `scRNA`, `scATAC`, `VISIUM`, `VISIUM3prime`. Never genotypes or phases: `het_snp_vcf` (already phased) and `bb_file` are **required**.
 
-| Step | Rule | Script / Tool |
-|------|------|---------------|
-| 1. Single-cell pileup | `pileup_snps_nonbulk_mode1a` | cellsnp-lite |
-| 2. Build AnnData (RNA only) | `process_rna_anndata` | `scripts/process_rna_anndata.py` |
-| 3. Phase and concat | `phase_and_concat_nonbulk` | `scripts/phase_and_concat_nonbulk.py` |
-| 4. Adaptive binning | `combine_counts_nonbulk` | `scripts/combine_counts_nonbulk.py` |
-| 5. CNV segmentation | `cnv_segmentation` | `scripts/cnv_segmentation.py` |
+| Step | Rule | Output |
+|------|------|--------|
+| Single-cell pileup | `pileup_snps_nonbulk_mode1a` | `pileup_dir/{assay_type}_{dataset_id}/` |
+| Build AnnData (RNA only) | `process_rna_anndata` | `bb_dir/{assay_type}.h5ad` |
+| Phase and concat | `phase_and_concat_nonbulk` | `allele_dir/{assay_type}/` |
+| CNV segmentation | `cnv_segmentation` | `bb_dir/{assay_type}/` |
 
-**Outputs** (`bb_dir/{assay_type}/`): `cnv_segments.tsv`, `bb.{Tallele,Aallele,Ballele,Xcount}.npz` (scATAC `Xcount` from raw fragments, RNA from the h5ad), `barcodes{,.full}.tsv.gz`, `sample_ids.tsv`
+No binning rule runs here: `cnv_segmentation` aggregates `allele_dir` onto the given blocks, so the output is flat — there is no `MSR{msr}/` layer.
