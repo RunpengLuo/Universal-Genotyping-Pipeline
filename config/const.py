@@ -88,6 +88,12 @@ GTF_COLUMNS = [
 
 WORKFLOW_MODES = ("bulk_genotyping", "single_cell_genotyping", "copytyping_preprocess")
 
+# params_combine_counts.rdr_normalization: how a bulk tumor's RDR denominator is chosen.
+# auto   = rdr_base_dataset_id when the record sets one, else median
+# median = ignore rdr_base_dataset_id, always median
+# normal = require rdr_base_dataset_id on every bulk tumor
+RDR_NORMALIZATIONS = ("auto", "median", "normal")
+
 URL_SCHEMES = ("http://", "https://", "ftp://", "s3://")
 
 # sample-file schema; see docs/sample_sheet.md. Records may carry any other key;

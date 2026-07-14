@@ -41,6 +41,7 @@ from const import (
     PROVENANCE_KEYS,
     RANGER_LAYOUT,
     RANGER_SPATIAL_DIR,
+    RDR_NORMALIZATIONS,
     REFVERS,
     REQUIRED_FILES,
     REQUIRED_RECORD_KEYS,
@@ -376,13 +377,66 @@ def select_records(path, workflow_mode, sample_id, configured_assay_types):
         ):
             continue
         rec = {**rec, "modality": ASSAY_TYPE2MODALITY[rec["assay_type"]]}
-        if rec["sample_type"] == "tumor" and not rec.get("rdr_base_dataset_id"):
-            print(
-                f"NOTE: tumor dataset_id={rec['dataset_id']!r} has no "
-                "rdr_base_dataset_id; RDR uses median normalization"
-            )
         selected.append(rec)
     return selected
+
+
+def apply_rdr_normalization(records, rdr_normalization):
+    """Resolve each bulk tumor's RDR denominator under the configured policy.
+
+    RDR is bulk-only, so single-cell records pass through untouched. A tumor that
+    keeps its rdr_base_dataset_id is divided by that dataset; one without is
+    median-normalized (combine_counts_utils.build_rdr_base_map omits it).
+
+    Args:
+        records: Output of select_records.
+        rdr_normalization: auto | median | normal (config params_combine_counts).
+
+    Returns:
+        The records, with rdr_base_dataset_id dropped from every bulk tumor when
+        rdr_normalization is median.
+
+    Raises:
+        ValueError: rdr_normalization is not one of RDR_NORMALIZATIONS, or it is
+            "normal" and some bulk tumor has no rdr_base_dataset_id.
+    """
+    if rdr_normalization not in RDR_NORMALIZATIONS:
+        raise ValueError(
+            f"params_combine_counts.rdr_normalization must be one of "
+            f"{list(RDR_NORMALIZATIONS)}, got {rdr_normalization!r}"
+        )
+
+    out, unbased, ignored = [], [], []
+    for rec in records:
+        is_bulk_tumor = (
+            rec["assay_type"] in BULK_ASSAYS and rec["sample_type"] == "tumor"
+        )
+        base = rec.get("rdr_base_dataset_id")
+        if is_bulk_tumor:
+            if rdr_normalization == "median" and base:
+                ignored.append(rec["dataset_id"])
+                rec = {k: v for k, v in rec.items() if k != "rdr_base_dataset_id"}
+            elif rdr_normalization != "median" and not base:
+                unbased.append(rec["dataset_id"])
+        out.append(rec)
+
+    if rdr_normalization == "normal" and unbased:
+        raise ValueError(
+            f"rdr_normalization='normal' requires rdr_base_dataset_id on every bulk "
+            f"tumor, missing on: {sorted(unbased)}. Set it in the sample file, or use "
+            "rdr_normalization='auto' to median-normalize these."
+        )
+    if ignored:
+        print(
+            f"NOTE: rdr_normalization='median' -> ignoring rdr_base_dataset_id on "
+            f"{len(ignored)} tumor(s): {sorted(ignored)}"
+        )
+    if unbased:
+        print(
+            f"NOTE: {len(unbased)} tumor(s) have no rdr_base_dataset_id; RDR uses "
+            f"median normalization: {sorted(unbased)}"
+        )
+    return out
 
 
 def get_sample_context(records):
@@ -697,6 +751,9 @@ def parse_workflow(config):
     assay_types = parse_assay_types(config, workflow_mode)
     records = select_records(
         config["sample_file"], workflow_mode, sample_id, assay_types
+    )
+    records = apply_rdr_normalization(
+        records, config["params_combine_counts"].get("rdr_normalization", "auto")
     )
     # narrow to the assays present in the selected records
     assay_types = list(dict.fromkeys(r["assay_type"] for r in records))

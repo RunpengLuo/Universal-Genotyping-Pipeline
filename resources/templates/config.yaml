@@ -1,10 +1,10 @@
 ##################################################
 # Genotyping YAML configuration file (user)
 ##################################################
-# This template lists the keys most users override. For the full set of
-# defaults (every params_* block) see config/config.yaml at the repo root.
+# This template lists the keys most users override. For the full set of defaults
+# (every params_* block) see config/config.yaml; for what each key means, its range
+# and its default, see docs/reference.md.
 
-# Output paths, relative to snakemake --directory
 snp_dir: "snps"
 phase_dir: "phase"
 pileup_dir: "pileup"
@@ -13,9 +13,7 @@ bb_dir: "bb"
 qc_dir: "qc"
 log_dir: "logs"
 
-# bulk_genotyping | single_cell_genotyping | copytyping_preprocess
 workflow_mode: "bulk_genotyping"
-# bulkWGS | bulkWGS-lr | bulkWES | scRNA | scATAC | VISIUM | VISIUM3prime
 assay_types: ["bulkWGS"]
 
 ##################################################
@@ -24,13 +22,12 @@ sample_id: PATIENT_ID
 sample_file: /path/to/samples.json
 chromosomes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
 
-# Input for copytyping_preprocess mode
 het_snp_vcf: null
+het_snp_vcf_phased: true
 bb_file: null
 
 ##################################################
 # Reference
-# hg19 | hg38 | chm13v2
 reference_version: "hg38"
 reference: /path/to/reference.fa
 genome_size: /path/to/genome.sizes
@@ -48,33 +45,13 @@ phasing_panel: /path/to/phasing_panel
 
 ##################################################
 # Phasing
-# eagle | shapeit | longphase
 phaser: "shapeit"
-# Genetic map (required for eagle / shapeit).
-#   SHAPEIT5 (per-chrom files, with {chrname} placeholder):
-#     gmap_path: "/path/to/shapeit5/resources/maps/b38/chr{chrname}.b38.gmap.gz"
-#   Eagle2 (single file, literal path):
-#     gmap_path: "/path/to/Eagle_v2.4.1/tables/genetic_map_hg38_withX.txt.gz"
 gmap_path: "/path/to/shapeit5/resources/maps/b38/chr{chrname}.b38.gmap.gz"
-
-##################################################
-# SNP filtering / phase merging
-params_phase_and_concat:
-  min_depth: 1
-
-##################################################
-# Bias correction (bulk only)
-params_count_reads:
-  gc_correct: true
 
 ##################################################
 # Adaptive binning
 params_combine_counts:
-  min_snp_reads: 1000
-  min_snp_per_block: 10
-  phase_flip_test: true
-  # true = median-center (ignore matched normal)
-  median_normalization: false
+  min_snp_reads: [500, 1000]
 
 ##################################################
 threads:

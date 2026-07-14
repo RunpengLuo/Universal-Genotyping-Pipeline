@@ -1,8 +1,9 @@
 ##################################################
 # Genotyping YAML configuration file (default)
+#
+# Key reference (types, ranges, defaults): docs/reference.md
 ##################################################
 
-# Output paths, relative to snakemake --directory
 snp_dir: "snps"
 phase_dir: "phase"
 pileup_dir: "pileup"
@@ -11,9 +12,7 @@ bb_dir: "bb"
 qc_dir: "qc"
 log_dir: "logs"
 
-# bulk_genotyping | single_cell_genotyping | copytyping_preprocess
 workflow_mode: "bulk_genotyping"
-# bulkWGS | bulkWGS-lr | bulkWES | scRNA | scATAC | VISIUM | VISIUM3prime
 assay_types: ["bulkWGS"]
 
 ##################################################
@@ -22,17 +21,12 @@ sample_id: sample_id
 sample_file: /path/to/sample.tsv
 chromosomes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
 
-# HET SNP VCF. When provided, genotyping is skipped.
-# Required for copytyping_preprocess.
 het_snp_vcf: null
-# phasing is skipped if set to true. Only read when het_snp_vcf is set.
 het_snp_vcf_phased: true
-# prior segmentation file for copytyping_preprocess.
 bb_file: null
 
 ##################################################
 # Reference
-# hg19 | hg38 | chm13v2
 reference_version: null
 reference: null
 genome_size: null
@@ -51,9 +45,7 @@ phasing_panel: null
 ##################################################
 # Genotype and pileup (single_cell_genotyping)
 params_cellsnp_lite:
-  # Auto | None | <tag>
   UMItag: "Auto"
-  # CB | None | <tag>
   cellTAG: "CB"
   minMAF_genotype: 0
   minCOUNT_genotype: 2
@@ -78,24 +70,15 @@ params_annotate_snps:
 
 ##################################################
 # Genotyping
-# dataset_ids whose alignments are piled up to call germline SNPs. Empty -> auto:
-# the highest-priority normal (short-read before long-read), else a tumor.
-# Listing >1 pools them in one bcftools mpileup; they must share an @RG SM tag.
 genotype_dataset_ids: []
 
 ##################################################
 # Phasing
-# eagle | shapeit | longphase
 phaser: "eagle"
-# dataset_ids whose alignments longphase reads. Empty -> auto: a long-read normal,
-# else a long-read tumor. Ignored by panel phasers.
 phase_dataset_ids: []
-# Full gmap path; use {chrname} placeholder for SHAPEIT5 (per-chrom files),
-# or a literal path for Eagle2 (single file across all chroms).
 gmap_path: null
 params_longphase:
   min_mapq: 20
-  # --pb (PacBio) | --ont (ONT)
   extra_params: "--pb"
 
 ##################################################
@@ -114,7 +97,6 @@ params_mosdepth:
 
 params_count_reads:
   gc_correct: true
-  # lowess | median
   gc_correct_method: "median"
   rt_correct: true
   samplesize: 50000
@@ -128,11 +110,10 @@ params_combine_counts:
   switchprob_ps: 5e-2
   nsnp_multi: 2
   min_snp_reads: [500, 1000]
-  min_snp_per_block: 10
+  min_snp_per_block: 2
   max_blocksize: 500000
-  # true = bins grow by whole genes (GTF feature_id); a gene is never split across
-  # bins. false = legacy window/SNP-granular binning.
   gene_aware_binning: true
+  rdr_normalization: auto
   rdr_outlier_quantile: 0.002
   phase_flip_test: true
   phase_flip_epsilon: 0.05
