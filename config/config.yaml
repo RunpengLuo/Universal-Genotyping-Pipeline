@@ -11,6 +11,7 @@ allele_dir: "allele"
 bb_dir: "bb"
 qc_dir: "qc"
 log_dir: "logs"
+aux_dir: "aux"
 
 workflow_mode: "bulk_genotyping"
 assay_types: ["bulkWGS"]
@@ -31,10 +32,16 @@ reference_version: null
 reference: null
 genome_size: null
 region_bed: null
-window_bed: null
+mappability_bed: null
 blacklist_bed: null
 gene_blacklist_file: null
 gtf_file: null
+
+##################################################
+# Build initial windows
+params_build_windows:
+  window_size_wgs: 1000
+  window_size_wes: 267
 
 ##################################################
 # Population Panel
@@ -110,7 +117,8 @@ params_combine_counts:
   switchprob_ps: 5e-2
   nsnp_multi: 2
   min_snp_reads: [500, 1000]
-  min_snp_per_block: 2
+  min_snp_reads_wes: 100
+  min_snp_per_bin: 2
   max_blocksize: 500000
   gene_aware_binning: true
   rdr_normalization: auto
