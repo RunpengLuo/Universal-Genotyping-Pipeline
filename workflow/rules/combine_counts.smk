@@ -15,57 +15,57 @@ if workflow_mode == "bulk_genotyping":
             window_df=[
                 config["pileup_dir"] + f"/{at}/window.tsv.gz" for at in assay_types
             ],
-            snp_info=config["allele_dir"] + f"/{bulk_stream}/snps.tsv.gz",
-            tot_mtx_snp=config["allele_dir"] + f"/{bulk_stream}/snp.Tallele.npz",
-            a_mtx_snp=config["allele_dir"] + f"/{bulk_stream}/snp.Aallele.npz",
-            b_mtx_snp=config["allele_dir"] + f"/{bulk_stream}/snp.Ballele.npz",
-            sample_file=config["allele_dir"] + f"/{bulk_stream}/sample_ids.tsv",
+            snp_info=config["allele_dir"] + "/bulk/snps.tsv.gz",
+            tot_mtx_snp=config["allele_dir"] + "/bulk/snp.Tallele.npz",
+            a_mtx_snp=config["allele_dir"] + "/bulk/snp.Aallele.npz",
+            b_mtx_snp=config["allele_dir"] + "/bulk/snp.Ballele.npz",
+            sample_file=config["allele_dir"] + "/bulk/sample_ids.tsv",
             gmap_file=lambda wc: (
                 config["phase_dir"] + "/genetic_map.tsv.gz"
                 if require_genetic_map
                 else []
             ),
-            region_bed=config["region_bed"],
+            region_bed=segment_bed,
             blacklist_bed=config["blacklist_bed"] or [],
             genome_size=config["genome_size"],
         output:
             bb_file=expand(
-                config["bb_dir"] + f"/MSR{{msr}}/{bulk_stream}/bb.tsv.gz", msr=msr_list
+                config["bb_dir"] + f"/MSR{{msr}}/bulk/bb.tsv.gz", msr=msr_list
             ),
             tot_mtx_bb=expand(
-                config["bb_dir"] + f"/MSR{{msr}}/{bulk_stream}/bb.Tallele.npz",
+                config["bb_dir"] + f"/MSR{{msr}}/bulk/bb.Tallele.npz",
                 msr=msr_list,
             ),
             a_mtx_bb=expand(
-                config["bb_dir"] + f"/MSR{{msr}}/{bulk_stream}/bb.Aallele.npz",
+                config["bb_dir"] + f"/MSR{{msr}}/bulk/bb.Aallele.npz",
                 msr=msr_list,
             ),
             b_mtx_bb=expand(
-                config["bb_dir"] + f"/MSR{{msr}}/{bulk_stream}/bb.Ballele.npz",
+                config["bb_dir"] + f"/MSR{{msr}}/bulk/bb.Ballele.npz",
                 msr=msr_list,
             ),
             dp_mtx_bb=expand(
-                config["bb_dir"] + f"/MSR{{msr}}/{bulk_stream}/bb.depth.npz",
+                config["bb_dir"] + f"/MSR{{msr}}/bulk/bb.depth.npz",
                 msr=msr_list,
             ),
             rdr_mtx_bb=expand(
-                config["bb_dir"] + f"/MSR{{msr}}/{bulk_stream}/bb.rdr.npz",
+                config["bb_dir"] + f"/MSR{{msr}}/bulk/bb.rdr.npz",
                 msr=msr_list,
             ),
             sample_file=expand(
-                config["bb_dir"] + f"/MSR{{msr}}/{bulk_stream}/sample_ids.tsv",
+                config["bb_dir"] + f"/MSR{{msr}}/bulk/sample_ids.tsv",
                 msr=msr_list,
             ),
             qc_pdf=report(
                 expand(
-                    config["qc_dir"] + f"/combine_counts.{bulk_stream}.MSR{{msr}}.pdf",
+                    config["qc_dir"] + f"/combine_counts.bulk.MSR{{msr}}.pdf",
                     msr=msr_list,
                 ),
                 category="QC plots",
                 subcategory="bulk binning",
             ),
         log:
-            config["log_dir"] + f"/combine_counts.{bulk_stream}.{_run_id}.log",
+            config["log_dir"] + f"/combine_counts.bulk.{_run_id}.log",
         conda:
             "../envs/base.yaml"
         threads: 1
@@ -76,7 +76,8 @@ if workflow_mode == "bulk_genotyping":
             min_switchprob=config["params_combine_counts"]["min_switchprob"],
             switchprob_ps=config["params_combine_counts"]["switchprob_ps"],
             min_snp_reads=msr_list,
-            min_snp_per_block=config["params_combine_counts"]["min_snp_per_block"],
+            min_snp_reads_wes=config["params_combine_counts"]["min_snp_reads_wes"],
+            min_snp_per_bin=config["params_combine_counts"]["min_snp_per_bin"],
             gene_aware_binning=config["params_combine_counts"]["gene_aware_binning"],
             rdr_outlier_quantile=config["params_combine_counts"]["rdr_outlier_quantile"],
             max_blocksize=config["params_combine_counts"]["max_blocksize"],
@@ -214,7 +215,7 @@ elif workflow_mode == "single_cell_genotyping":
             switchprob_ps=config["params_combine_counts"]["switchprob_ps"],
             nsnp_multi=config["params_combine_counts"]["nsnp_multi"],
             min_snp_reads=msr_list,
-            min_snp_per_block=config["params_combine_counts"]["min_snp_per_block"],
+            min_snp_per_bin=config["params_combine_counts"]["min_snp_per_bin"],
             gene_aware_binning=config["params_combine_counts"]["gene_aware_binning"],
             run_id=_run_id,
         script:

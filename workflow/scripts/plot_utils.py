@@ -15,7 +15,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
-from io_utils import get_chr_sizes, read_region_file
+from io_utils import get_chr_sizes, read_BED
 from utils import adaptive_dot_size
 from combine_counts_utils import (
     compute_af_pseudobulk,
@@ -201,15 +201,19 @@ def plot_rd_1d_scatter(
 
     for si, label in enumerate(labels):
         fig, axes = plt.subplots(2, 1, figsize=(20, 6), sharex=True)
-        for ai, (ax, mat, ylim, title) in enumerate(zip(
-            axes,
-            [dp_before, dp_after],
-            [ylim_before, ylim_after],
-            ["before correction", "after correction"],
-        )):
+        for ai, (ax, mat, ylim, title) in enumerate(
+            zip(
+                axes,
+                [dp_before, dp_after],
+                [ylim_before, ylim_after],
+                ["before correction", "after correction"],
+            )
+        ):
             y = mat[:, si] if mat.ndim == 2 else mat
             m = np.isfinite(y)
-            _add_chrom_decorations(ax, chrom_bounds, total_len, region_by_chr, blacklist_by_chr)
+            _add_chrom_decorations(
+                ax, chrom_bounds, total_len, region_by_chr, blacklist_by_chr
+            )
             if m.any():
                 ax.scatter(genome_x[m], y[m], s=s_plot, alpha=alpha, rasterized=True)
             if ylim is not None:
@@ -295,7 +299,7 @@ def _parse_bed_by_chr(bed_path):
     """Read a BED file and return {chrom: [(start, end), ...]}."""
     result = {}
     if bed_path is not None:
-        df = read_region_file(bed_path)
+        df = read_BED(bed_path)
         for ch, grp in df.groupby("#CHR", sort=False):
             result[ch] = list(zip(grp["START"], grp["END"]))
     return result
@@ -578,10 +582,12 @@ def _seg_gene_counts(seg_df, gene_count, gene_col):
     if "n_genes" in seg_df.columns:
         return seg_df["n_genes"].to_numpy(dtype=float)
     if gene_col in seg_df.columns:
+
         def _count(v):
             if not isinstance(v, str) or v == "":
                 return 0
             return sum(1 for g in v.split(";") if g and g != "intergenic")
+
         return seg_df[gene_col].map(_count).to_numpy(dtype=float)
     return None
 
@@ -607,6 +613,8 @@ def _hist_with_stats(ax, vals, xlabel, header="", ylabel="# segments", clip_q=0.
         if hi > 0:
             plot_vals = vals[vals <= hi]
     ax.hist(plot_vals, bins=50, alpha=0.7)
+    ax.axvline(mean, color="red", linestyle=":", linewidth=1)
+    ax.axvline(median, color="green", linestyle=":", linewidth=1)
     ax.set_title(f"{prefix}{xlabel}\nmean={mean:.1f}, median={median:.1f}", fontsize=8)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -664,7 +672,9 @@ def plot_segmentation_qc(
     fig1, ax1 = plt.subplots(1, 2, figsize=(11, 4))
     _hist_with_stats(ax1[0], lengths_kbp, "segment length (kbp)", "Segment length")
     if genes_per_seg is not None:
-        _hist_with_stats(ax1[1], genes_per_seg, "# genes / segment", "Genes per segment")
+        _hist_with_stats(
+            ax1[1], genes_per_seg, "# genes / segment", "Genes per segment"
+        )
     else:
         ax1[1].set_title("Genes per segment\n(no gene annotation)", fontsize=8)
         ax1[1].set_xlabel("# genes / segment")
@@ -695,9 +705,15 @@ def plot_segmentation_qc(
         )
         axes[ri, 0].annotate(
             row_label,
-            xy=(0, 0.5), xytext=(-axes[ri, 0].yaxis.labelpad - 22, 0),
-            xycoords=axes[ri, 0].yaxis.label, textcoords="offset points",
-            ha="right", va="center", rotation=90, fontweight="bold", fontsize=9,
+            xy=(0, 0.5),
+            xytext=(-axes[ri, 0].yaxis.labelpad - 22, 0),
+            xycoords=axes[ri, 0].yaxis.label,
+            textcoords="offset points",
+            ha="right",
+            va="center",
+            rotation=90,
+            fontweight="bold",
+            fontsize=9,
         )
     fig2.tight_layout()
     fig2.subplots_adjust(left=0.18)
@@ -760,9 +776,7 @@ def plot_snp_depth_histogram(
         n_groups = len(dataset_ids)
         depth_mat = pseudobulk_by_groups(tot_mtx, cell_rep_idx, n_groups)
         ref_count_mat = (
-            pseudobulk_by_groups(ref_mtx, cell_rep_idx, n_groups)
-            if has_af
-            else None
+            pseudobulk_by_groups(ref_mtx, cell_rep_idx, n_groups) if has_af else None
         )
         row_labels = list(dataset_ids)
     else:
@@ -918,7 +932,10 @@ def plot_allele_freqs(
         _tot_mtx = tot_mtx.tocsc() if issparse(tot_mtx) else tot_mtx
         _b_mtx = b_mtx.tocsc() if issparse(b_mtx) else b_mtx
         af_mat = np.column_stack(
-            [compute_af_per_sample(_tot_mtx, _b_mtx, i) for i in range(len(dataset_ids))]
+            [
+                compute_af_per_sample(_tot_mtx, _b_mtx, i)
+                for i in range(len(dataset_ids))
+            ]
         )
     stem = f"af_{allele}_{unit}{suffix}"
     stem = f"{name_prefix}.{stem}" if name_prefix else stem

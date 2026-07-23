@@ -78,6 +78,51 @@ def test_bulk_rules(workspace):
     assert counts["run_mosdepth"] == 2
 
 
+def test_breakpoint_presegmentation(workspace):
+    """build_segment_bed + per-stream window build always run for bulk; bedpe feeds the segment BED."""
+    base = dryrun(
+        workspace, workspace["bulk_json"], "T1", "bulk_genotyping", ["bulkWGS"]
+    )
+    bedpe = dryrun(
+        workspace, workspace["bulk_bedpe_json"], "B1", "bulk_genotyping", ["bulkWGS"]
+    )
+    assert base.returncode == 0 and bedpe.returncode == 0, bedpe.stderr[-1500:]
+    base_counts, bedpe_counts = job_counts(base.stdout), job_counts(bedpe.stdout)
+    # the segment BED + per-stream window build are always-on for bulk (both runs)
+    for rule in (
+        "build_segment_bed",
+        "build_window_bed",
+    ):
+        assert rule in base_counts, f"{rule} missing (base):\n{base.stdout[-2000:]}"
+        assert rule in bedpe_counts, f"{rule} missing (bedpe):\n{bedpe.stdout[-2000:]}"
+    # a breakpoint_bedpe only feeds build_segment_bed when present
+    assert "sv.bedpe" in bedpe.stdout
+    assert "sv.bedpe" not in base.stdout
+
+
+def test_mixed_wgs_wes(workspace):
+    """bulkWGS + bulkWES mix builds per-stream windows and one joint bulk bb dir."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_mixed_json"],
+        "MX",
+        "bulk_genotyping",
+        ["bulkWGS", "bulkWES"],
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    counts = job_counts(proc.stdout)
+    # segment BED + both window streams (wgs + wes); wes targets feed build_window_bed
+    assert "build_segment_bed" in counts
+    assert counts.get("build_window_bed", 0) == 2, proc.stdout[-2000:]
+    assert "wes_targets.bed" in proc.stdout
+    assert "wgs_windows.bed.gz" in proc.stdout
+    assert "wes_windows.bed.gz" in proc.stdout
+    # one joint binning into a single bb/bulk dir (no per-stream subdir)
+    assert "combine_counts" in counts
+    assert "/bulk/bb.tsv.gz" in proc.stdout
+    assert "bulkWES/bb.tsv.gz" not in proc.stdout
+
+
 def test_scatac_fragments_are_tracked(workspace):
     """The ATAC fragments file is a tracked input, not resolved inside a script."""
     proc = dryrun(
@@ -180,4 +225,4 @@ def test_copytyping_requires_phased_vcf(workspace):
         ],
     )
     assert proc.returncode != 0
-    assert "requires a phased het_snp_vcf" in proc.stdout + proc.stderr
+    assert "het_snp_vcf must be phased" in proc.stdout + proc.stderr

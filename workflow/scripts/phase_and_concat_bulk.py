@@ -201,7 +201,10 @@ logging.info("saving joint bulk output files")
 out_cols = ["#CHR", "POS", "POS0", "START", "END", "GT", "PHASE"]
 if "PS" in snps.columns:
     out_cols.append("PS")
-out_cols += ["region_id", "feature_id", "feature_type"]
+out_cols += ["region_id"]
+if "seg_id" in snps.columns:
+    out_cols.append("seg_id")
+out_cols += ["feature_id", "feature_type"]
 snps[out_cols].to_csv(snp_info, sep="\t", header=True, index=False)
 
 np.savez_compressed(out_tot_mtx_snp, mat=tot_mtx)

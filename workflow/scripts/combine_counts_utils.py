@@ -267,8 +267,10 @@ def build_union_snp_grid(snps_list):
     """
     has_ps = all("PS" in s.columns for s in snps_list)
     has_feature = all("feature_id" in s.columns for s in snps_list)
+    has_seg = all("seg_id" in s.columns for s in snps_list)
     annot_cols = (
         ["#CHR", "POS", "POS0", "START", "END", "region_id"]
+        + (["seg_id"] if has_seg else [])
         + (["PS"] if has_ps else [])
         + (["feature_id"] if has_feature else [])
     )
@@ -283,20 +285,26 @@ def build_union_snp_grid(snps_list):
 
 
 def setup_phaseset_groups(snps):
-    """Ensure a ``PS`` column exists and return grouping columns ``[region_id, PS]``.
+    """Ensure ``seg_id``/``PS`` columns exist; return grouping ``[region_id, seg_id, PS]``.
 
-    If ``PS`` is absent, set ``PS=1`` for all SNPs. When ``PS`` is present (longphase
-    output) every SNP must carry a non-null value, since unphased SNPs are dropped
-    upstream; a ``NaN`` would signal an upstream bug.
+    ``seg_id`` (the breakpoint chunk from build_segment_bed) is the hard bin boundary;
+    binning groups by it and never merges across it, while ``region_id`` (the arm) is
+    carried for RDR/QC. When ``seg_id`` is absent (no global BED), it falls back to
+    ``region_id`` so grouping is identical to the pre-seg_id behavior. If ``PS`` is
+    absent, set ``PS=1``; when present every SNP must carry a non-null value.
     """
     assert "region_id" in snps.columns, "invalid SNP file"
+    if "seg_id" not in snps.columns:
+        snps["seg_id"] = snps["region_id"]
     if "PS" not in snps.columns:
         logging.info("PS not in SNP columns, setting PS=1 for all SNPs")
         snps["PS"] = 1
     else:
         assert snps["PS"].notna().all(), "unexpected SNP without PS in phased VCF"
-    logging.info(f"#phaseset={snps['PS'].nunique()}")
-    return ["region_id", "PS"]
+    logging.info(
+        f"#seg_id={snps['seg_id'].nunique()}, #phaseset={snps['PS'].nunique()}"
+    )
+    return ["region_id", "seg_id", "PS"]
 
 
 def build_assay_blocks(sample_df, bulk_assays):
@@ -356,32 +364,71 @@ def build_rdr_base_map(sample_df):
     return base_map
 
 
+def _windows_to_bins(win_a, bin_spans):
+    """Assign each window to the bin whose genomic span contains its midpoint.
+
+    Returns an int64 array of ``bin_id`` per window, ``-1`` where the midpoint
+    falls in no bin. Works for a same-grid assay (window in its own bin) and for
+    a finer WES grid projected onto WGS bins.
+    """
+    mids = ((win_a["START"] + win_a["END"]) // 2).to_numpy(np.int64)
+    chroms = win_a["#CHR"].to_numpy()
+    out = np.full(len(win_a), -1, dtype=np.int64)
+    for chrom, grp in bin_spans.groupby("#CHR", sort=False):
+        m = chroms == chrom
+        if not m.any():
+            continue
+        starts = grp["START"].to_numpy(np.int64)
+        ends = grp["END"].to_numpy(np.int64)
+        ids = grp["bin_id"].to_numpy(np.int64)
+        order = np.argsort(starts)
+        starts, ends, ids = starts[order], ends[order], ids[order]
+        pos = mids[m]
+        j = np.searchsorted(starts, pos, side="right") - 1
+        valid = (j >= 0) & (pos < ends[j.clip(min=0)])
+        res = np.full(len(pos), -1, dtype=np.int64)
+        res[valid] = ids[j[valid]]
+        out[m] = res
+    return out
+
+
 def aggregate_window_depth_to_bins(
     assay_blocks, scaffold, window_df_list, dp_corrected_list, num_bbs, total_samples
 ):
     """Length-weighted aggregation of corrected window depth into adaptive bins.
 
-    Each assay's windows are matched to the shared ``scaffold`` (carrying
-    ``bin_id``) and aggregated per bin. Returns ``(bb_dp, bb_bases)``: per-bin
-    mean depth and per-bin total aligned bases, both ``(num_bbs, total_samples)``.
+    Each assay's windows are assigned to bins by midpoint over the ``scaffold``
+    (the binning-grid windows carrying ``bin_id``), so a finer WES grid is
+    projected onto the WGS bins. Returns ``(bb_dp, bb_bases)``: per-bin mean depth
+    and per-bin total aligned bases, both ``(num_bbs, total_samples)``.
     """
+    bin_spans = (
+        scaffold.groupby("bin_id", sort=True)
+        .agg(
+            **{
+                "#CHR": ("#CHR", "first"),
+                "START": ("START", "min"),
+                "END": ("END", "max"),
+            }
+        )
+        .reset_index()
+    )
     bb_dp = np.full((num_bbs, total_samples), np.nan, dtype=np.float32)
     bb_bases = np.zeros((num_bbs, total_samples), dtype=np.float64)
     for blk, win_a, dp_a in zip(assay_blocks, window_df_list, dp_corrected_list):
-        w = win_a.merge(
-            scaffold[["#CHR", "START", "END", "bin_id"]],
-            on=["#CHR", "START", "END"],
-            how="left",
-        )
-        assert w["bin_id"].notna().all(), (
-            f"{blk['assay']} windows missing from scaffold"
-        )
-        bin_ids = w["bin_id"].to_numpy().astype(np.int64)
-        win_lengths = (w["END"] - w["START"]).to_numpy(dtype=np.float64)
-        total_len_per_bin = np.bincount(bin_ids, weights=win_lengths, minlength=num_bbs)
+        bin_ids = _windows_to_bins(win_a, bin_spans)
+        valid = bin_ids >= 0
+        n_drop = int((~valid).sum())
+        if n_drop:
+            logging.info(
+                f"{blk['assay']}: {n_drop}/{len(win_a)} windows outside all bins (dropped)"
+            )
+        vb = bin_ids[valid]
+        win_lengths = (win_a["END"] - win_a["START"]).to_numpy(dtype=np.float64)[valid]
+        total_len_per_bin = np.bincount(vb, weights=win_lengths, minlength=num_bbs)
         for s in range(blk["n"]):
             weighted_sums = np.bincount(
-                bin_ids, weights=dp_a[:, s] * win_lengths, minlength=num_bbs
+                vb, weights=dp_a[valid, s] * win_lengths, minlength=num_bbs
             )
             bb_bases[:, blk["offset"] + s] = weighted_sums
             with np.errstate(invalid="ignore"):
@@ -581,12 +628,15 @@ def assign_snp_bounderies(
     divide regions into [START, END) subregions, each subregion has one SNP.
     If a SNP is out-of-region, its START and END will be 0 and region_id will be "".
     region_id is taken from regions["region_id"] (4th-column seg_id, with
-    per-row fallback to "CHR:START-END" handled by read_region_file).
+    per-row fallback to "CHR:START-END" handled by read_BED).
     """
     snps["START"] = 0
     snps["END"] = 0
 
     snps[colname] = ""
+    has_seg = "seg_id" in regions.columns
+    if has_seg:
+        snps["seg_id"] = ""
 
     chroms = snps["#CHR"].unique().tolist()
     region_grps_ch = regions.groupby(by="#CHR", sort=False)
@@ -601,6 +651,8 @@ def assign_snp_bounderies(
             reg_snp_indices = reg_snps.index.to_numpy()
 
             snps.loc[reg_snp_indices, colname] = region["region_id"]
+            if has_seg:
+                snps.loc[reg_snp_indices, "seg_id"] = region["seg_id"]
 
             if len(reg_snps) == 1:
                 snps.loc[reg_snp_indices, "START"] = reg_start

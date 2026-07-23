@@ -130,7 +130,9 @@ def detect_phase_flips(
     return pd.Series(phase_group, index=snps.index, dtype=np.int64)
 
 
-def count_split_genes(snps, grp_cols, gene_aware, bb_col="bb_id", feature_col="feature_id"):
+def count_split_genes(
+    snps, grp_cols, gene_aware, bb_col="bb_id", feature_col="feature_id"
+):
     """Log a gene-split sanity check for gene-aware binning.
 
     A gene is "split" if, within one ``grp_cols`` group (region_id / PS / phase_group),
@@ -183,7 +185,9 @@ def gene_block_labels(n_items, ranges):
     """
     if n_items == 0:
         return np.zeros(0, dtype=np.int64)
-    blocked = np.zeros(n_items - 1, dtype=bool)  # blocked[i] = boundary (i, i+1) non-cuttable
+    blocked = np.zeros(
+        n_items - 1, dtype=bool
+    )  # blocked[i] = boundary (i, i+1) non-cuttable
     for lo, hi in ranges:
         if hi > lo:
             blocked[lo:hi] = True
@@ -198,8 +202,8 @@ def gene_block_labels(n_items, ranges):
 def _bin_windows_numba(
     win_reads,
     win_nsnps,
-    min_snp_reads,
-    min_snp_per_block,
+    min_snp_reads_vec,
+    min_snp_per_bin,
     win_starts,
     win_ends,
     max_blocksize,
@@ -207,29 +211,34 @@ def _bin_windows_numba(
 ):
     """Greedy adaptive binning over consecutive windows.
 
+    A bin can close only when its accumulated reads meet the per-column threshold
+    (``acc[j] >= min_snp_reads_vec[j]`` for every sample j). ``max_blocksize`` is a
+    SECONDARY guard: it may force a cut only once that read threshold is already
+    satisfied, so no bin is ever emitted below threshold and every bin is non-empty
+    in every column (e.g. every WES column carries reads).
+
     Parameters
     ----------
     win_reads : (W, M) contiguous float64
         Per-window total tumor reads (summed from SNPs in each window).
     win_nsnps : (W,) int64
         Number of SNPs per window.
-    min_snp_reads : int
-        Minimum total reads per sample for a bin to be complete.
-    min_snp_per_block : int
+    min_snp_reads_vec : (M,) float64
+        Per-column minimum SNP reads per bin.
+    min_snp_per_bin : int
         Minimum number of SNPs per bin.
     win_starts : (W,) int64
         START coordinate per window.
     win_ends : (W,) int64
         END coordinate per window.
     max_blocksize : int
-        Maximum genomic span (END - START) for a bin. When exceeded, force
-        a bin boundary. Set to 0 to disable.
+        Span cap (bp); once the read threshold is met, a bin over this span is cut
+        even if it holds fewer than ``min_snp_per_bin`` SNPs. Never cuts below the
+        read threshold. Set to 0 to disable.
     unit_ids : (W,) int64
         Gene-unit id per window; a bin may only close at a unit boundary
         (``unit_ids[i] != unit_ids[i-1]``), so a gene is never split across bins.
-        The cap (``max_blocksize``) also only forces a cut at a unit boundary, so a
-        single gene larger than the cap stays whole. Pass ``np.arange(W)`` for no
-        constraint.
+        Pass ``np.arange(W)`` for no constraint.
 
     Returns
     -------
@@ -250,15 +259,14 @@ def _bin_windows_numba(
 
     for i in range(1, W):
         meets_reads = True
-        if min_snp_reads > 0:
-            for j in range(M):
-                if acc[j] < min_snp_reads:
-                    meets_reads = False
-                    break
+        for j in range(M):
+            if acc[j] < min_snp_reads_vec[j]:
+                meets_reads = False
+                break
         span = win_ends[i - 1] - win_starts[prev_start]
         exceeds_size = max_blocksize > 0 and span >= max_blocksize
         unit_boundary = unit_ids[i] != unit_ids[i - 1]
-        if ((meets_reads and acc_n >= min_snp_per_block) or exceeds_size) and unit_boundary:
+        if meets_reads and (acc_n >= min_snp_per_bin or exceeds_size) and unit_boundary:
             bin_ids[prev_start:i] = bin_id
             bin_id += 1
             prev_start = i
@@ -269,17 +277,18 @@ def _bin_windows_numba(
                 acc[j] += win_reads[i, j]
             acc_n += win_nsnps[i]
 
-    # last block: keep as own bin if it meets all criteria and isn't the only block
+    # last block: keep as own bin if it meets the read threshold and isn't the only block
     last_meets_reads = True
-    if min_snp_reads > 0:
-        for j in range(M):
-            if acc[j] < min_snp_reads:
-                last_meets_reads = False
-                break
+    for j in range(M):
+        if acc[j] < min_snp_reads_vec[j]:
+            last_meets_reads = False
+            break
     last_span = win_ends[W - 1] - win_starts[prev_start]
     last_exceeds_size = max_blocksize > 0 and last_span >= max_blocksize
-    if (last_meets_reads and acc_n >= min_snp_per_block and prev_start > 0) or (
-        last_exceeds_size and prev_start > 0
+    if (
+        last_meets_reads
+        and (acc_n >= min_snp_per_bin or last_exceeds_size)
+        and prev_start > 0
     ):
         bin_ids[prev_start:] = bin_id
         bin_id += 1
@@ -294,8 +303,8 @@ def adaptive_segmentation(
     windows: pd.DataFrame,
     snps: pd.DataFrame,
     tot_mtx: np.ndarray,
-    min_snp_reads: int,
-    min_snp_per_block: int,
+    min_snp_reads,
+    min_snp_per_bin: int,
     grp_cols: list,
     tumor_sidx=0,
     max_blocksize=0,
@@ -313,9 +322,11 @@ def adaptive_segmentation(
         SNP DataFrame with ``POS0`` and ``#CHR`` columns.
     tot_mtx : (N, M) ndarray
         Per-SNP total read counts (N SNPs, M samples).
-    min_snp_reads : int
-        Minimum total tumor reads per sample for a bin.
-    min_snp_per_block : int
+    min_snp_reads : int or array-like
+        Minimum total tumor reads for a bin, per tumor column. A scalar is
+        broadcast to every tumor column; an array of length ``M - tumor_sidx``
+        sets a per-column threshold (e.g. ``min_snp_reads_wes`` on WES columns).
+    min_snp_per_bin : int
         Minimum number of SNPs per bin.
     grp_cols : list of str
         Columns to group windows by (e.g. ``["region_id"]``).
@@ -333,9 +344,13 @@ def adaptive_segmentation(
     """
     from scipy.sparse import issparse
 
+    M_tumor = tot_mtx.shape[1] - tumor_sidx
+    min_snp_reads_vec = np.ascontiguousarray(
+        np.broadcast_to(np.asarray(min_snp_reads, dtype=np.float64), (M_tumor,))
+    )
     logging.info(
-        f"adaptive_segmentation: min_snp_reads={min_snp_reads}, "
-        f"min_snp_per_block={min_snp_per_block}, "
+        f"adaptive_segmentation: min_snp_reads(per-col)={min_snp_reads_vec.tolist()}, "
+        f"min_snp_per_bin={min_snp_per_bin}, "
         f"max_blocksize={max_blocksize}"
     )
 
@@ -360,7 +375,6 @@ def adaptive_segmentation(
 
     # 2. Compute per-window stats
     W = len(windows)
-    M_tumor = tot_mtx.shape[1] - tumor_sidx
     win_nsnps = np.zeros(W, dtype=np.int64)
     win_reads = np.zeros((W, M_tumor), dtype=np.float64)
 
@@ -399,8 +413,8 @@ def adaptive_segmentation(
         local_bin_ids, n_bins = _bin_windows_numba(
             grp_reads,
             grp_nsnps,
-            min_snp_reads,
-            min_snp_per_block,
+            min_snp_reads_vec,
+            min_snp_per_bin,
             grp_starts,
             grp_ends,
             max_blocksize,
@@ -499,7 +513,9 @@ def _interval_tiers(starts, ends):
     return [np.array(m, dtype=np.int64) for m in tier_members]
 
 
-def assign_all_features(snps, ref, id_col, pos_col="POS0", sep=";", default="intergenic"):
+def assign_all_features(
+    snps, ref, id_col, pos_col="POS0", sep=";", default="intergenic"
+):
     """All overlapping ``ref`` ids per SNP, ``sep``-joined (``default`` when none).
 
     Vectorized: ``ref`` intervals are split into non-overlapping tiers so each tier
@@ -685,15 +701,17 @@ def apply_region_blacklist_masks(snps, snp_mask, region_bed, blacklist_bed):
 
     Returns the updated mask and the parsed regions (reused for boundaries).
     """
-    regions = read_region_file(region_bed)
+    regions = read_BED(region_bed)
     region_mask = get_mask_by_region(snps, regions)
     logging.info(f"region filter: {np.sum(region_mask)}/{len(snps)} SNPs passed")
     snp_mask &= region_mask
 
     if blacklist_bed is not None:
-        bl_regions = read_region_file(blacklist_bed)
+        bl_regions = read_BED(blacklist_bed)
         bl_mask = get_mask_by_region(snps, bl_regions)
-        logging.info(f"blacklist filter: {np.sum(bl_mask)}/{len(snps)} SNPs in blacklist")
+        logging.info(
+            f"blacklist filter: {np.sum(bl_mask)}/{len(snps)} SNPs in blacklist"
+        )
         snp_mask &= ~bl_mask
     return snp_mask, regions
 
@@ -701,7 +719,9 @@ def apply_region_blacklist_masks(snps, snp_mask, region_bed, blacklist_bed):
 def apply_exon_only_mask(snps, snp_mask, exon_only):
     """Log exonic SNP count and, if exon_only, AND snp_mask with the exon mask."""
     n_exon = int((snps["feature_type"] == "exon").sum())
-    logging.info(f"#exonic SNPs: {n_exon}/{len(snps)} ({n_exon / max(len(snps), 1):.3%})")
+    logging.info(
+        f"#exonic SNPs: {n_exon}/{len(snps)} ({n_exon / max(len(snps), 1):.3%})"
+    )
     if exon_only:
         exon_mask = (snps["feature_type"] == "exon").to_numpy()
         logging.info(f"exon filter: {np.sum(exon_mask)}/{len(snps)} SNPs passed")
@@ -886,7 +906,9 @@ def rna_h5ad_to_bb(h5ad_file, barcodes, bb_df, num_bbs, assay_type):
             f"{len(missing)} barcodes missing from {h5ad_file}, e.g. {missing[:5]}"
         )
     adata = adata[barcodes, :].copy()
-    adata = feature_to_blocks(adata, bb_df, assay_type, block_idx="bb_id", drop_cols=False)
+    adata = feature_to_blocks(
+        adata, bb_df, assay_type, block_idx="bb_id", drop_cols=False
+    )
     x_count = matrix_segmentation(adata.X.T, adata.var["bb_id"].to_numpy(), num_bbs)
     return x_count.astype(np.int32)
 
@@ -936,9 +958,14 @@ def atac_fragments_to_bb(
             continue
         n_frag = 0
         for chunk in pd.read_csv(
-            frag_file, sep="\t", comment="#", header=None, usecols=[0, 1, 2, 3],
+            frag_file,
+            sep="\t",
+            comment="#",
+            header=None,
+            usecols=[0, 1, 2, 3],
             names=["#CHR", "start", "end", "BC"],
-            dtype={0: str, 1: np.int64, 2: np.int64, 3: str}, chunksize=chunksize,
+            dtype={0: str, 1: np.int64, 2: np.int64, 3: str},
+            chunksize=chunksize,
         ):
             col_vals = chunk["BC"].map(rep_map).to_numpy()
             m = ~pd.isna(col_vals)

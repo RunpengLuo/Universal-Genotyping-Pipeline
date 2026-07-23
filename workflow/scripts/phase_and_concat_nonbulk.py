@@ -70,7 +70,9 @@ sample_file = snakemake_handle.output["sample_file"]
 is_rna_assay = ASSAY_TYPE2MODALITY[assay_type] == "RNA"
 
 ##################################################
-logging.info(f"sample_name={sample_name}, assay_type={assay_type}, dataset_ids={dataset_ids}")
+logging.info(
+    f"sample_name={sample_name}, assay_type={assay_type}, dataset_ids={dataset_ids}"
+)
 
 snps = read_VCF(snp_vcf, addkey=True, add_phase1=True, add_pos0=True)
 parent_keys = pd.Index(snps["KEY"])
@@ -84,7 +86,11 @@ for idx, dataset_id in enumerate(dataset_ids):
     barcodes["BARCODE"] = barcodes["BARCODE"].astype(str) + f"_{dataset_id}"
     barcodes_list.append(barcodes)
     tot_canon, ad_canon = canon_mat_one_replicate(
-        parent_keys, vcf_files[idx], tot_mtx_files[idx], ad_mtx_files[idx], len(barcodes)
+        parent_keys,
+        vcf_files[idx],
+        tot_mtx_files[idx],
+        ad_mtx_files[idx],
+        len(barcodes),
     )
     tot_mtx_list.append(tot_canon)
     ad_mtx_list.append(ad_canon)
@@ -198,20 +204,20 @@ with PdfPages(af_pdf_path) as pdf:
 
 ##################################################
 logging.info("saving output files")
-snps[
-    [
-        "#CHR",
-        "POS",
-        "POS0",
-        "START",
-        "END",
-        "GT",
-        "PHASE",
-        "region_id",
-        "feature_id",
-        "feature_type",
-    ]
-].to_csv(snp_info, sep="\t", header=True, index=False)
+_snp_cols = [
+    "#CHR",
+    "POS",
+    "POS0",
+    "START",
+    "END",
+    "GT",
+    "PHASE",
+    "region_id",
+]
+if "seg_id" in snps.columns:
+    _snp_cols.append("seg_id")
+_snp_cols += ["feature_id", "feature_type"]
+snps[_snp_cols].to_csv(snp_info, sep="\t", header=True, index=False)
 save_npz(tot_mtx_snp, tot_mtx)
 save_npz(a_mtx_snp, a_mtx)
 save_npz(b_mtx_snp, b_mtx)
@@ -219,7 +225,9 @@ snp_ids = snps["#CHR"].astype(str) + "_" + snps["POS"].astype(str)
 np.save(unique_snp_ids, snp_ids.to_numpy())
 all_barcodes.to_csv(out_all_barcodes, sep="\t", header=False, index=False)
 barcodes_full.to_csv(out_barcodes_full, sep="\t", header=True, index=False)
-sample_df = pd.DataFrame({"SAMPLE": [f"{sample_name}_{dataset_id}" for dataset_id in dataset_ids]})
+sample_df = pd.DataFrame(
+    {"SAMPLE": [f"{sample_name}_{dataset_id}" for dataset_id in dataset_ids]}
+)
 sample_df["SAMPLE_NAME"] = sample_name
 sample_df["REP_ID"] = dataset_ids
 sample_df["sample_type"] = sample_types

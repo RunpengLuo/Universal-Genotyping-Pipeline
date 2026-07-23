@@ -219,7 +219,10 @@ if n_nan_rows > 0:
 
 np.savez_compressed(out_dp_corrected, mat=dp_corrected)
 
-out_cols = ["#CHR", "START", "END", "region_id", "GC"]
+out_cols = ["#CHR", "START", "END", "region_id"]
+if "seg_id" in win_df.columns:
+    out_cols.append("seg_id")
+out_cols.append("GC")
 if "MAP" in win_df.columns:
     out_cols.append("MAP")
 if "REPLI" in win_df.columns:

@@ -56,7 +56,9 @@ genome_size = snakemake_handle.input["genome_size"]
 
 # parameters
 frag_reps = list(snakemake_handle.params["frag_reps"])  # parallel to frag_files
-h5ad_assays = list(snakemake_handle.params["h5ad_assays"])  # parallel to h5ad_files (RNA-family)
+h5ad_assays = list(
+    snakemake_handle.params["h5ad_assays"]
+)  # parallel to h5ad_files (RNA-family)
 qc_dir = snakemake_handle.params["qc_dir"]
 run_id = snakemake_handle.params["run_id"]
 nonbulk_assays = list(snakemake_handle.params["nonbulk_assays"])
@@ -65,7 +67,7 @@ min_switchprob = float(snakemake_handle.params["min_switchprob"])
 switchprob_ps = float(snakemake_handle.params["switchprob_ps"])
 nsnp_multi = int(snakemake_handle.params["nsnp_multi"])
 msr_list = [int(m) for m in snakemake_handle.params["min_snp_reads"]]
-min_snp_per_block = int(snakemake_handle.params["min_snp_per_block"])
+min_snp_per_bin = int(snakemake_handle.params["min_snp_per_bin"])
 gene_aware_binning_param = bool(snakemake_handle.params["gene_aware_binning"])
 
 # outputs
@@ -98,7 +100,11 @@ cell_rep_idx_list = [
     for k, bc_full in enumerate(barcode_full_files)
 ]
 
-sample_name = sample_ids_list[0]["SAMPLE_NAME"].iloc[0] if "SAMPLE_NAME" in sample_ids_list[0] else ""
+sample_name = (
+    sample_ids_list[0]["SAMPLE_NAME"].iloc[0]
+    if "SAMPLE_NAME" in sample_ids_list[0]
+    else ""
+)
 logging.info(f"joint non-bulk binning: sample={sample_name}, assays={nonbulk_assays}")
 
 ##################################################
@@ -115,7 +121,8 @@ if gene_aware_binning:
     # gene blocks over the union SNPs (genomically ordered) so a bin never splits a
     # gene; explode the ;-joined multi-gene feature_id so each gene gets its own span
     _g = snps.loc[
-        snps["feature_id"].notna() & (snps["feature_id"] != "intergenic"), ["feature_id"]
+        snps["feature_id"].notna() & (snps["feature_id"] != "intergenic"),
+        ["feature_id"],
     ].copy()
     _g["__i"] = _g.index.to_numpy()
     _g["feature_id"] = _g["feature_id"].str.split(";")
@@ -139,7 +146,9 @@ for k in range(n_assays):
     tot_pb_list.append(tot_pb_k)
     shared_row = (
         snps_list[k][["#CHR", "POS0"]]
-        .merge(snps[["#CHR", "POS0", "snp_row"]], on=["#CHR", "POS0"], how="left")["snp_row"]
+        .merge(snps[["#CHR", "POS0", "snp_row"]], on=["#CHR", "POS0"], how="left")[
+            "snp_row"
+        ]
         .to_numpy()
         .astype(np.int64)
     )
@@ -219,7 +228,7 @@ for j, min_snp_reads in enumerate(msr_list):
         snps.copy(),
         tot_pb_cont,
         min_snp_reads,
-        min_snp_per_block,
+        min_snp_per_bin,
         grp_cols=grp_cols,
         tumor_sidx=0,
         max_blocksize=0,
@@ -258,7 +267,9 @@ for j, min_snp_reads in enumerate(msr_list):
         joint_sids.to_csv(out_sample_file[idx], sep="\t", index=False)
 
         # map this assay's SNPs to the shared bb grid
-        m = snps_list[k][["#CHR", "POS0"]].merge(bb_of_snp, on=["#CHR", "POS0"], how="left")
+        m = snps_list[k][["#CHR", "POS0"]].merge(
+            bb_of_snp, on=["#CHR", "POS0"], how="left"
+        )
         keep = m["bb_id"].notna().to_numpy()
         rows_k = np.where(keep)[0]
         bb_ids_k = m.loc[keep, "bb_id"].to_numpy().astype(np.int64)
@@ -280,13 +291,17 @@ for j, min_snp_reads in enumerate(msr_list):
                 num_bbs,
             )
             save_npz(out_x_count[idx], x_count)
-            logging.info(f"{assay} MSR={min_snp_reads} Xcount (fragments): shape={x_count.shape}, nnz={x_count.nnz}")
+            logging.info(
+                f"{assay} MSR={min_snp_reads} Xcount (fragments): shape={x_count.shape}, nnz={x_count.nnz}"
+            )
         elif assay in h5ad_of:
             x_count = rna_h5ad_to_bb(
                 h5ad_of[assay], read_barcodes(barcode_files[k]), bb_grid, num_bbs, assay
             )
             save_npz(out_x_count[idx], x_count)
-            logging.info(f"{assay} MSR={min_snp_reads} Xcount (h5ad): shape={x_count.shape}, nnz={x_count.nnz}")
+            logging.info(
+                f"{assay} MSR={min_snp_reads} Xcount (h5ad): shape={x_count.shape}, nnz={x_count.nnz}"
+            )
 
         pdf = PdfPages(out_qc_pdf[idx])
         plot_allele_freqs(

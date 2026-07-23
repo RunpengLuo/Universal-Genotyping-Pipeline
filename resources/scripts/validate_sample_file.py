@@ -53,7 +53,11 @@ sys.path.insert(0, os.path.join(REPO, "config"))
 sys.path.insert(0, os.path.join(REPO, "workflow", "scripts"))
 
 from const import BULK_ASSAYS, NONBULK_ASSAYS, is_url  # noqa: E402
-from parse_workflow_args import parse_sample_file, validate_records  # noqa: E402
+from parse_workflow_args import (  # noqa: E402
+    parse_sample_file_json,
+    parse_sample_file_tsv,
+    validate_records,
+)
 
 # a mode can only run the assay types it supports
 MODE_ASSAYS = {
@@ -131,7 +135,15 @@ def main():
     args = ap.parse_args()
 
     try:
-        records = parse_sample_file(args.sample_file)
+        ext = os.path.splitext(args.sample_file)[1].lower()
+        if ext == ".json":
+            records = parse_sample_file_json(args.sample_file)
+        elif ext in (".tsv", ".txt"):
+            records = parse_sample_file_tsv(args.sample_file)
+        else:
+            raise ValueError(
+                f"{args.sample_file}: sample file must be .json or .tsv, got {ext!r}"
+            )
     except (ValueError, OSError) as e:
         print(f"FAIL parse: {e}")
         return 1

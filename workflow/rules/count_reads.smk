@@ -9,40 +9,13 @@
 _rdr_cfg = config["params_count_reads"]
 
 
-rule window_bed_to_3bed:
-    """Extract headerless 3-column BED from window_bed for mosdepth --by."""
-    input:
-        window_bed=config["window_bed"] or [],
-    output:
-        mosdepth_bed=temp(config["pileup_dir"] + "/windows.bed.gz"),
-    log:
-        config["log_dir"] + f"/window_bed_to_3bed.{_run_id}.log",
-    conda:
-        "../envs/base.yaml"
-    run:
-        import gzip, logging
-        import pandas as pd
-
-        logging.basicConfig(
-            filename=str(log[0]),
-            level=logging.INFO,
-            format="%(asctime)s %(levelname)s %(message)s",
-        )
-        df = pd.read_table(
-            str(input.window_bed), sep="\t", usecols=["#CHR", "START", "END"]
-        )
-        logging.info(f"Extracted {len(df)} windows from {input.window_bed}")
-        with gzip.open(str(output.mosdepth_bed), "wt") as fh:
-            df.to_csv(fh, sep="\t", header=False, index=False)
-
-
 rule run_mosdepth:
     input:
         alignment=lambda wc: alignment_input(get_data[(wc.assay_type, wc.dataset_id)]),
         alignment_index=lambda wc: alignment_index_input(
             get_data[(wc.assay_type, wc.dataset_id)]
         ),
-        windows_bed=config["pileup_dir"] + "/windows.bed.gz",
+        windows_bed=config["pileup_dir"] + "/{assay_type}/windows.bed.gz",
     output:
         mosdepth_file=config["pileup_dir"]
         + "/{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz",
@@ -79,9 +52,9 @@ rule rd_correct:
             + f"/{wc.assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz"
             for dataset_id in assay2dataset_ids[wc.assay_type]
         ],
-        window_bed=config["window_bed"] or [],
+        window_bed=lambda wc: get_assay_window_bed(wc.assay_type),
         genome_size=config["genome_size"],
-        region_bed=config["region_bed"],
+        region_bed=segment_bed,
         blacklist_bed=config["blacklist_bed"] or [],
     output:
         dp_corrected=config["pileup_dir"] + "/{assay_type}/window.dp.npz",

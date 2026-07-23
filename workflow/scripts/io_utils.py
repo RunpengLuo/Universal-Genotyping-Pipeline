@@ -29,6 +29,15 @@ def get_chr_sizes(sz_file: str):
     return chr_sizes
 
 
+def get_standard_chroms(reference_version, genome_size_file):
+    """Standard chromosomes (autosomes + X/Y) present in the genome-size file."""
+    all_chroms = set(get_chr_sizes(genome_size_file).keys())
+    candidates = {f"chr{c}" for c in list(range(1, 23)) + ["X", "Y"]}
+    if reference_version not in CHR_STYLE_REFVERS:
+        candidates |= {str(c) for c in list(range(1, 23)) + ["X", "Y"]}
+    return candidates & all_chroms
+
+
 def read_VCF(
     vcf_file: str,
     addchr=True,
@@ -122,28 +131,70 @@ def read_VCF(
     return snps
 
 
-def read_region_file(region_bed_file: str, addchr=True):
-    """Read a BED file. An optional 4th column is taken as ``region_id``;
-    rows without it (or with empty value) fall back to ``CHR:START-END``.
-    """
-    regions = pd.read_table(
-        region_bed_file, sep="\t", header=None, dtype={0: "string"}
-    )
-    assert len(regions.columns) >= 3, "invalid regions BED format"
-    columns = ["Chromosome", "Start", "End"]
-    if len(regions.columns) > 3:
-        regions = regions.iloc[:,:4].copy()
-        columns += ["region_id"]
-    regions.columns = columns
-    if not str(regions["Chromosome"].iloc[0]).startswith("chr") and addchr:
-        regions["Chromosome"] = "chr" + regions["Chromosome"].astype(str)
-    regions["#CHR"] = regions["Chromosome"]
-    regions["START"] = regions["Start"]
-    regions["END"] = regions["End"]
+def read_BED(bed_file: str, addchr=True, extra_columns=("region_id", "seg_id")):
+    """Read a BED file: the first 3 columns are ``#CHR``/``START``/``END``.
 
-    if "region_id" not in regions.columns:
-        regions["region_id"] = regions["#CHR"] + ":" + regions["START"].astype(str) + "-" + regions["END"].astype(str)
-    return regions
+    Any further columns are named from ``extra_columns`` in order. When an
+    ``extra_columns`` entry has no column in the file it is filled: ``region_id``
+    falls back to ``CHR:START-END`` and ``seg_id`` to ``region_id`` (the
+    build_segment_bed default). Pass ``extra_columns=()`` for a plain BED3
+    (e.g. a blacklist).
+    """
+    df = pd.read_table(bed_file, sep="\t", header=None, dtype={0: "string"})
+    assert len(df.columns) >= 3, "invalid BED format"
+    n_extra = min(len(df.columns) - 3, len(extra_columns))
+    columns = ["Chromosome", "Start", "End"] + list(extra_columns[:n_extra])
+    df = df.iloc[:, : 3 + n_extra].copy()
+    df.columns = columns
+    if not str(df["Chromosome"].iloc[0]).startswith("chr") and addchr:
+        df["Chromosome"] = "chr" + df["Chromosome"].astype(str)
+    df["#CHR"] = df["Chromosome"]
+    df["START"] = df["Start"]
+    df["END"] = df["End"]
+
+    if "region_id" in extra_columns and "region_id" not in df.columns:
+        df["region_id"] = (
+            df["#CHR"] + ":" + df["START"].astype(str) + "-" + df["END"].astype(str)
+        )
+    if "seg_id" in extra_columns and "seg_id" not in df.columns:
+        df["seg_id"] = df["region_id"]
+    return df
+
+
+def read_BEDPE(bedpe_file: str, addchr=True):
+    """Read a BEDPE of SV junctions (bedtools 10-column layout, 0-based like BED).
+
+    Columns: ``#CHR1 START1 END1 #CHR2 START2 END2 [NAME SCORE STRAND1 STRAND2]``;
+    only the first 6 are required. Both chrom columns are chr-normalized so they
+    match a chr-prefixed region BED. An empty file returns an empty DataFrame.
+    """
+    names = [
+        "#CHR1",
+        "START1",
+        "END1",
+        "#CHR2",
+        "START2",
+        "END2",
+        "NAME",
+        "SCORE",
+        "STRAND1",
+        "STRAND2",
+    ]
+    try:
+        df = pd.read_csv(
+            bedpe_file, sep="\t", header=None, comment="#", dtype={0: str, 3: str}
+        )
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(columns=names[:6])
+    n = min(df.shape[1], len(names))
+    df = df.iloc[:, :n].copy()
+    df.columns = names[:n]
+    for c in ("#CHR1", "#CHR2"):
+        s = df[c].astype(str)
+        df[c] = s if not addchr else s.where(s.str.startswith("chr"), "chr" + s)
+    df["START1"] = df["START1"].astype(np.int64)
+    df["START2"] = df["START2"].astype(np.int64)
+    return df
 
 
 def read_barcodes(bc_file: str):
@@ -178,7 +229,9 @@ def cell_rep_idx_from_mapping(rep2bc: pd.DataFrame, dataset_ids):
     """
     cats = pd.Categorical(rep2bc["REP_ID"], categories=list(dataset_ids))
     codes = np.asarray(cats.codes, dtype=np.int64)
-    assert (codes >= 0).all(), "barcodes.full contains REP_ID values outside dataset_ids"
+    assert (codes >= 0).all(), (
+        "barcodes.full contains REP_ID values outside dataset_ids"
+    )
     return codes
 
 

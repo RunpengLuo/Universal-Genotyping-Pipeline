@@ -92,6 +92,16 @@ def workspace(tmp_path_factory):
         _touch(str(ref / name))
         _touch(str(ref / f"{name}.bai"))
 
+    # SV breakpoints BEDPE (0-based, like BED): two junctions on chr22
+    (ref / "sv.bedpe").write_text(
+        "chr22\t16000000\t16000001\tchr22\t16500000\t16500001\tsv1\t60\t+\t-\n"
+        "chr22\t20000000\t20000001\tchr22\t30000000\t30000001\tsv2\t42\t-\t+\n"
+    )
+    # WES capture targets (0-based BED) on chr22
+    (ref / "wes_targets.bed").write_text(
+        "chr22\t17000000\t17050000\nchr22\t25000000\t25050000\n"
+    )
+
     barcodes = str(outs / "filtered_feature_bc_matrix" / "barcodes.tsv.gz")
     bulk_json = {
         "version": 1,
@@ -115,6 +125,71 @@ def workspace(tmp_path_factory):
                 "files": {
                     "alignment": str(ref / "tumor.bam"),
                     "alignment_index": str(ref / "tumor.bam.bai"),
+                },
+            },
+        ],
+    }
+    # bulk with an SV BEDPE on the tumor -> breakpoint-aware pre-segmentation
+    bulk_bedpe_json = {
+        "version": 1,
+        "samples": [
+            {
+                "sample_id": "B1",
+                "dataset_id": "N1",
+                "assay_type": "bulkWGS",
+                "sample_type": "normal",
+                "files": {
+                    "alignment": str(ref / "normal.bam"),
+                    "alignment_index": str(ref / "normal.bam.bai"),
+                },
+            },
+            {
+                "sample_id": "B1",
+                "dataset_id": "D1",
+                "assay_type": "bulkWGS",
+                "sample_type": "tumor",
+                "files": {
+                    "alignment": str(ref / "tumor.bam"),
+                    "alignment_index": str(ref / "tumor.bam.bai"),
+                    "breakpoint_bedpe": str(ref / "sv.bedpe"),
+                },
+            },
+        ],
+    }
+    # mixed WGS + WES on one individual: joint SNPs/phasing, per-stream windows
+    bulk_mixed_json = {
+        "version": 1,
+        "samples": [
+            {
+                "sample_id": "MX",
+                "dataset_id": "N1",
+                "assay_type": "bulkWGS",
+                "sample_type": "normal",
+                "files": {
+                    "alignment": str(ref / "normal.bam"),
+                    "alignment_index": str(ref / "normal.bam.bai"),
+                },
+            },
+            {
+                "sample_id": "MX",
+                "dataset_id": "D1",
+                "rdr_base_dataset_id": "N1",
+                "assay_type": "bulkWGS",
+                "sample_type": "tumor",
+                "files": {
+                    "alignment": str(ref / "tumor.bam"),
+                    "alignment_index": str(ref / "tumor.bam.bai"),
+                },
+            },
+            {
+                "sample_id": "MX",
+                "dataset_id": "E1",
+                "assay_type": "bulkWES",
+                "sample_type": "tumor",
+                "files": {
+                    "alignment": str(ref / "tumor.bam"),
+                    "alignment_index": str(ref / "tumor.bam.bai"),
+                    "wes_targets_bed": str(ref / "wes_targets.bed"),
                 },
             },
         ],
@@ -179,7 +254,12 @@ def workspace(tmp_path_factory):
     ]
 
     paths = {}
-    for name, doc in (("bulk", bulk_json), ("sc", sc_json)):
+    for name, doc in (
+        ("bulk", bulk_json),
+        ("bulk_bedpe", bulk_bedpe_json),
+        ("bulk_mixed", bulk_mixed_json),
+        ("sc", sc_json),
+    ):
         p = root / f"{name}.json"
         p.write_text(json.dumps(doc, indent=1))
         paths[f"{name}_json"] = str(p)

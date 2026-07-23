@@ -39,8 +39,7 @@ reference_version = snakemake_handle.params["reference_version"]
 gmap_tsv = snakemake_handle.output["gmap_tsv"]
 
 logging.info(
-    f"parse genetic map files, phaser={phaser}, "
-    f"reference_version={reference_version}"
+    f"parse genetic map files, phaser={phaser}, reference_version={reference_version}"
 )
 
 required_columns = ["#CHR", "POS", "cM"]
@@ -121,9 +120,7 @@ if phaser == "eagle":
         f"chroms={sorted(genetic_map['#CHR'].unique().tolist())}, "
         f"cM range=[{genetic_map['cM'].min():.4f}, {genetic_map['cM'].max():.4f}]"
     )
-    genetic_map[required_columns].to_csv(
-        gmap_tsv, sep="\t", header=True, index=False
-    )
+    genetic_map[required_columns].to_csv(gmap_tsv, sep="\t", header=True, index=False)
 
 if phaser == "shapeit":
     genetic_maps = []
@@ -148,6 +145,4 @@ if phaser == "shapeit":
         f"chroms={sorted(genetic_map['#CHR'].unique().tolist())}, "
         f"cM range=[{genetic_map['cM'].min():.4f}, {genetic_map['cM'].max():.4f}]"
     )
-    genetic_map[required_columns].to_csv(
-        gmap_tsv, sep="\t", header=True, index=False
-    )
+    genetic_map[required_columns].to_csv(gmap_tsv, sep="\t", header=True, index=False)

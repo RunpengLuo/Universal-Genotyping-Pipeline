@@ -58,6 +58,14 @@ def sort_chroms(chromosomes: list):
     return sorted((str(c) for c in chromosomes), key=chrom_sort_key)
 
 
+def is_canonical_chrom(chrom):
+    """True for autosomes and X/Y (the contigs kept in a window BED)."""
+    core = str(chrom)
+    if core.lower().startswith("chr"):
+        core = core[3:]
+    return core.isdigit() or core.upper() in ("X", "Y")
+
+
 def adaptive_dot_size(n_points, s_base=4, s_min=0.5, s_max=10, n_ref=5000):
     """Scale dot size inversely with point count.
 
@@ -67,7 +75,6 @@ def adaptive_dot_size(n_points, s_base=4, s_min=0.5, s_max=10, n_ref=5000):
     if n_points <= 0:
         return s_base
     return float(np.clip(s_base * n_ref / n_points, s_min, s_max))
-
 
 
 def sort_df_chr(df: pd.DataFrame, ch="#CHR", pos="POS"):

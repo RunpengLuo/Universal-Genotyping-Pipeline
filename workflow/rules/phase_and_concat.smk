@@ -25,21 +25,20 @@ rule phase_and_concat_bulk:
             for rid in assay2dataset_ids[at]
         ],
         snp_vcf=phased_snp_vcf,
-        region_bed=config["region_bed"],
+        region_bed=segment_bed,
         genome_size=config["genome_size"],
         gtf_file=config["gtf_file"],
         blacklist_bed=config["blacklist_bed"] or [],
     output:
-        snp_info=config["allele_dir"] + f"/{bulk_stream}/snps.tsv.gz",
-        tot_mtx_snp=config["allele_dir"] + f"/{bulk_stream}/snp.Tallele.npz",
-        a_mtx_snp=config["allele_dir"] + f"/{bulk_stream}/snp.Aallele.npz",
-        b_mtx_snp=config["allele_dir"] + f"/{bulk_stream}/snp.Ballele.npz",
-        sample_file=config["allele_dir"] + f"/{bulk_stream}/sample_ids.tsv",
+        snp_info=config["allele_dir"] + "/bulk/snps.tsv.gz",
+        tot_mtx_snp=config["allele_dir"] + "/bulk/snp.Tallele.npz",
+        a_mtx_snp=config["allele_dir"] + "/bulk/snp.Aallele.npz",
+        b_mtx_snp=config["allele_dir"] + "/bulk/snp.Ballele.npz",
+        sample_file=config["allele_dir"] + "/bulk/sample_ids.tsv",
         qc_pdf=report(
-            config["qc_dir"] + f"/phase_and_concat.{bulk_stream}.pdf",
+            config["qc_dir"] + "/phase_and_concat.bulk.pdf",
             category="QC plots",
             subcategory="phasing / allele freq (bulk)",
-            labels={"stream": bulk_stream},
         ),
     log:
         config["log_dir"] + f"/phase_and_concat.bulk.{_run_id}.log",
