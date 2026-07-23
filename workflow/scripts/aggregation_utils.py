@@ -879,7 +879,7 @@ def rna_h5ad_to_bb(h5ad_file, barcodes, bb_df, num_bbs, assay_type):
     """Aggregate per-cell RNA counts (h5ad from ``process_rna_anndata``) into bb bins.
 
     Each RNA feature (gene) is assigned to the bb bin it overlaps most (``feature_to_blocks``
-    -> largest overlap, same mapping as copytyping's ``cnv_segmentation``); its per-cell counts
+    -> largest overlap, same mapping as copytyping's ``combine_counts_fixed_bins``); its per-cell counts
     are summed into that bin. Cells are reordered to ``barcodes`` so the columns match that
     assay's ``bb.*allele.npz`` matrices.
 

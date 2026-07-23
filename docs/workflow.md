@@ -61,6 +61,6 @@ Assays: `scRNA`, `scATAC`, `VISIUM`, `VISIUM3prime`. Never genotypes or phases: 
 | Single-cell pileup | `pileup_snps_nonbulk_mode1a` | `pileup_dir/{assay_type}_{dataset_id}/` |
 | Build AnnData (RNA only) | `process_rna_anndata` | `bb_dir/{assay_type}.h5ad` |
 | Phase and concat | `phase_and_concat_nonbulk` | `allele_dir/{assay_type}/` |
-| CNV segmentation | `cnv_segmentation` | `bb_dir/{assay_type}/` |
+| Aggregate onto fixed bins | `combine_counts_fixed_bins` | `bb_dir/{assay_type}/` |
 
-No binning rule runs here: `cnv_segmentation` aggregates `allele_dir` onto the given blocks, so the output is flat — there is no `MSR{msr}/` layer.
+No binning rule runs here: `combine_counts_fixed_bins` aggregates `allele_dir` onto the given `bb_file` blocks, so the output is flat — there is no `MSR{msr}/` layer.

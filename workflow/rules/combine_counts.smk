@@ -1,7 +1,7 @@
 ##################################################
 # SNP-informed adaptive binning + window→bin depth aggregation
 # Bulk: combine_counts (with corrected window depth)
-# Non-bulk: combine_counts_nonbulk + cnv_segmentation
+# Non-bulk: combine_counts_nonbulk (derived bins) + combine_counts_fixed_bins (given bins)
 ##################################################
 
 if workflow_mode == "bulk_genotyping":
@@ -223,7 +223,7 @@ elif workflow_mode == "single_cell_genotyping":
 
 elif workflow_mode == "copytyping_preprocess":
 
-    rule cnv_segmentation:
+    rule combine_counts_fixed_bins:
         input:
             snp_info=lambda wc: config["allele_dir"] + f"/{wc.assay_type}/snps.tsv.gz",
             tot_mtx_snp=lambda wc: config["allele_dir"]
@@ -262,13 +262,14 @@ elif workflow_mode == "copytyping_preprocess":
             barcodes_full_out=config["bb_dir"] + "/{assay_type}/barcodes.full.tsv.gz",
             sample_file=config["bb_dir"] + "/{assay_type}/sample_ids.tsv",
             qc_pdf=report(
-                config["qc_dir"] + "/cnv_segmentation.{assay_type}.pdf",
+                config["qc_dir"] + "/combine_counts_fixed_bins.{assay_type}.pdf",
                 category="QC plots",
-                subcategory="CNV segmentation",
+                subcategory="fixed-bin aggregation",
                 labels={"assay": "{assay_type}"},
             ),
         log:
-            config["log_dir"] + f"/cnv_segmentation.{{assay_type}}.{_run_id}.log",
+            config["log_dir"]
+            + f"/combine_counts_fixed_bins.{{assay_type}}.{_run_id}.log",
         wildcard_constraints:
             assay_type="(scRNA|scATAC|VISIUM|VISIUM3prime)",
         conda:
@@ -281,4 +282,4 @@ elif workflow_mode == "copytyping_preprocess":
             feature_type=lambda wc: ASSAY_TYPE2FEATURE_TYPE[wc.assay_type],
             run_id=_run_id,
         script:
-            """../scripts/cnv_segmentation.py"""
+            """../scripts/combine_counts_fixed_bins.py"""

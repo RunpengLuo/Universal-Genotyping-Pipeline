@@ -266,4 +266,4 @@ One multi-page PDF per rule, flat:
 | `phase_and_concat.{stream_or_assay}.pdf` | SNP allele frequency (unphased REF/TOTAL, then phased BAF) and SNP depth histogram. |
 | `rd_correction.{assay_type}.pdf` | Read-depth bias correction (bulk): RD before/after, GC/MAP/RT diagnostics. |
 | `combine_counts.{stream_or_assay}.MSR{msr}.pdf` | Binning QC, one PDF per `min_snp_reads` value. |
-| `cnv_segmentation.{assay_type}.pdf` | SNP- and BB-level BAF (`copytyping_preprocess`). |
+| `combine_counts_fixed_bins.{assay_type}.pdf` | SNP- and BB-level BAF (`copytyping_preprocess`). |
