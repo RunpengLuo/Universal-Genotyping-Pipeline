@@ -53,7 +53,7 @@ reference_version: hg38
 reference: /path/to/reference.fasta
 genome_size: resources/data/hg38.regions.bed
 region_bed: resources/data/hg38.regions.bed
-window_bed: resources/data/windows.1kbp.hg38.bed.gz
+mappability_bed: resources/data/hg38.mappability.bed.gz
 blacklist_bed: resources/data/hg38-blacklist.v2.bed.gz
 gtf_file: /path/to/gencode.v38.annotation.gtf.gz
 
@@ -65,7 +65,8 @@ params_combine_counts:
 
 | Key | Resource |
 |-----|----------|
-| `window_bed` | `windows.1kbp.hg38.bed.gz` — 1 kb windows with GC / mappability / replication timing (in `resources/data/`) |
+| (window BEDs) | built automatically per stream (`aux/wgs_windows.bed.gz`); each window carries `GC`, plus optional `MAP` and `REPLI` columns |
+| `mappability_bed` | optional; a mappability track (4th column = score) that adds the `MAP` column |
 | `blacklist_bed` | `hg38-blacklist.v2.bed.gz` — ENCODE blacklist v2 (in `resources/data/`) |
 | `region_bed`, `genome_size` | `hg38.regions.bed` — chromosome regions, minus centromeres and acrocentric p-arms (13/14/15/21/22) (in `resources/data/`) |
 | `gtf_file` | GENCODE v38 ([download](https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_38/gencode.v38.annotation.gtf.gz)) |
@@ -112,6 +113,6 @@ snakemake --profile /path/to/profile/ \
 
 ## 4. Results
 
-`<out_dir>/<bb_dir>/MSR{msr}/{stream}/` (here `stream` = `bulkWGS`): `bb.tsv.gz`, `bb.{Tallele,Aallele,Ballele,depth,rdr}.npz`, `sample_ids.tsv`. Columns: [reference.md](../reference.md#outputs).
+`<out_dir>/<bb_dir>/MSR{msr}/bulk/`: `bb.tsv.gz`, `bb.{Tallele,Aallele,Ballele,depth,rdr}.npz`, `sample_ids.tsv`. Columns: [reference.md](../reference.md#outputs).
 
-QC: `<qc_dir>/rd_correction.bulkWGS.pdf` (bias correction), `combine_counts.bulkWGS.MSR{msr}.pdf` (one per `min_snp_reads`; compare BAF/RDR plots to pick a bin size).
+QC: `<qc_dir>/rd_correction.bulkWGS.pdf` (bias correction), `combine_counts.bulk.MSR{msr}.pdf` (one per `min_snp_reads`; compare BAF/RDR plots to pick a bin size).

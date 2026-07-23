@@ -20,9 +20,9 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 | `reference_version` | Yes | `hg19` \| `hg38` \| `chm13v2` \| `mm10`. Another value runs, with a warning. |
 | `reference` | Yes | Genome FASTA. |
 | `genome_size` | Yes | Two-column `chrom\tsize` file. |
-| `region_bed` | Yes | Whitelist regions. |
+| `region_bed` | Yes | Whitelist regions, arm-level (4th column = chromosome-arm `region_id`). Stays arm-level; for bulk `build_segment_bed` derives `aux/segment.bed` (region_id + seg_id) from it, and the bulk rules read that. |
 | `gtf_file` | Yes | Gene annotation GTF (gzipped). |
-| `window_bed` | Bulk | Window BED with GC/MAP/REPLI columns; build via `resources/scripts/build_{wgs,wes}_window_bed.py`. |
+| `mappability_bed` | Optional | BED mappability track (4th column = score); adds a `MAP` column to the built window BEDs. |
 | `blacklist_bed` | Optional | ENCODE-style blacklist; pre-built at `resources/data/hg38-blacklist.v2.bed.gz`. |
 | `gene_blacklist_file` | Optional | Genes to exclude from AnnData (single-cell). |
 | `snp_panel` | Genotyping | Population SNP VCF. |
@@ -99,6 +99,17 @@ Used by `phase_and_concat_{bulk,nonbulk}`.
 | `gamma` | `0.05` | Credible-interval level of the balanced-het test on the normal; a SNP is kept when its beta posterior interval covers 0.5 (bulk). |
 | `exon_only` | `false` | Keep exonic SNPs only. |
 
+#### `params_build_windows`
+Used by the window-BED build (`build_windows.smk`, bulk). `build_segment_bed` first
+subtracts the blacklist and splits each arm at the union of all `files.breakpoint_bedpe`
+into `aux/segment.bed` (region_id + seg_id), so no bin spans a breakpoint. Per-stream
+window BEDs are then tiled off it: `aux/wgs_windows.bed.gz`, `aux/wes_windows.bed.gz`.
+
+| Field | Default | Description |
+|---|---|---|
+| `window_size_wgs` | `1000` | WGS window size (bp); fixed tiling of the segment BED. |
+| `window_size_wes` | `267` | WES window size (bp); adaptive tiling of `wes_targets_bed` within the segment BED. |
+
 #### `params_mosdepth`
 Used by `run_mosdepth` (bulk).
 
@@ -114,7 +125,7 @@ Used by `rd_correct` (bulk); HMMcopy-style bias correction.
 |---|---|---|
 | `gc_correct` | `true` | Correct GC bias. |
 | `gc_correct_method` | `median` | `lowess` \| `median`. |
-| `rt_correct` | `true` | Also correct replication-timing bias (needs a `REPLI` column in `window_bed`). |
+| `rt_correct` | `true` | Also correct replication-timing bias (needs a `REPLI` column in the window BED). |
 | `samplesize` | `50000` | Max ideal windows used to fit the correction curve. |
 | `routlier` | `0.01` | Upper quantile of read count dropped as outlier. |
 | `doutlier` | `0.001` | Top/bottom quantile of the GC/mappability domain dropped as outlier. |
@@ -125,8 +136,9 @@ Used by `combine_counts` (bulk) and `combine_counts_nonbulk` (single-cell).
 
 | Field | Default | Description |
 |---|---|---|
-| `min_snp_reads` | `[500, 1000]` | SNP-read target per bin. A list sweeps binning: one job preprocesses once and writes one `MSR{msr}/` subdir per value. |
-| `min_snp_per_block` | `2` | Minimum SNPs per bin. |
+| `min_snp_reads` | `[500, 1000]` | SNP-read target per bin (WGS tumor columns). A list sweeps binning: one job preprocesses once and writes one `MSR{msr}/` subdir per value. |
+| `min_snp_reads_wes` | `100` | SNP-read target per bin for WES tumor columns, applied per-column alongside `min_snp_reads` (AND) when WGS and WES are mixed. A single scalar left at its default; not swept. |
+| `min_snp_per_bin` | `2` | Minimum SNPs per bin. |
 | `gene_aware_binning` | `true` | `true` = a bin grows by whole genes (GTF `feature_id`) and never splits one; `false` = window/SNP-granular binning. |
 | `nu` | `1` | Scale of the Haldane map `(1 - exp(-2*nu*d)) / 2` turning cM distance into a switch probability. |
 | `min_switchprob` | `1e-6` | Floor on that switch probability. |
@@ -138,6 +150,14 @@ Used by `combine_counts` (bulk) and `combine_counts_nonbulk` (single-cell).
 | `phase_flip_test` | `true` | Test each phase-set block for a haplotype flip and split it (bulk). |
 | `phase_flip_epsilon` | `0.05` | Effect size of that test (bulk). |
 | `phase_flip_alpha` | `0.05` | Significance level of that test (bulk). |
+
+> [!NOTE]
+> Bulk read target, per assay composition: the target is applied per tumor column and a
+> bin closes only when every column meets its own target.
+> - **WGS-only**: `min_snp_reads` applies to every column (swept); `min_snp_reads_wes` is unused.
+> - **WES-only**: only `min_snp_reads_wes` applies; `min_snp_reads` has no effect, so every
+>   `MSR{msr}/` subdir is identical. Set `min_snp_reads_wes` to tune the WES bin resolution.
+> - **Mixed WGS + WES**: WGS columns use `min_snp_reads`, WES columns use `min_snp_reads_wes`.
 
 #### `threads`
 Used by all multi-thread rules.
@@ -153,9 +173,21 @@ Used by all multi-thread rules.
 
 ## Outputs
 
-Directories (`snp_dir`, `phase_dir`, `pileup_dir`, `allele_dir`, `bb_dir`, `qc_dir`, `log_dir`) are set in `config.yaml`, relative to `snakemake --directory`. Which rule writes what, per mode: [workflow.md](workflow.md).
+Directories (`snp_dir`, `phase_dir`, `pileup_dir`, `allele_dir`, `bb_dir`, `qc_dir`, `log_dir`, `aux_dir`) are set in `config.yaml`, relative to `snakemake --directory`. Which rule writes what, per mode: [workflow.md](workflow.md).
 
 `.npz` are matrices: rows = SNPs or bins, columns = samples or cells; dense for bulk, scipy sparse CSR for single-cell. BAF is never stored — derive it from `Ballele` / `Tallele`.
+
+### Genomic grid levels
+
+Bulk binning nests five levels, coarse to fine. The SNP is the separate allele axis assigned into windows/bins.
+
+| Level | id | Description |
+|---|---|---|
+| Region (chromosome arm) | `region_id` | From `region_bed`'s 4th column, e.g. `chr1:0-121700000`. Carried for RDR/QC; a bin belongs to one arm. |
+| Segment (breakpoint chunk) | `seg_id` | `build_segment_bed` splits each arm at the union of `breakpoint_bedpe` cuts, `{region_id}#{k}`. The hard bin boundary: binning groups by `seg_id` and never merges across it (== one-per-arm with no breakpoints). |
+| Window | window-BED row | Per-stream fixed tile (`window_size_wgs` = 1 kb WGS / `window_size_wes` = 267 bp WES) that `run_mosdepth` counts and `rd_correct` bias-corrects. Intermediate; carries `#CHR/START/END/region_id/seg_id` + `GC/MAP/REPLI`. Not an output unit. |
+| Bin | `bb_id` | Final unit: `adaptive_segmentation` merges consecutive WGS windows within one `seg_id` until every tumor column meets its per-column read target (`min_snp_reads` WGS / `min_snp_reads_wes` WES) and `min_snp_per_bin`; `max_blocksize` caps only once the read target is met. WES depth is projected onto these bins by midpoint. Rows of `bb.tsv.gz` and every `bb.*.npz`. |
+| SNP | row of `snps.tsv.gz` | Phased het SNP; the allele axis. Assigned to its containing window/bin; `bb.{T,A,B}allele` aggregate a bin's SNP counts. |
 
 ### Final bins
 
@@ -163,7 +195,7 @@ Input for HATCHet3 / CalicoST. `min_snp_reads` may be a list: one job preprocess
 
 | Mode | Location |
 |---|---|
-| `bulk_genotyping` | `bb_dir/MSR{msr}/{stream}/` (`stream` = `bulkWES` if the run has any `bulkWES` record, else `bulkWGS`) |
+| `bulk_genotyping` | `bb_dir/MSR{msr}/bulk/` (one joint grid over all bulk assays, WGS and WES mixed) |
 | `single_cell_genotyping` | `bb_dir/MSR{msr}/{assay_type}/` |
 | `copytyping_preprocess` | `bb_dir/{assay_type}/` (not MSR-driven) |
 
@@ -201,15 +233,16 @@ Input for HATCHet3 / CalicoST. `min_snp_reads` may be a list: one job preprocess
 |---|---|
 | `snp_dir/` | `chr{chrname}.vcf.gz` (bi-allelic SNPs); `pseudobulk_{modality}/cellSNP.*` and `pseudobulk_snp_statistics.tsv` (single-cell). |
 | `phase_dir/` | `chr{chrname}.vcf.gz` (phased); `phased_het_snps.vcf.gz(.tbi)`; `germline_snp_statistics.tsv`; `genetic_map.tsv.gz` (eagle/shapeit). |
-| `pileup_dir/` | One cellsnp-lite dir per `{assay_type}_{dataset_id}`; bulk also `{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz`, `window.dp.npz`, `window.tsv.gz`, `depth_statistics.tsv`. |
-| `allele_dir/` | Per `{stream}` (bulk) or `{assay_type}` (single-cell): `snps.tsv.gz`, `snp.{T,A,B}allele.npz`, `sample_ids.tsv`, and for single-cell `barcodes{,.full}.tsv.gz`, `unique_snp_ids.npy`. |
+| `pileup_dir/` | One cellsnp-lite dir per `{assay_type}_{dataset_id}`; bulk also `{assay_type}/windows.bed.gz` (per-assay mosdepth grid), `{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz`, `window.dp.npz`, `window.tsv.gz`, `depth_statistics.tsv`. |
+| `allele_dir/` | `bulk/` (one joint set over all bulk assays) or per `{assay_type}` (single-cell): `snps.tsv.gz`, `snp.{T,A,B}allele.npz`, `sample_ids.tsv`, and for single-cell `barcodes{,.full}.tsv.gz`, `unique_snp_ids.npy`. |
 | `bb_dir/{assay_type}.h5ad` | Gene x cell AnnData (single-cell RNA / spatial); MSR-independent, so it sits flat. |
+| `aux_dir/` | Bulk window build: `segment.bed` (region_id arm + seg_id chunk, built from `region_bed`), `{wgs,wes}_windows.bed.gz` (per-stream window BEDs), and `wes_targets.bed`, `repliseq_bigwigs/` as applicable. |
 
 ### TSV columns
 
 | File | Columns |
 |---|---|
-| `snps.tsv.gz` | `#CHR`, `POS`, `POS0`, `START`, `END`, `GT`, `PHASE` (0 = B-allele is ALT, 1 = B-allele is REF), `region_id`, `feature_id` (`;`-joined overlapping GTF genes, `intergenic` if none), `feature_type` (exon/intron/intergenic). Bulk adds `PS` (phase set) when longphase emits it. |
+| `snps.tsv.gz` | `#CHR`, `POS`, `POS0`, `START`, `END`, `GT`, `PHASE` (0 = B-allele is ALT, 1 = B-allele is REF), `region_id`, `seg_id` (breakpoint chunk, when the segment BED carries it), `feature_id` (`;`-joined overlapping GTF genes, `intergenic` if none), `feature_type` (exon/intron/intergenic). Bulk adds `PS` (phase set) when longphase emits it. |
 | `bb.tsv.gz` | `#CHR`, `START`, `END`, `#SNPS`, `region_id`, `switchprobs`, `feature_id` (deduped union of the bin's SNP genes). `cnv_segments.tsv` carries the same `feature_id`. |
 | `multi_snp.tsv.gz` | `#CHR`, `START`, `END`, `START0`, `END0`, `region_id`, `feature_id`, `feature_type`, `#SNPS`, `BLOCKSIZE`, `multi_id`, `switchprobs`. |
 | `sample_ids.tsv` | `SAMPLE` (`{patient_id}_{dataset_id}`), `SAMPLE_NAME` (patient ID), `REP_ID`, `sample_type`. Under `bb_dir/` it also carries `assay_type`; row order always matches the matrix columns. |

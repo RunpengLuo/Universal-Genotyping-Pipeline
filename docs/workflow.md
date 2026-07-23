@@ -4,7 +4,7 @@ Three modes, set by `workflow_mode`. Each runs a subset of the stages below and 
 
 Config keys and every output file: [reference.md](reference.md). Sample-file schema: [sample_sheet.md](sample_sheet.md).
 
-`{chrname}`, `{assay_type}`, `{dataset_id}` and `{modality}` are wildcards — one job each. `{stream}` and `{msr}` are not: `{stream}` is `bulkWES` if the run has any `bulkWES` record, else `bulkWGS`, and one binning job writes every `MSR{msr}/` subdirectory of the sweep.
+`{chrname}`, `{assay_type}`, `{dataset_id}` and `{modality}` are wildcards — one job each. `{msr}` is not: one binning job writes every `MSR{msr}/` subdirectory of the sweep. Bulk allele/bb outputs are one joint set under `bulk/` (WGS and WES mixed).
 
 In **any** mode, setting `het_snp_vcf` skips genotyping, and phasing too unless `het_snp_vcf_phased: false`.
 
@@ -12,7 +12,7 @@ In **any** mode, setting `het_snp_vcf` skips genotyping, and phasing too unless 
 
 ## `bulk_genotyping`
 
-Assays: `bulkWGS`, `bulkWGS-lr`, `bulkWES`. Needs bulk records (normal + tumor) and a `window_bed`.
+Assays: `bulkWGS`, `bulkWGS-lr`, `bulkWES` (WGS and WES may be mixed). Needs bulk records (normal + tumor); per-stream window BEDs are built automatically off `build_segment_bed`.
 
 | Step | Rule | Output |
 |------|------|--------|
@@ -21,10 +21,10 @@ Assays: `bulkWGS`, `bulkWGS-lr`, `bulkWES`. Needs bulk records (normal + tumor) 
 | Concat phased VCFs | `concat_and_extract_phased_het_snps` | `phase_dir/phased_het_snps.vcf.gz` |
 | Parse genetic map | `parse_genetic_map` | `phase_dir/genetic_map.tsv.gz` |
 | Pileup at het SNPs | `pileup_snps_bulk_mode1b` | `pileup_dir/{assay_type}_{dataset_id}/` |
-| Phase and concat (joint, all bulk assays) | `phase_and_concat_bulk` | `allele_dir/{stream}/` |
+| Phase and concat (joint, all bulk assays) | `phase_and_concat_bulk` | `allele_dir/bulk/` |
 | Compute read depth | `run_mosdepth` | `pileup_dir/{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz` |
 | Bias correction | `rd_correct` | `pileup_dir/{assay_type}/window.{dp.npz,tsv.gz}` |
-| Adaptive binning + RDR | `combine_counts` | `bb_dir/MSR{msr}/{stream}/` |
+| Adaptive binning + RDR | `combine_counts` | `bb_dir/MSR{msr}/bulk/` |
 
 Every bulk replicate is piled up against one shared phased het-SNP VCF, so `phase_and_concat_bulk` runs **once** and builds a single joint allele matrix — one pseudobulk column per replicate, all bulk assays segmented together. Depth and bias correction stay per-assay. RDR divides each tumor by `params_combine_counts.rdr_normalization` (`auto` \| `median` \| `normal`).
 

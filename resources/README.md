@@ -86,25 +86,21 @@ Build 10x Cell Ranger ARC reference with [`scripts/build_cellranger_arc_ref_chm1
 
 ## Window BED (Bias Correction)
 
-Set via `window_bed` in config. A pre-built file is at `data/windows.1kbp.hg38.bed.gz` with columns for GC content, mappability, and replication timing per 1 kb window.
-
-To build from scratch:
-- **WGS:** [`scripts/build_wgs_window_bed.py`](scripts/build_wgs_window_bed.py) — fixed-size tiling with region/blacklist filtering.
-- **WES:** [`scripts/build_wes_window_bed.py`](scripts/build_wes_window_bed.py) — adaptive tiling of WES capture targets via `--wes_targets_bed`.
+Built in-workflow per stream by `workflow/rules/build_windows.smk` (bulk only); there is no `window_bed` config key. `build_segment_bed` first derives `aux/segment.bed` (region_id arm + seg_id chunk) from `region_bed`, splitting each arm at the union of `files.breakpoint_bedpe` cuts. Then per stream: WGS tiles fixed-size windows within the segment BED (`aux/wgs_windows.bed.gz`); WES adaptively tiles the `files.wes_targets_bed` capture targets within it (`aux/wes_windows.bed.gz`). Each window gets a `GC` column, plus optional `MAP` (from `mappability_bed`) and `REPLI` (Repli-seq) columns.
 
 ### Mappability track
 
-Optional, used by `build_wgs_window_bed.py --mappability_bed` to add the `MAP` column.
+Optional; set `mappability_bed` in config to add the `MAP` column.
 
 - [k100.Umap.MultiTrackMappability.bw](http://hgdownload.soe.ucsc.edu/gbdb/hg38/hoffmanMappability/k100.Umap.MultiTrackMappability.bw) — bigWig format, convert to BED with `bigWigToBedGraph` (UCSC tools).
 
 ### Replication timing (Repli-seq)
 
-Optional, used by `build_wgs_window_bed.py --repliseq` to add the `REPLI` column. The script automatically downloads 16 ENCODE Repli-seq WaveSignal bigWig files from [UCSC](http://hgdownload.cse.ucsc.edu/goldenpath/hg19/encodeDCC/wgEncodeUwRepliSeq/) (hg19), converts via `bigWigToBedGraph`, and lifts to hg38 using [hg19ToHg38.over.chain.gz](https://hgdownload.cse.ucsc.edu/goldenpath/hg19/liftOver/hg19ToHg38.over.chain.gz). Requires `bigWigToBedGraph` and `liftOver` (UCSC tools).
+Added automatically for `hg19`/`hg38` (auto-detected from `reference_version`) as the `REPLI` column. The build downloads 16 ENCODE Repli-seq WaveSignal bigWig files from [UCSC](http://hgdownload.cse.ucsc.edu/goldenpath/hg19/encodeDCC/wgEncodeUwRepliSeq/) (hg19), converts via `bigWigToBedGraph`, and lifts to hg38 using [hg19ToHg38.over.chain.gz](https://hgdownload.cse.ucsc.edu/goldenpath/hg19/liftOver/hg19ToHg38.over.chain.gz). Requires `bigWigToBedGraph` and `liftOver` (UCSC tools).
 
 ### WES exon capture targets
 
-For WES mode, `build_wes_window_bed.py --wes_targets_bed` requires a vendor exon capture BED. Example (IDT xGen):
+WES mode needs a vendor exon capture BED as `files.wes_targets_bed` on a bulkWES record. Example (IDT xGen):
 
 - [xgen-exome-research-panel-targets-hg38.bb](https://hgdownload.soe.ucsc.edu/gbdb/hg38/exomeProbesets/xgen-exome-research-panel-targets-hg38.bb) — bigBed format, convert to BED with `bigBedToBed` (UCSC tools).
 

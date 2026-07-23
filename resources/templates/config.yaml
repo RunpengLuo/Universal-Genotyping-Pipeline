@@ -32,7 +32,7 @@ reference_version: "hg38"
 reference: /path/to/reference.fa
 genome_size: /path/to/genome.sizes
 region_bed: /path/to/regions.bed
-window_bed: /path/to/windows.bed.gz
+mappability_bed: null
 blacklist_bed: null
 gene_blacklist_file: null
 gtf_file: /path/to/genes.gtf.gz
