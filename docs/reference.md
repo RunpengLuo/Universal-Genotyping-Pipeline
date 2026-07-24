@@ -236,7 +236,7 @@ Input for HATCHet3 / CalicoST. `min_snp_reads` may be a list: one job preprocess
 | `pileup_dir/` | One cellsnp-lite dir per `{assay_type}_{dataset_id}`; bulk also `{assay_type}/windows.bed.gz` (per-assay mosdepth grid), `{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz`, `window.dp.npz`, `window.tsv.gz`, `depth_statistics.tsv`. |
 | `allele_dir/` | `bulk/` (one joint set over all bulk assays) or per `{assay_type}` (single-cell): `snps.tsv.gz`, `snp.{T,A,B}allele.npz`, `sample_ids.tsv`, and for single-cell `barcodes{,.full}.tsv.gz`, `unique_snp_ids.npy`. |
 | `bb_dir/{assay_type}.h5ad` | Gene x cell AnnData (single-cell RNA / spatial); MSR-independent, so it sits flat. |
-| `aux_dir/` | Bulk window build: `segment.bed` (region_id arm + seg_id chunk, built from `region_bed`), `{wgs,wes}_windows.bed.gz` (per-stream window BEDs), and `wes_targets.bed`, `repliseq_bigwigs/` as applicable. |
+| `aux_dir/` | Bulk window build: `segment.bed` (region_id arm + seg_id chunk, built from `region_bed`), `{wgs,wes}_windows.bed.gz` (per-stream window BEDs), and `repliseq/{name}.hg38.bedGraph` (lifted Repli-seq tracks, cached across window rebuilds) when `do_repliseq`. |
 
 ### TSV columns
 
