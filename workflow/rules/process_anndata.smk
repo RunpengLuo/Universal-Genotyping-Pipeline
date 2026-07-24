@@ -36,7 +36,9 @@ rule process_rna_anndata:
     output:
         h5ad_file=config["bb_dir"] + "/{assay_type}.h5ad",
     log:
-        config["log_dir"] + f"/process_rna_anndata.{{assay_type}}.{_run_id}.log",
+        config["log_dir"] + f"/process_rna_anndata/{{assay_type}}.{_run_id}.log",
+    benchmark:
+        config["bench_dir"] + f"/process_rna_anndata/{{assay_type}}.{_run_id}.tsv"
     wildcard_constraints:
         assay_type="(scRNA|VISIUM|VISIUM3prime)",
     conda:

@@ -49,7 +49,9 @@ if workflow_mode == "bulk_genotyping":
         output:
             segment_bed=segment_bed,
         log:
-            config["log_dir"] + f"/build_segment_bed.{_run_id}.log",
+            config["log_dir"] + f"/build_segment_bed/{_run_id}.log",
+        benchmark:
+            config["bench_dir"] + f"/build_segment_bed/{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         script:
@@ -76,7 +78,10 @@ if workflow_mode == "bulk_genotyping":
                 ),
             log:
                 config["log_dir"]
-                + f"/repliseq_bigwig_to_bedgraph.{{name}}.{_run_id}.log",
+                + f"/repliseq_bigwig_to_bedgraph/{{name}}.{_run_id}.log",
+            benchmark:
+                config["bench_dir"]
+                + f"/repliseq_bigwig_to_bedgraph/{{name}}.{_run_id}.tsv"
             wildcard_constraints:
                 name="[A-Za-z0-9]+",
             conda:
@@ -97,7 +102,9 @@ if workflow_mode == "bulk_genotyping":
                     bedgraph=_repli_cache + "/{name}.hg38.bedGraph",
                     unmapped=temp(_repli_cache + "/{name}.unmapped"),
                 log:
-                    config["log_dir"] + f"/repliseq_liftover.{{name}}.{_run_id}.log",
+                    config["log_dir"] + f"/repliseq_liftover/{{name}}.{_run_id}.log",
+                benchmark:
+                    config["bench_dir"] + f"/repliseq_liftover/{{name}}.{_run_id}.tsv"
                 wildcard_constraints:
                     name="[A-Za-z0-9]+",
                 conda:
@@ -140,7 +147,9 @@ if workflow_mode == "bulk_genotyping":
                 labels={"stream": "{stream}"},
             ),
         log:
-            config["log_dir"] + f"/build_window_bed.{{stream}}.{_run_id}.log",
+            config["log_dir"] + f"/build_window_bed/{{stream}}.{_run_id}.log",
+        benchmark:
+            config["bench_dir"] + f"/build_window_bed/{{stream}}.{_run_id}.tsv"
         wildcard_constraints:
             stream="(wgs|wes)",
         conda:
@@ -148,6 +157,7 @@ if workflow_mode == "bulk_genotyping":
         params:
             mode=lambda wc: wc.stream,
             reference_version=config["reference_version"],
+            chromosomes=config["chromosomes"],
             window_size=lambda wc: (
                 window_size_wes if wc.stream == "wes" else window_size_wgs
             ),
@@ -162,7 +172,9 @@ rule window_bed_to_3bed:
     output:
         mosdepth_bed=temp(config["pileup_dir"] + "/{assay_type}/windows.bed.gz"),
     log:
-        config["log_dir"] + f"/window_bed_to_3bed.{{assay_type}}.{_run_id}.log",
+        config["log_dir"] + f"/window_bed_to_3bed/{{assay_type}}.{_run_id}.log",
+    benchmark:
+        config["bench_dir"] + f"/window_bed_to_3bed/{{assay_type}}.{_run_id}.tsv"
     wildcard_constraints:
         assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
     shell:

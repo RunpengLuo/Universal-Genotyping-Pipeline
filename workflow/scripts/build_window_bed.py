@@ -111,6 +111,8 @@ def generate_wes_windows(wes_targets_beds, window_size, standard_chroms):
 
 
 standard = get_standard_chroms(p["reference_version"], inp["genome_size"])
+wanted = {str(c) for c in p["chromosomes"]}
+standard = {s for s in standard if (s[3:] if s.startswith("chr") else s) in wanted}
 region_bed = inp["region_bed"]
 genome_size = inp["genome_size"]
 logging.info(

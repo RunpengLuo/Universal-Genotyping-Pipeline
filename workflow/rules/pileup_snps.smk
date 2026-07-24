@@ -14,6 +14,9 @@ rule pileup_snps_bulk_mode1b:
     log:
         config["log_dir"]
         + f"/pileup_snps_bulk_mode1b/pileup_snps.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
+    benchmark:
+        config["bench_dir"]
+        + f"/pileup_snps_bulk_mode1b/pileup_snps.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
     wildcard_constraints:
         assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
     conda:
@@ -58,6 +61,9 @@ rule pileup_snps_nonbulk_mode1a:
     log:
         config["log_dir"]
         + f"/pileup_snps_nonbulk_mode1a/pileup_snps.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
+    benchmark:
+        config["bench_dir"]
+        + f"/pileup_snps_nonbulk_mode1a/pileup_snps.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
     wildcard_constraints:
         assay_type="(scRNA|scATAC|VISIUM|VISIUM3prime)",
     conda:

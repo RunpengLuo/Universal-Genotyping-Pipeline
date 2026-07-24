@@ -65,7 +65,9 @@ if workflow_mode == "bulk_genotyping":
                 subcategory="bulk binning",
             ),
         log:
-            config["log_dir"] + f"/combine_counts.bulk.{_run_id}.log",
+            config["log_dir"] + f"/combine_counts/bulk.{_run_id}.log",
+        benchmark:
+            config["bench_dir"] + f"/combine_counts/bulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1
@@ -201,7 +203,9 @@ elif workflow_mode == "single_cell_genotyping":
                 subcategory="single-cell binning",
             ),
         log:
-            config["log_dir"] + f"/combine_counts_nonbulk.{_run_id}.log",
+            config["log_dir"] + f"/combine_counts_nonbulk/{_run_id}.log",
+        benchmark:
+            config["bench_dir"] + f"/combine_counts_nonbulk/{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1
@@ -269,7 +273,10 @@ elif workflow_mode == "copytyping_preprocess":
             ),
         log:
             config["log_dir"]
-            + f"/combine_counts_fixed_bins.{{assay_type}}.{_run_id}.log",
+            + f"/combine_counts_fixed_bins/{{assay_type}}.{_run_id}.log",
+        benchmark:
+            config["bench_dir"]
+            + f"/combine_counts_fixed_bins/{{assay_type}}.{_run_id}.tsv"
         wildcard_constraints:
             assay_type="(scRNA|scATAC|VISIUM|VISIUM3prime)",
         conda:

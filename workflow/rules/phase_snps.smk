@@ -12,6 +12,9 @@ if run_phasing and config["phaser"] == "shapeit":
         log:
             config["log_dir"]
             + f"/phase_snps_shapeit/phase_snps.chr{{chrname}}.{_run_id}.log",
+        benchmark:
+            config["bench_dir"]
+            + f"/phase_snps_shapeit/phase_snps.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/tools.yaml"
         threads: config["threads"]["phase"]
@@ -44,6 +47,9 @@ if run_phasing and config["phaser"] == "eagle":
         log:
             config["log_dir"]
             + f"/phase_snps_eagle/phase_snps.chr{{chrname}}.{_run_id}.log",
+        benchmark:
+            config["bench_dir"]
+            + f"/phase_snps_eagle/phase_snps.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/tools.yaml"
         threads: config["threads"]["phase"]
@@ -76,6 +82,9 @@ if run_phasing and config["phaser"] == "longphase":
         log:
             config["log_dir"]
             + f"/phase_snps_longphase/phase_snps.chr{{chrname}}.{_run_id}.log",
+        benchmark:
+            config["bench_dir"]
+            + f"/phase_snps_longphase/phase_snps.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/tools.yaml"
         threads: config["threads"]["phase"]
@@ -120,7 +129,9 @@ if run_phasing:
             ),
             lst_file=temp(config["phase_dir"] + "/phased_snps.lst"),
         log:
-            config["log_dir"] + f"/concat_and_extract_phased_het_snps.{_run_id}.log",
+            config["log_dir"] + f"/concat_and_extract_phased_het_snps/{_run_id}.log",
+        benchmark:
+            config["bench_dir"] + f"/concat_and_extract_phased_het_snps/{_run_id}.tsv"
         conda:
             "../envs/tools.yaml"
         threads: 1
@@ -149,7 +160,9 @@ if run_phasing:
         output:
             gmap_tsv=config["phase_dir"] + "/genetic_map.tsv.gz",
         log:
-            config["log_dir"] + f"/parse_genetic_map.{_run_id}.log",
+            config["log_dir"] + f"/parse_genetic_map/{_run_id}.log",
+        benchmark:
+            config["bench_dir"] + f"/parse_genetic_map/{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1

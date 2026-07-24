@@ -13,6 +13,7 @@ bb_dir: "bb"
 qc_dir: "qc"
 log_dir: "logs"
 aux_dir: "aux"
+bench_dir: "benchmarks"
 
 workflow_mode: "bulk_genotyping"
 assay_types: ["bulkWGS"]
