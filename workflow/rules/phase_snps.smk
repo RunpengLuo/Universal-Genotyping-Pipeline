@@ -13,13 +13,13 @@ if run_phasing and config["phaser"] == "shapeit":
             config["log_dir"]
             + f"/phase_snps_shapeit/phase_snps.chr{{chrname}}.{_run_id}.log",
         conda:
-            "../envs/phase.yaml"
+            "../envs/tools.yaml"
         threads: config["threads"]["phase"]
         params:
             chrom="chr{chrname}",
         shell:
             r"""
-            phase_common_static \
+            phase_common \
                 --input "{input.snp_vcf}" \
                 --map "{input.gmap_file}" \
                 --reference "{input.phasing_panel_file}" \
@@ -45,7 +45,7 @@ if run_phasing and config["phaser"] == "eagle":
             config["log_dir"]
             + f"/phase_snps_eagle/phase_snps.chr{{chrname}}.{_run_id}.log",
         conda:
-            "../envs/phase.yaml"
+            "../envs/tools.yaml"
         threads: config["threads"]["phase"]
         params:
             chrom="chr{chrname}",
@@ -77,7 +77,7 @@ if run_phasing and config["phaser"] == "longphase":
             config["log_dir"]
             + f"/phase_snps_longphase/phase_snps.chr{{chrname}}.{_run_id}.log",
         conda:
-            "../envs/phase.yaml"
+            "../envs/tools.yaml"
         threads: config["threads"]["phase"]
         resources:
             downloads=download_slots(phase_files),

@@ -1,7 +1,0 @@
-name: genotyping-repliseq
-channels:
-  - conda-forge
-  - bioconda
-dependencies:
-  - ucsc-bigwigtobedgraph
-  - ucsc-liftover

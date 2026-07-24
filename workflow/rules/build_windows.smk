@@ -9,13 +9,13 @@
 #
 #   . repliseq_bigwig_to_bedgraph      [do_repliseq only, per bigWig {name}]
 #       in : bigWig URL (storage)              out: {name}.hg19.bedGraph
-#   . repliseq_liftover                [do_repliseq only, per bigWig {name}]
+#   . repliseq_liftover                [do_repliseq + hg38 target only, per {name}]
 #       in : {name}.hg19.bedGraph + chain URL (storage)
-#       out: {name}.hg38.bedGraph (cached under aux)
+#       out: {name}.hg38.bedGraph (cached under aux); hg19 runs skip this
 #
 #   . build_window_bed                 [per stream = wgs / wes]
 #       in : segment_bed + reference + genome_size, and the optional
-#            wes_targets (wes), mappability_bed, hg38 bedgraphs
+#            wes_targets (wes), mappability_bed, {reference_version} bedgraphs
 #       out: {stream}_windows.bed.gz  (#CHR START END region_id seg_id GC [MAP] [REPLI])
 #            + qc_pdf (segment- and window-length histograms)
 #
@@ -60,44 +60,53 @@ if workflow_mode == "bulk_genotyping":
     if do_repliseq:
         _repli_cache = config["aux_dir"] + "/repliseq"
         _repli_names = [f[: -len(".bigWig")] for f in REPLISEQ_BIGWIG_FILES]
+        # Repli-seq bigWigs are hg19; lift to hg38 only when the run is hg38.
+        _repli_target = config["reference_version"]
+        _repli_lift = _repli_target != "hg19"
 
         rule repliseq_bigwig_to_bedgraph:
             """Fetch an ENCODE Repli-seq bigWig (hg19) and convert to bedGraph."""
             input:
                 bigwig=lambda wc: file_input(f"{UCSC_REPLISEQ_BASE}/{wc.name}.bigWig"),
             output:
-                temp(_repli_cache + "/{name}.hg19.bedGraph"),
+                (
+                    temp(_repli_cache + "/{name}.hg19.bedGraph")
+                    if _repli_lift
+                    else _repli_cache + "/{name}.hg19.bedGraph"
+                ),
             log:
                 config["log_dir"]
                 + f"/repliseq_bigwig_to_bedgraph.{{name}}.{_run_id}.log",
             wildcard_constraints:
                 name="[A-Za-z0-9]+",
             conda:
-                "../envs/repliseq.yaml"
+                "../envs/tools.yaml"
             resources:
                 downloads=1,
             shell:
                 "bigWigToBedGraph {input.bigwig} {output} 2> {log}"
 
-        rule repliseq_liftover:
-            """liftOver an hg19 Repli-seq bedGraph to hg38 (cached under aux)."""
-            input:
-                bedgraph=_repli_cache + "/{name}.hg19.bedGraph",
-                chain=file_input(LIFTOVER_CHAIN_URL),
-            output:
-                bedgraph=_repli_cache + "/{name}.hg38.bedGraph",
-                unmapped=temp(_repli_cache + "/{name}.unmapped"),
-            log:
-                config["log_dir"] + f"/repliseq_liftover.{{name}}.{_run_id}.log",
-            wildcard_constraints:
-                name="[A-Za-z0-9]+",
-            conda:
-                "../envs/repliseq.yaml"
-            resources:
-                downloads=1,
-            shell:
-                "liftOver {input.bedgraph} {input.chain} {output.bedgraph} "
-                "{output.unmapped} 2> {log}"
+        if _repli_lift:
+
+            rule repliseq_liftover:
+                """liftOver an hg19 Repli-seq bedGraph to hg38 (cached under aux)."""
+                input:
+                    bedgraph=_repli_cache + "/{name}.hg19.bedGraph",
+                    chain=file_input(LIFTOVER_CHAIN_URL),
+                output:
+                    bedgraph=_repli_cache + "/{name}.hg38.bedGraph",
+                    unmapped=temp(_repli_cache + "/{name}.unmapped"),
+                log:
+                    config["log_dir"] + f"/repliseq_liftover.{{name}}.{_run_id}.log",
+                wildcard_constraints:
+                    name="[A-Za-z0-9]+",
+                conda:
+                    "../envs/tools.yaml"
+                resources:
+                    downloads=1,
+                shell:
+                    "liftOver {input.bedgraph} {input.chain} {output.bedgraph} "
+                    "{output.unmapped} 2> {log}"
 
     rule build_window_bed:
         """Build a stream's window BED in one pass -> config["aux_dir"]/{stream}_windows.bed.gz.
@@ -118,7 +127,7 @@ if workflow_mode == "bulk_genotyping":
             ),
             mappability_bed=config.get("mappability_bed") or [],
             bedgraphs=(
-                [_repli_cache + f"/{n}.hg38.bedGraph" for n in _repli_names]
+                [_repli_cache + f"/{n}.{_repli_target}.bedGraph" for n in _repli_names]
                 if do_repliseq
                 else []
             ),

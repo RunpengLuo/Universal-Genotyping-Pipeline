@@ -7,4 +7,9 @@ dependencies:
   - samtools>=1.19
   - cellsnp-lite>=1.2
   - mosdepth>=0.3
-  - tabix
+  - tabix>=1.11
+  - eagle2>=2.4.1
+  - shapeit5>=5.1.1
+  - longphase>=2.0.2
+  - ucsc-bigwigtobedgraph>=482
+  - ucsc-liftover>=482

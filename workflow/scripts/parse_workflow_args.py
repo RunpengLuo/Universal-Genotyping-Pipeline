@@ -431,6 +431,10 @@ def parse_workflow(config):
             f"{REFVERS}."
         )
 
+    # === gtf_file is a required reference input (gene/exon annotation) ===
+    if not config.get("gtf_file"):
+        raise ValueError("gtf_file is required (gene/exon annotation GTF); set it in the config")
+
     # === min_snp_reads sweep (one MSR{msr}/ subdir per value) ===
     msr = config["params_combine_counts"]["min_snp_reads"]
     msr_list = [int(m) for m in (msr if isinstance(msr, list) else [msr])]
