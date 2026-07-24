@@ -24,7 +24,8 @@
       "reference_version": "GRCh38",
       "files": {
         "alignment": "https://example.org/HT001/tumor_p23.bam",
-        "alignment_index": "https://example.org/HT001/tumor_p23.bam.bai"
+        "alignment_index": "https://example.org/HT001/tumor_p23.bam.bai",
+        "breakpoint_bedpe": "/path/to/HT001/tumor_p23.sv.bedpe"
       },
       "meta": {
         "note": "bam is fetched on demand and deleted after the last job that needs it"
@@ -96,7 +97,8 @@
       "sample_type": "tumor",
       "files": {
         "alignment": "/path/to/HT003/tumor.cram",
-        "alignment_index": "/path/to/HT003/tumor.cram.crai"
+        "alignment_index": "/path/to/HT003/tumor.cram.crai",
+        "wes_targets_bed": "/path/to/exome_capture_targets.hg38.bed"
       }
     }
   ]

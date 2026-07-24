@@ -22,6 +22,8 @@ Assays: `bulkWGS`, `bulkWGS-lr`, `bulkWES` (WGS and WES may be mixed). Needs bul
 | Parse genetic map | `parse_genetic_map` | `phase_dir/genetic_map.tsv.gz` |
 | Pileup at het SNPs | `pileup_snps_bulk_mode1b` | `pileup_dir/{assay_type}_{dataset_id}/` |
 | Phase and concat (joint, all bulk assays) | `phase_and_concat_bulk` | `allele_dir/bulk/` |
+| Build segment BED (split arms at breakpoints) | `build_segment_bed` | `aux_dir/segment.bed` |
+| Build per-stream window BEDs (GC/MAP/REPLI) | `build_window_bed` | `aux_dir/{wgs,wes}_windows.bed.gz` |
 | Compute read depth | `run_mosdepth` | `pileup_dir/{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz` |
 | Bias correction | `rd_correct` | `pileup_dir/{assay_type}/window.{dp.npz,tsv.gz}` |
 | Adaptive binning + RDR | `combine_counts` | `bb_dir/MSR{msr}/bulk/` |

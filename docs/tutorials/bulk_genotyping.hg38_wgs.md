@@ -1,8 +1,9 @@
 # Tutorial: Bulk WGS Genotyping (hg38)
 
-`bulk_genotyping` on paired normal/tumor bulk WGS aligned to GRCh38. Install first: [README](../../README.md#installation).
+This tutorial preprocess the bulk sequencing data to run HATCHet. See [README](../../README.md#installation) first to install the pipeline.
 
-## 1. Sample file
+## Prepare inputs
+### 1. Sample file
 
 Schema: [sample_sheet.md](../sample_sheet.md).
 
@@ -34,6 +35,9 @@ Schema: [sample_sheet.md](../sample_sheet.md).
   ]
 }
 ```
+
+> [!NOTE]
+> Optionally add `breakpoint_bedpe` (a BEDPE of SV breakpoints, e.g. from a long-read SV caller) to any bulk record to pre-split arms at those breakpoints, so no bin spans a breakpoint. See [sample_sheet.md](../sample_sheet.md#files).
 
 Validate: [README](../../README.md#quick-start).
 

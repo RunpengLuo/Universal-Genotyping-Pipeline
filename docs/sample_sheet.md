@@ -29,7 +29,9 @@ Sample file is a JSON-format configuration file contains dataset records over mu
         "tissue_positions"?: <path|url>,
         "scalefactors"?:     <path|url>,
         "image_hires"?:      <path|url>,
-        "image_lowres"?:     <path|url>
+        "image_lowres"?:     <path|url>,
+        "breakpoint_bedpe"?: <path|url>,
+        "wes_targets_bed"?:  <path|url>
       }
     },
     ...
@@ -65,6 +67,8 @@ Sample file is a JSON-format configuration file contains dataset records over mu
 | `scalefactors` | `VISIUM`, `VISIUM3prime` | `outs/spatial/scalefactors_json.json` |
 | `image_hires` | `VISIUM` | `outs/spatial/tissue_hires_image.png` |
 | `image_lowres` | `VISIUM` | `outs/spatial/tissue_lowres_image.png` |
+| `breakpoint_bedpe` | optional (`bulkWGS`, `bulkWGS-lr`, `bulkWES`) | SV breakpoints (BEDPE); each arm is split at the union of all datasets' cuts into `segment.bed`, so no bin spans a breakpoint |
+| `wes_targets_bed` | `bulkWES` (needed to build the WES window BED) | exon capture-target BED, adaptively tiled into `wes_windows.bed.gz` |
 
 ## Features
 ### Support multiome dataset
