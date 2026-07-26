@@ -8,10 +8,9 @@
 #   trisomy 8, chr10 loss/LOH + PTEN del, chr9 CDKN2A del, chr18 loss; Velazquez-
 #   Villarreal et al., Commun Biol 3:318 (2020), doi:10.1038/s42003-020-1044-8).
 #
-# Heavy: subsetting all 22 autosomes fetches ~the whole ONT BAM (~130-167 GiB/sample),
-#   so this variant does NOT fit a GitHub-hosted runner -- run it on a large-disk
-#   remote/self-hosted machine. Runtime (staged refs + outputs) goes under the
-#   gitignored .test-run/COLO829_full/.
+# Heavy: the whole ONT BAM downloads via storage() (~130-167 GiB/sample; no region
+#   subsetting), so run this on a large-disk remote machine with local-storage-prefix
+#   pointed at scratch. Runtime (staged refs + outputs) goes under .test-run/COLO829_full/.
 ##################################################
 
 snp_dir: "snps"
