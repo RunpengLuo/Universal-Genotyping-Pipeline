@@ -22,7 +22,7 @@ if run_phasing and config["phaser"] == "shapeit":
             chrom="chr{chrname}",
         shell:
             r"""
-            phase_common \
+            SHAPEIT5_phase_common \
                 --input "{input.snp_vcf}" \
                 --map "{input.gmap_file}" \
                 --reference "{input.phasing_panel_file}" \
