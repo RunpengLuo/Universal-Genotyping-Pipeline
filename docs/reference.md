@@ -21,6 +21,7 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 | `reference` | Yes | Genome FASTA. |
 | `genome_size` | Yes | Two-column `chrom\tsize` file. |
 | `region_bed` | Yes | Whitelist regions, arm-level (4th column = chromosome-arm `region_id`). Stays arm-level; for bulk `build_segment_bed` derives `aux/segment.bed` (region_id + seg_id) from it, and the bulk rules read that. |
+| `window_bed` | Optional (bulk) | Pre-built window BED (`#CHR START END region_id seg_id GC [MAP] [REPLI]`); pre-built at `resources/data/windows.1kbp.{hg19,hg38,chm13v2}.bed.gz`. When set (and no `breakpoint_bedpe`), it is assumed to fit every bulk stream (wgs and wes): `build_window_bed` is skipped entirely and the file is read directly (`rd_correct` filters it to `chromosomes`, so a genome-wide file is fine). A `breakpoint_bedpe` re-tiles the arms, so `window_bed` is ignored and windows are built. A pre-built file is just `build_window_bed`'s genome-wide, no-BEDPE output (`seg_id == {region_id}#0`). |
 | `gtf_file` | Yes | Gene annotation GTF (gzipped). |
 | `mappability_bed` | Optional | BED mappability track (4th column = score); adds a `MAP` column to the built window BEDs. |
 | `blacklist_bed` | Optional | ENCODE-style blacklist; pre-built at `resources/data/hg38-blacklist.v2.bed.gz`. |
@@ -173,7 +174,7 @@ Used by all multi-thread rules.
 
 ## Outputs
 
-Directories (`snp_dir`, `phase_dir`, `pileup_dir`, `allele_dir`, `bb_dir`, `qc_dir`, `log_dir`, `aux_dir`) are set in `config.yaml`, relative to `snakemake --directory`. Which rule writes what, per mode: [workflow.md](workflow.md).
+Directories (`snp_dir`, `phase_dir`, `pileup_dir`, `allele_dir`, `bb_dir`, `qc_dir`, `log_dir`, `aux_dir`, `bench_dir`) are set in `config.yaml`, relative to `snakemake --directory`. Which rule writes what, per mode: [workflow.md](workflow.md). Each rule logs to `log_dir/{rule}/...` and writes a Snakemake `benchmark:` TSV (wall time, `max_rss`, `max_vms`, `cpu_time`, ...) to `bench_dir/{rule}/...`.
 
 `.npz` are matrices: rows = SNPs or bins, columns = samples or cells; dense for bulk, scipy sparse CSR for single-cell. BAF is never stored — derive it from `Ballele` / `Tallele`.
 
@@ -236,7 +237,7 @@ Input for HATCHet3 / CalicoST. `min_snp_reads` may be a list: one job preprocess
 | `pileup_dir/` | One cellsnp-lite dir per `{assay_type}_{dataset_id}`; bulk also `{assay_type}/windows.bed.gz` (per-assay mosdepth grid), `{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz`, `window.dp.npz`, `window.tsv.gz`, `depth_statistics.tsv`. |
 | `allele_dir/` | `bulk/` (one joint set over all bulk assays) or per `{assay_type}` (single-cell): `snps.tsv.gz`, `snp.{T,A,B}allele.npz`, `sample_ids.tsv`, and for single-cell `barcodes{,.full}.tsv.gz`, `unique_snp_ids.npy`. |
 | `bb_dir/{assay_type}.h5ad` | Gene x cell AnnData (single-cell RNA / spatial); MSR-independent, so it sits flat. |
-| `aux_dir/` | Bulk window build: `segment.bed` (region_id arm + seg_id chunk, built from `region_bed`), `{wgs,wes}_windows.bed.gz` (per-stream window BEDs), and `repliseq/{name}.hg38.bedGraph` (lifted Repli-seq tracks, cached across window rebuilds) when `do_repliseq`. |
+| `aux_dir/` | Bulk window build: `segment.bed` (region_id arm + seg_id chunk, built from `region_bed`), `{wgs,wes}_windows.bed.gz` (per-stream window BEDs), and `repliseq/{name}.{reference_version}.bedGraph` (Repli-seq tracks, cached across window rebuilds) when `do_repliseq`. Source bigWigs are hg19: an hg19 run uses them directly; an hg38 run lifts hg19 -> hg38 first. |
 
 ### TSV columns
 

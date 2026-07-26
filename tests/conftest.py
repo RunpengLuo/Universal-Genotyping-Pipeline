@@ -300,7 +300,6 @@ def dryrun(workspace, sample_file, sample_id, workflow_mode, assay_types, extra=
         f"reference={ref}/genome.fa",
         f"genome_size={ref}/genome_size.txt",
         f"region_bed={ref}/region.bed",
-        f"window_bed={ref}/window.bed",
         f"gtf_file={ref}/genes.gtf",
         f"gmap_path={ref}/gmap.txt.gz",
         f"snp_panel={ref}/snp_panel.vcf.gz",

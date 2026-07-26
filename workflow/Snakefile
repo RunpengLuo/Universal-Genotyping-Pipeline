@@ -65,6 +65,7 @@ if _has_config:
     bedpe_files = _wf["bedpe_files"]
     wes_targets_files = _wf["wes_targets_files"]
     has_breakpoints = _wf["has_breakpoints"]
+    use_prebuilt_windows = _wf["use_prebuilt_windows"]
     window_streams = _wf["window_streams"]
     do_repliseq = _wf["do_repliseq"]
     window_size_wgs = _wf["window_size_wgs"]

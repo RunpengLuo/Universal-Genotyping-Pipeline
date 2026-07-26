@@ -309,8 +309,8 @@ def parse_workflow(config):
           require_genetic_map, final_targets, get_data, modality2files,
           assay2dataset_ids, assay2sample_types, assay2base_reps, genotype_files,
           phase_files, get_genetic_map, get_phasing_panel, segment_bed, bedpe_files,
-          wes_targets_files, has_breakpoints, window_streams, do_repliseq,
-          window_size_wgs, window_size_wes.
+          wes_targets_files, has_breakpoints, use_prebuilt_windows, window_streams,
+          do_repliseq, window_size_wgs, window_size_wes.
 
     Raises:
         ValueError: The mode, assay types, sample file, or phaser is invalid.
@@ -433,15 +433,15 @@ def parse_workflow(config):
 
     # === gtf_file is a required reference input (gene/exon annotation) ===
     if not config.get("gtf_file"):
-        raise ValueError("gtf_file is required (gene/exon annotation GTF); set it in the config")
+        raise ValueError(
+            "gtf_file is required (gene/exon annotation GTF); set it in the config"
+        )
 
     # === min_snp_reads sweep (one MSR{msr}/ subdir per value) ===
     msr = config["params_combine_counts"]["min_snp_reads"]
     msr_list = [int(m) for m in (msr if isinstance(msr, list) else [msr])]
 
     # === segment BED + per-stream window build ===
-    # region.bed (arm) stays config["region_bed"]; bulk builds aux/segment.bed
-    # (region_id + seg_id) and the per-stream window BEDs, read by the bulk rules.
     bedpe_files = list(
         dict.fromkeys(
             r["files"]["breakpoint_bedpe"]
@@ -463,7 +463,24 @@ def parse_workflow(config):
     pp = config.get("params_build_windows") or {}
     window_size_wgs = int(pp.get("window_size_wgs") or 1000)
     window_size_wes = int(pp.get("window_size_wes") or 267)
-    if is_bulk and "wes" in window_streams and not wes_targets_files:
+
+    # skip window build if pre-built window bed is provided & no breakpoints
+    window_bed = config.get("window_bed")
+    if window_bed is not None and not is_url(window_bed):
+        assert os.path.exists(window_bed), f"window_bed does not exist: {window_bed}"
+    use_prebuilt_windows = is_bulk and window_bed is not None and not has_breakpoints
+    if is_bulk and window_bed is not None and has_breakpoints:
+        print(
+            f"NOTE: window_bed ignored ({window_bed}); {len(bedpe_files)} "
+            "breakpoint_bedpe file(s) re-tile the arms, so windows are built"
+        )
+    # WES windows are tiled from wes_targets_bed, unless a pre-built window_bed is used.
+    if (
+        is_bulk
+        and "wes" in window_streams
+        and not use_prebuilt_windows
+        and not wes_targets_files
+    ):
         raise ValueError(
             "building the WES window BED needs files.wes_targets_bed on a bulkWES record"
         )
@@ -474,7 +491,8 @@ def parse_workflow(config):
         print(
             f"NOTE: bulk -> segment BED ({segment_bed}); "
             f"{len(bedpe_files)} breakpoint_bedpe file(s), region_id=arm, seg_id=chunk; "
-            f"window streams: {window_streams}"
+            f"window streams: {window_streams}; "
+            f"windows: {'pre-built ' + window_bed if use_prebuilt_windows else 'built'}"
         )
 
     # === genotyping / phasing switches (a het_snp_vcf short-circuits the front) ===
@@ -648,6 +666,7 @@ def parse_workflow(config):
         "bedpe_files": bedpe_files,
         "wes_targets_files": wes_targets_files,
         "has_breakpoints": has_breakpoints,
+        "use_prebuilt_windows": use_prebuilt_windows,
         "window_streams": window_streams,
         "do_repliseq": do_repliseq,
         "window_size_wgs": window_size_wgs,

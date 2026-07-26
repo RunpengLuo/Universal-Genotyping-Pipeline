@@ -123,6 +123,80 @@ def test_mixed_wgs_wes(workspace):
     assert "bulkWES/bb.tsv.gz" not in proc.stdout
 
 
+def test_prebuilt_windows_skip_build(workspace):
+    """A pre-built window_bed (WGS-only, no BEDPE) is consumed directly, nothing built."""
+    ref = workspace["ref"]
+    proc = dryrun(
+        workspace,
+        workspace["bulk_json"],
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=[f"window_bed={ref}/window.bed"],
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    counts = job_counts(proc.stdout)
+    # build_window_bed is not planned; the prebuilt window_bed is read directly
+    assert "build_window_bed" not in counts
+    assert "build_segment_bed" in counts
+    assert f"{ref}/window.bed" in proc.stdout
+
+
+def test_prebuilt_windows_ignored_with_bedpe(workspace):
+    """A BEDPE re-tiles the arms, so a pre-built window_bed is ignored and rebuilt."""
+    ref = workspace["ref"]
+    proc = dryrun(
+        workspace,
+        workspace["bulk_bedpe_json"],
+        "B1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=[f"window_bed={ref}/window.bed"],
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    counts = job_counts(proc.stdout)
+    assert "build_window_bed" in counts
+    assert "subset_prebuilt_window_bed" not in counts
+
+
+def test_prebuilt_windows_cover_both_streams(workspace):
+    """A pre-built window_bed serves both wgs and wes, so nothing is built in a mix."""
+    ref = workspace["ref"]
+    proc = dryrun(
+        workspace,
+        workspace["bulk_mixed_json"],
+        "MX",
+        "bulk_genotyping",
+        ["bulkWGS", "bulkWES"],
+        extra=[f"window_bed={ref}/window.bed"],
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    counts = job_counts(proc.stdout)
+    assert "build_window_bed" not in counts
+    assert f"{ref}/window.bed" in proc.stdout
+
+
+def test_prebuilt_windows_skip_repliseq(workspace):
+    """A pre-built window_bed skips the Repli-seq fetch (do_repliseq active on hg38).
+
+    Network-free: the Repli-seq rules are the only URL-storage inputs here, and they
+    are gated inside `if not use_prebuilt_windows`, so nothing queries a remote host.
+    """
+    ref = workspace["ref"]
+    proc = dryrun(
+        workspace,
+        workspace["bulk_json"],
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=["reference_version=hg38", f"window_bed={ref}/window.bed"],
+    )
+    assert proc.returncode == 0, proc.stderr[-1500:]
+    counts = job_counts(proc.stdout)
+    assert "repliseq_bigwig_to_bedgraph" not in counts
+    assert "build_window_bed" not in counts
+
+
 def test_scatac_fragments_are_tracked(workspace):
     """The ATAC fragments file is a tracked input, not resolved inside a script."""
     proc = dryrun(
