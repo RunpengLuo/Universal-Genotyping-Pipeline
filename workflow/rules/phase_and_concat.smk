@@ -41,9 +41,9 @@ rule phase_and_concat_bulk:
             subcategory="phasing / allele freq (bulk)",
         ),
     log:
-        config["log_dir"] + f"/phase_and_concat/bulk.{_run_id}.log",
+        config["log_dir"] + f"/phase_and_concat/phase_and_concat.bulk.{_run_id}.log",
     benchmark:
-        config["bench_dir"] + f"/phase_and_concat/bulk.{_run_id}.tsv"
+        config["bench_dir"] + f"/phase_and_concat/phase_and_concat.bulk.{_run_id}.tsv"
     conda:
         "../envs/base.yaml"
     params:
@@ -112,9 +112,11 @@ rule phase_and_concat_nonbulk:
             labels={"assay": "{assay_type}"},
         ),
     log:
-        config["log_dir"] + f"/phase_and_concat/{{assay_type}}.{_run_id}.log",
+        config["log_dir"]
+        + f"/phase_and_concat/phase_and_concat.{{assay_type}}.{_run_id}.log",
     benchmark:
-        config["bench_dir"] + f"/phase_and_concat/{{assay_type}}.{_run_id}.tsv"
+        config["bench_dir"]
+        + f"/phase_and_concat/phase_and_concat.{{assay_type}}.{_run_id}.tsv"
     wildcard_constraints:
         assay_type="(scRNA|scATAC|VISIUM|VISIUM3prime)",
     conda:

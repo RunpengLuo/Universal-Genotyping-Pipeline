@@ -11,10 +11,10 @@ if run_phasing and config["phaser"] == "shapeit":
             bcf_file_csi=temp(config["phase_dir"] + "/chr{chrname}.bcf.csi"),
         log:
             config["log_dir"]
-            + f"/phase_snps_shapeit/phase_snps.chr{{chrname}}.{_run_id}.log",
+            + f"/phase_snps_shapeit/phase_snps_shapeit.chr{{chrname}}.{_run_id}.log",
         benchmark:
             config["bench_dir"]
-            + f"/phase_snps_shapeit/phase_snps.chr{{chrname}}.{_run_id}.tsv"
+            + f"/phase_snps_shapeit/phase_snps_shapeit.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/shapeit.yaml"
         threads: config["threads"]["phase"]
@@ -46,10 +46,10 @@ if run_phasing and config["phaser"] == "eagle":
             phased_file=config["phase_dir"] + "/chr{chrname}.vcf.gz",
         log:
             config["log_dir"]
-            + f"/phase_snps_eagle/phase_snps.chr{{chrname}}.{_run_id}.log",
+            + f"/phase_snps_eagle/phase_snps_eagle.chr{{chrname}}.{_run_id}.log",
         benchmark:
             config["bench_dir"]
-            + f"/phase_snps_eagle/phase_snps.chr{{chrname}}.{_run_id}.tsv"
+            + f"/phase_snps_eagle/phase_snps_eagle.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/eagle.yaml"
         threads: config["threads"]["phase"]
@@ -81,10 +81,10 @@ if run_phasing and config["phaser"] == "longphase":
             phased_file=config["phase_dir"] + "/chr{chrname}.vcf.gz",
         log:
             config["log_dir"]
-            + f"/phase_snps_longphase/phase_snps.chr{{chrname}}.{_run_id}.log",
+            + f"/phase_snps_longphase/phase_snps_longphase.chr{{chrname}}.{_run_id}.log",
         benchmark:
             config["bench_dir"]
-            + f"/phase_snps_longphase/phase_snps.chr{{chrname}}.{_run_id}.tsv"
+            + f"/phase_snps_longphase/phase_snps_longphase.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/longphase.yaml"
         threads: config["threads"]["phase"]
@@ -129,9 +129,11 @@ if run_phasing:
             ),
             lst_file=temp(config["phase_dir"] + "/phased_snps.lst"),
         log:
-            config["log_dir"] + f"/concat_and_extract_phased_het_snps/{_run_id}.log",
+            config["log_dir"]
+            + f"/concat_and_extract_phased_het_snps/concat_and_extract_phased_het_snps.{_run_id}.log",
         benchmark:
-            config["bench_dir"] + f"/concat_and_extract_phased_het_snps/{_run_id}.tsv"
+            config["bench_dir"]
+            + f"/concat_and_extract_phased_het_snps/concat_and_extract_phased_het_snps.{_run_id}.tsv"
         conda:
             "../envs/bcftools.yaml"
         threads: 1
@@ -160,9 +162,9 @@ if run_phasing:
         output:
             gmap_tsv=config["phase_dir"] + "/genetic_map.tsv.gz",
         log:
-            config["log_dir"] + f"/parse_genetic_map/{_run_id}.log",
+            config["log_dir"] + f"/parse_genetic_map/parse_genetic_map.{_run_id}.log",
         benchmark:
-            config["bench_dir"] + f"/parse_genetic_map/{_run_id}.tsv"
+            config["bench_dir"] + f"/parse_genetic_map/parse_genetic_map.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1

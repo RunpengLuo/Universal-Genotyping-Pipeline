@@ -75,9 +75,9 @@ rule rd_correct:
             labels={"assay": "{assay_type}"},
         ),
     log:
-        config["log_dir"] + f"/rd_correct/{{assay_type}}.{_run_id}.log",
+        config["log_dir"] + f"/rd_correct/rd_correct.{{assay_type}}.{_run_id}.log",
     benchmark:
-        config["bench_dir"] + f"/rd_correct/{{assay_type}}.{_run_id}.tsv"
+        config["bench_dir"] + f"/rd_correct/rd_correct.{{assay_type}}.{_run_id}.tsv"
     wildcard_constraints:
         assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
     conda:

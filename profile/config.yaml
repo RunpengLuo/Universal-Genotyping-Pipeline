@@ -7,6 +7,7 @@ verbose: false
 rerun-triggers:
   - mtime
   - input
+  - params
 
 # Remote inputs (docs/sample_sheet.md). At most `downloads` jobs that must fetch a
 # URL run at once, so peak local disk is about downloads x the largest alignment,

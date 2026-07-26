@@ -20,9 +20,11 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
             snp_vcf=config["snp_dir"] + "/chr{chrname}.vcf.gz",
             unfiltered_vcf=temp(config["snp_dir"] + "/chr{chrname}.unfiltered.vcf.gz"),
         log:
-            config["log_dir"] + f"/genotype_snps_bulk/chr{{chrname}}.{_run_id}.log",
+            config["log_dir"]
+            + f"/genotype_snps_bulk/genotype_snps_bulk.chr{{chrname}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"] + f"/genotype_snps_bulk/chr{{chrname}}.{_run_id}.tsv"
+            config["bench_dir"]
+            + f"/genotype_snps_bulk/genotype_snps_bulk.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/bcftools.yaml"
         threads: config["threads"]["genotype"]
@@ -86,10 +88,11 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
             out_ad=config["snp_dir"] + "/pseudobulk_{modality}/cellSNP.tag.AD.mtx",
             bam_lst=temp("tmp/bams.{modality}.lst"),
         log:
-            config["log_dir"] + f"/genotype_snps_pseudobulk/{{modality}}.{_run_id}.log",
+            config["log_dir"]
+            + f"/genotype_snps_pseudobulk/genotype_snps_pseudobulk.{{modality}}.{_run_id}.log",
         benchmark:
             config["bench_dir"]
-            + f"/genotype_snps_pseudobulk/{{modality}}.{_run_id}.tsv"
+            + f"/genotype_snps_pseudobulk/genotype_snps_pseudobulk.{{modality}}.{_run_id}.tsv"
         conda:
             "../envs/cellsnp.yaml"
         threads: config["threads"]["genotype"]
@@ -141,9 +144,11 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
                 labels={"table": "pseudobulk SNP statistics"},
             ),
         log:
-            config["log_dir"] + f"/annotate_snps_pseudobulk/{_run_id}.log",
+            config["log_dir"]
+            + f"/annotate_snps_pseudobulk/annotate_snps_pseudobulk.{_run_id}.log",
         benchmark:
-            config["bench_dir"] + f"/annotate_snps_pseudobulk/{_run_id}.tsv"
+            config["bench_dir"]
+            + f"/annotate_snps_pseudobulk/annotate_snps_pseudobulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1
@@ -168,9 +173,11 @@ if not run_genotyping and run_phasing:
             snp_vcf=config["snp_dir"] + "/chr{chrname}.vcf.gz",
             snp_vcf_tbi=config["snp_dir"] + "/chr{chrname}.vcf.gz.tbi",
         log:
-            config["log_dir"] + f"/split_het_snp_vcf/chr{{chrname}}.{_run_id}.log",
+            config["log_dir"]
+            + f"/split_het_snp_vcf/split_het_snp_vcf.chr{{chrname}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"] + f"/split_het_snp_vcf/chr{{chrname}}.{_run_id}.tsv"
+            config["bench_dir"]
+            + f"/split_het_snp_vcf/split_het_snp_vcf.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/bcftools.yaml"
         threads: 1
