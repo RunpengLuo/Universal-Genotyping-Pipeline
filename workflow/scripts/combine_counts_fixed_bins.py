@@ -61,7 +61,6 @@ bb_file = snakemake_handle.input["bb_file"]
 qc_dir = snakemake_handle.params["qc_dir"]
 sample_name = snakemake_handle.params["sample_name"]
 assay_type = snakemake_handle.params["assay_type"]
-feature_type = snakemake_handle.params["feature_type"]
 run_id = getattr(snakemake_handle.params, "run_id", "")
 
 # outputs
@@ -181,7 +180,7 @@ if is_rna_assay:
         adata, bb_df, assay_type, block_idx="bb_id", drop_cols=False
     )
     counts = adata.var["bb_id"].value_counts()
-    bb_df[f"#{feature_type}"] = bb_df["bb_id"].map(counts).fillna(0).astype(int)
+    bb_df["#feature"] = bb_df["bb_id"].map(counts).fillna(0).astype(int)
     x_count = matrix_segmentation(adata.X.T, adata.var["bb_id"].to_numpy(), num_bbs)
     logging.info(
         f"Feature-level matrix: shape={adata.X.shape}, sparsity={_sparsity(adata.X):.4f}"

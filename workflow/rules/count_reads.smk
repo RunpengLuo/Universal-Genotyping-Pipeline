@@ -55,7 +55,7 @@ rule rd_correct:
             + f"/{wc.assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz"
             for dataset_id in assay2dataset_ids[wc.assay_type]
         ],
-        window_bed=lambda wc: get_assay_window_bed(wc.assay_type),
+        window_bed=window_bed_path,
         genome_size=config["genome_size"],
         region_bed=segment_bed,
         blacklist_bed=config["blacklist_bed"] or [],

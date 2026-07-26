@@ -101,7 +101,7 @@ def test_breakpoint_presegmentation(workspace):
 
 
 def test_mixed_wgs_wes(workspace):
-    """bulkWGS + bulkWES mix builds per-stream windows and one joint bulk bb dir."""
+    """bulkWGS + bulkWES share one window grid and one joint bulk bb dir (WES == WGS)."""
     proc = dryrun(
         workspace,
         workspace["bulk_mixed_json"],
@@ -111,12 +111,13 @@ def test_mixed_wgs_wes(workspace):
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     counts = job_counts(proc.stdout)
-    # segment BED + both window streams (wgs + wes); wes targets feed build_window_bed
+    # segment BED + exactly one shared window BED (no per-stream / wes_targets)
     assert "build_segment_bed" in counts
-    assert counts.get("build_window_bed", 0) == 2, proc.stdout[-2000:]
-    assert "wes_targets.bed" in proc.stdout
-    assert "wgs_windows.bed.gz" in proc.stdout
-    assert "wes_windows.bed.gz" in proc.stdout
+    assert counts.get("build_window_bed", 0) == 1, proc.stdout[-2000:]
+    assert "/windows.bed.gz" in proc.stdout
+    assert "wes_targets" not in proc.stdout
+    assert "wgs_windows.bed.gz" not in proc.stdout
+    assert "wes_windows.bed.gz" not in proc.stdout
     # one joint binning into a single bb/bulk dir (no per-stream subdir)
     assert "combine_counts" in counts
     assert "/bulk/bb.tsv.gz" in proc.stdout
@@ -159,8 +160,8 @@ def test_prebuilt_windows_ignored_with_bedpe(workspace):
     assert "subset_prebuilt_window_bed" not in counts
 
 
-def test_prebuilt_windows_cover_both_streams(workspace):
-    """A pre-built window_bed serves both wgs and wes, so nothing is built in a mix."""
+def test_prebuilt_windows_cover_all_assays(workspace):
+    """A pre-built window_bed serves WGS + WES alike, so nothing is built."""
     ref = workspace["ref"]
     proc = dryrun(
         workspace,

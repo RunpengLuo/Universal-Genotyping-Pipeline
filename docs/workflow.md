@@ -4,7 +4,7 @@ Three modes, set by `workflow_mode`. Each runs a subset of the stages below and 
 
 Config keys and every output file: [reference.md](reference.md). Sample-file schema: [sample_sheet.md](sample_sheet.md).
 
-`{chrname}`, `{assay_type}`, `{dataset_id}` and `{modality}` are wildcards — one job each. `{msr}` is not: one binning job writes every `MSR{msr}/` subdirectory of the sweep. Bulk allele/bb outputs are one joint set under `bulk/` (WGS and WES mixed).
+`{chrname}`, `{assay_type}`, `{dataset_id}` and `{modality}` are wildcards — one job each. `{msr}` is not: one binning job writes every `MSR{msr}/` subdirectory of the sweep. Bulk allele/bb outputs are one joint set under `bulk/` (WGS/WGS-lr/WES on one grid).
 
 In **any** mode, setting `het_snp_vcf` skips genotyping, and phasing too unless `het_snp_vcf_phased: false`.
 
@@ -12,7 +12,7 @@ In **any** mode, setting `het_snp_vcf` skips genotyping, and phasing too unless 
 
 ## `bulk_genotyping`
 
-Assays: `bulkWGS`, `bulkWGS-lr`, `bulkWES` (WGS and WES may be mixed). Needs bulk records (normal + tumor); per-stream window BEDs are built automatically off `build_segment_bed`.
+Assays: `bulkWGS`, `bulkWGS-lr`, `bulkWES` (all share one grid). Needs bulk records (normal + tumor); one window BED is built automatically off `build_segment_bed`.
 
 | Step | Rule | Output |
 |------|------|--------|
@@ -23,7 +23,7 @@ Assays: `bulkWGS`, `bulkWGS-lr`, `bulkWES` (WGS and WES may be mixed). Needs bul
 | Pileup at het SNPs | `pileup_snps_bulk_mode1b` | `pileup_dir/{assay_type}_{dataset_id}/` |
 | Phase and concat (joint, all bulk assays) | `phase_and_concat_bulk` | `allele_dir/bulk/` |
 | Build segment BED (split arms at breakpoints) | `build_segment_bed` | `aux_dir/segment.bed` |
-| Build per-stream window BEDs (GC/MAP/REPLI) | `build_window_bed` | `aux_dir/{wgs,wes}_windows.bed.gz` |
+| Build the window BED (GC/MAP/REPLI) | `build_window_bed` | `aux_dir/windows.bed.gz` |
 | Compute read depth | `run_mosdepth` | `pileup_dir/{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz` |
 | Bias correction | `rd_correct` | `pileup_dir/{assay_type}/window.{dp.npz,tsv.gz}` |
 | Adaptive binning + RDR | `combine_counts` | `bb_dir/MSR{msr}/bulk/` |

@@ -97,8 +97,7 @@
       "sample_type": "tumor",
       "files": {
         "alignment": "/path/to/HT003/tumor.cram",
-        "alignment_index": "/path/to/HT003/tumor.cram.crai",
-        "wes_targets_bed": "/path/to/exome_capture_targets.hg38.bed"
+        "alignment_index": "/path/to/HT003/tumor.cram.crai"
       }
     }
   ]

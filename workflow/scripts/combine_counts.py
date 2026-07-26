@@ -1,12 +1,11 @@
 """SNP-informed adaptive binning across all bulk assays + depth aggregation + RDR.
 
-All bulk assays (WGS and WES may be mixed) are segmented on ONE shared bin grid built on
-the WGS window grid (WES-only runs use the WES grid). ``adaptive_segmentation`` closes a
-bin only when every tumor column meets its per-column read target (``min_snp_reads`` for
-WGS columns, ``min_snp_reads_wes`` for WES), grouped by ``seg_id`` (breakpoint chunk).
-WES 267bp windows are projected onto the WGS bins by midpoint for depth. Allele counts
-are aggregated per bin across all samples; RDR is computed per assay, normalizing each
-tumor by the RDR base column named in its ``RDR_BASE_REP_ID`` (median-normalized unset).
+All bulk assays (WGS/WGS-lr/WES) share ONE bin grid tiled from ``segment.bed``.
+``adaptive_segmentation`` closes a bin only when every tumor column meets ``min_snp_reads``,
+grouped by ``seg_id`` (breakpoint chunk). Window depth is aggregated per assay onto the same
+bins. Allele counts are aggregated per bin across all samples; RDR is computed per assay,
+normalizing each tumor by the RDR base column named in its ``RDR_BASE_REP_ID``
+(median-normalized when unset).
 
 The allele matrices come as one joint set from phase_and_concat_bulk (read directly, no
 union); depth/window inputs stay per-assay (index-aligned to ``params.bulk_assays``).
@@ -80,7 +79,6 @@ phase_flip_alpha = float(snakemake_handle.params["phase_flip_alpha"])
 gene_aware_binning_param = bool(snakemake_handle.params["gene_aware_binning"])
 max_blocksize = int(snakemake_handle.params["max_blocksize"])
 msr_list = [int(m) for m in snakemake_handle.params["min_snp_reads"]]
-min_snp_reads_wes = int(snakemake_handle.params["min_snp_reads_wes"])
 min_snp_per_bin = int(snakemake_handle.params["min_snp_per_bin"])
 rdr_outlier_quantile = float(snakemake_handle.params["rdr_outlier_quantile"])
 nu = float(snakemake_handle.params["nu"])
@@ -133,21 +131,13 @@ if phase_flip_test:
     )
     grp_cols.append("phase_group")
 
-# binning grid = the WGS-stream windows (genome-wide); WES 267bp windows are used
-# only for depth projection, not binning. WES-only runs bin on the WES grid.
-grid_idxs = [i for i, at in enumerate(bulk_assays) if at != "bulkWES"]
-if not grid_idxs:
-    grid_idxs = list(range(len(window_df_list)))
-grid_window_dfs = [window_df_list[i] for i in grid_idxs]
-logging.info(
-    f"binning grid from assays {[bulk_assays[i] for i in grid_idxs]} "
-    f"(WES windows projected onto it for depth)"
-)
+# one shared bin grid: every bulk assay (WGS/WGS-lr/WES) uses the same segment.bed windows
+logging.info(f"binning grid shared across assays {bulk_assays}")
 _wcols = ["#CHR", "START", "END", "region_id"]
-if all("seg_id" in w.columns for w in grid_window_dfs):
+if all("seg_id" in w.columns for w in window_df_list):
     _wcols.append("seg_id")
 window_df = pd.concat(
-    [w[_wcols] for w in grid_window_dfs],
+    [w[_wcols] for w in window_df_list],
     ignore_index=True,
 ).drop_duplicates(["#CHR", "START", "END"])
 window_df = sort_df_chr(window_df, ch="#CHR", pos="START").reset_index(drop=True)
@@ -203,8 +193,6 @@ if gene_aware_binning:
 tot_tumor = np.ascontiguousarray(tot_mtx[:, tumor_cols_all], dtype=np.float64)
 sample_labels = [f"{col_assay[i]}:{col_repid[i]}" for i in range(total_samples)]
 tumor_labels = [sample_labels[c] for c in tumor_cols_all]
-# per-tumor-column read threshold: WES columns use min_snp_reads_wes, WGS the swept msr
-tumor_is_wes = np.array([col_assay[c] == "bulkWES" for c in tumor_cols_all], dtype=bool)
 genetic_map = pd.read_table(gmap_file, sep="\t") if gmap_file is not None else None
 
 for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zip(
@@ -219,9 +207,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     out_qc_pdf,
 ):
     logging.info(f"===== binning MSR={msr} =====")
-    min_snp_reads_vec = np.where(tumor_is_wes, min_snp_reads_wes, msr).astype(
-        np.float64
-    )
+    min_snp_reads_vec = np.full(len(tumor_cols_all), msr, dtype=np.float64)
     bbs, snps_bb = adaptive_segmentation(
         window_df,
         snps.copy(),

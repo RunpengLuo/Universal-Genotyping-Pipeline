@@ -37,7 +37,7 @@ REQUIRED_FILES = {
 OPTIONAL_FILES = {
     "bulkWGS": {"breakpoint_bedpe"},
     "bulkWGS-lr": {"breakpoint_bedpe"},
-    "bulkWES": {"breakpoint_bedpe", "wes_targets_bed"},
+    "bulkWES": {"breakpoint_bedpe"},
 }
 
 # Outputs under <bb_dir>
@@ -63,16 +63,6 @@ ASSAY_TYPE2MODALITY = {
     "scRNA": "RNA",
     "VISIUM": "RNA",
     "VISIUM3prime": "RNA",
-}
-
-ASSAY_TYPE2FEATURE_TYPE = {
-    "bulkWGS": "dna",
-    "bulkWGS-lr": "dna",
-    "bulkWES": "exon",
-    "scATAC": "tile",
-    "scRNA": "gene",
-    "VISIUM": "gene",
-    "VISIUM3prime": "gene",
 }
 
 ##################################################
@@ -164,6 +154,7 @@ GTF_COLUMNS = [
 LONGREAD_PHASER = {"longphase"}
 PANEL_PHASER = {"eagle", "shapeit"}
 
+
 def get_phasing_panel_path(phasing_panel):
     """Return a per-chromosome phasing panel path function."""
     return lambda chrname: os.path.join(phasing_panel, f"chr{chrname}.genotypes.bcf")
@@ -178,12 +169,15 @@ def get_genetic_map_path(gmap_path):
     """
     return lambda chrname: gmap_path.format(chrname=chrname)
 
+
 ##################################################
 # params_combine_counts.rdr_normalization mode
 RDR_NORMALIZATIONS = ("auto", "median", "normal")
 
 ##################################################
 URL_SCHEMES = ("http://", "https://", "ftp://", "s3://")
+
+
 def is_url(path):
     """True if a sample-file path is a remote URL rather than a local path."""
     return str(path).startswith(URL_SCHEMES)

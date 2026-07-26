@@ -11,7 +11,9 @@ All outputs live under ``bb_dir/MSR{msr}/{assay}/``: the shared grid ``bb.tsv.gz
 (``bb.{T,A,B}allele.npz``, ``multi_snp.*``, ``barcodes*``). Input for HATCHet3 and CalicoST.
 """
 
-import os, logging, shutil
+import os
+import logging
+import shutil
 
 
 snakemake_handle = snakemake

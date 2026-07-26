@@ -1,12 +1,11 @@
-"""Build one stream's window BED (bulk), in one pass.
+"""Build the bulk window BED, in one pass.
 
-Tiles segment_bed (WGS) or wes_targets (WES), assigns region_id (arm) + seg_id
-(breakpoint chunk) by window midpoint, then annotates GC (always), MAP (when a
-mappability_bed input is given), and REPLI (when Repli-seq bedGraphs are given).
-Output columns: #CHR START END region_id seg_id GC [MAP] [REPLI] -- the stream's
-window BED consumed by count_reads. The Repli-seq bigWig fetch + bigWigToBedGraph +
-liftOver are Snakemake rules; this script only bins the resulting bedGraphs. Only the
-WGS/WES window generators (and the _tile_region they share) are functions.
+Tiles segment_bed, assigns region_id (arm) + seg_id (breakpoint chunk) by window
+midpoint, then annotates GC (always), MAP (when a mappability_bed input is given), and
+REPLI (when Repli-seq bedGraphs are given). Output columns: #CHR START END region_id
+seg_id GC [MAP] [REPLI] -- the window BED consumed by count_reads (one grid for every
+bulk assay: WGS/WGS-lr/WES). The Repli-seq bigWig fetch + bigWigToBedGraph + liftOver
+are Snakemake rules; this script only bins the resulting bedGraphs.
 """
 
 import logging
@@ -71,62 +70,17 @@ def generate_wgs_windows(window_size, standard_chroms, region_bed):
     return pd.DataFrame(rows, columns=["#CHR", "START", "END"])
 
 
-def generate_wes_windows(wes_targets_beds, window_size, standard_chroms):
-    """Concatenate the datasets' WES capture targets and adaptively tile them.
-
-    Overlapping targets (within or across the input BEDs) are merged below.
-    Blacklist / off-segment windows are dropped by the region_id assignment (their
-    midpoint falls outside the segment BED). Genes are not tracked here; they are
-    annotated from the GTF (``feature_id``) in combine_counts.
-    """
-    targets = pd.concat(
-        [
-            pd.read_csv(f, sep="\t", header=None, comment="#").iloc[:, :3]
-            for f in wes_targets_beds
-        ],
-        ignore_index=True,
-    )
-    targets.columns = ["Chromosome", "Start", "End"]
-    targets = targets[targets["Chromosome"].isin(standard_chroms)].reset_index(
-        drop=True
-    )
-    targets = targets.sort_values(["Chromosome", "Start"]).reset_index(drop=True)
-
-    merged = []
-    for chrom, grp in targets.groupby("Chromosome", sort=False):
-        starts, ends = grp["Start"].values, grp["End"].values
-        cur_start, cur_end = starts[0], ends[0]
-        for i in range(1, len(starts)):
-            if starts[i] <= cur_end:
-                cur_end = max(cur_end, ends[i])
-            else:
-                merged.append([chrom, cur_start, cur_end])
-                cur_start, cur_end = starts[i], ends[i]
-        merged.append([chrom, cur_start, cur_end])
-
-    rows = []
-    for chrom, start, end in merged:
-        rows.extend(_tile_region(chrom, int(start), int(end), window_size))
-    return pd.DataFrame(rows, columns=["#CHR", "START", "END"])
-
-
 standard = get_standard_chroms(p["reference_version"], inp["genome_size"])
 wanted = {str(c) for c in p["chromosomes"]}
 standard = {s for s in standard if (s[3:] if s.startswith("chr") else s) in wanted}
 region_bed = inp["region_bed"]
 genome_size = inp["genome_size"]
 logging.info(
-    f"build_window_bed: stream={p['mode']}, window_size={p['window_size']}, "
-    f"{len(standard)} standard chroms"
+    f"build_window_bed: window_size={p['window_size']}, {len(standard)} standard chroms"
 )
 
-# tile the segment BED (wgs) or the WES capture targets (wes)
-if p["mode"] == "wes":
-    windows = generate_wes_windows(
-        list(inp["wes_targets_bed"]), int(p["window_size"]), standard
-    )
-else:
-    windows = generate_wgs_windows(int(p["window_size"]), standard, region_bed)
+# tile the segment BED (one grid for every bulk assay: WGS/WGS-lr/WES)
+windows = generate_wgs_windows(int(p["window_size"]), standard, region_bed)
 n_tiled = len(windows)
 logging.info(f"tiled {n_tiled} windows")
 

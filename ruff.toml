@@ -1,0 +1,10 @@
+line-length = 88
+# `snakemake` is injected into `script:` files at runtime; treat it as a builtin so
+# F821 still flags real undefined-name bugs.
+builtins = ["snakemake"]
+
+[lint]
+# Snakemake `script:` files follow patterns ruff's defaults flag but that are intentional:
+#   E402 - imports placed after the OMP_*/thread env setup at the top of each script
+#   F403/F405 - `from <utils> import *` to share helper namespaces across scripts
+extend-ignore = ["E402", "F403", "F405"]

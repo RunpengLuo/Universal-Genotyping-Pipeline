@@ -1,4 +1,6 @@
-import os, gzip, logging, subprocess
+import os
+import logging
+import subprocess
 
 snakemake_handle = snakemake
 

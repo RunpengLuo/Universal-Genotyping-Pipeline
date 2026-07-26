@@ -42,11 +42,10 @@ gtf_file: null
 ##################################################
 # Build initial windows
 params_build_windows:
-  window_size_wgs: 1000
-  window_size_wes: 267
+  window_size: 1000
 
 ##################################################
-# Population Panel
+# SNP genotyping and population haplotype panel
 snp_panel: null
 snp_targets: null
 phasing_panel: null
@@ -119,7 +118,6 @@ params_combine_counts:
   switchprob_ps: 5e-2
   nsnp_multi: 2
   min_snp_reads: [500, 1000]
-  min_snp_reads_wes: 100
   min_snp_per_bin: 2
   max_blocksize: 500000
   gene_aware_binning: true

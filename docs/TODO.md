@@ -32,6 +32,30 @@ end-to-end job behind a manual/scheduled trigger, keep dry-run tests on every pu
     - retrieve population ALT frequency as prior genotype info. high ALT freq indicates likely hom-alt 
 - Streaming remote data rather than downloading them. Currently `cellsnp-lite` don't allow URL inputs.
 
+## Within-bin BAF phasing (`phase_hmm.py`)
+
+Bulk `combine_counts` collapses CNA/LOH BAF toward 0.5 (seen on `hatchet2_chr22_simulation`
+dbSNP151; panel/phaser ruled out). Two causes: (1) `detect_phase_flips` fragments SNPs into
+thousands of phase-groups, and the per-group bin-count floor in `_bin_windows_numba` makes
+~4-SNP bins so `min_snp_reads` never binds; (2) `apply_phase_to_mat` orients A/B by one
+per-SNP `PHASE` bit with no within-bin re-orientation, so unfolded bin BAF is exactly 0.500.
+HATCHet2 gets ~220 SNPs/bin and BAF ~0.20 in LOH via a per-bin EM (phase latent shared across
+samples).
+
+Fix: a new helper `workflow/scripts/phase_hmm.py`, a within-bin multi-sample beta-binomial
+phase HMM (K=1 per bin), gated by `params_combine_counts.phase_correction`
+(`none|flip_split|bin_hmm`). Under `bin_hmm`, drop the phase-group split so bins reach the
+read target, then a per-SNP phase HMM (latent shared across samples, LD-derived switch/stay
+transitions, tau calibrated on the matched normal) re-orients SNPs inside each bin and stores
+unfolded phased-frame counts. Optional layer 2 (`cross_bin_phasing: dp`) is a 2-state Viterbi
+over bins per region for cross-bin orientation. Emission/recursion port HATCHet3
+(`cluster_bins/hmm`); per-bin-EM structure follows HATCHet2. Full design, model equations,
+combine_counts flow, and validation: `~/.claude/plans/phase-hmm-within-bin.md`.
+
+- [ ] Phase A: `phase_hmm.py` + `snp_switchprobs`; wire `phase_correction` into bulk
+      `combine_counts`; config/const/parser; unit test; A/B comparison vs HATCHet2 `bb`; docs.
+- [ ] Phase B: single-cell `combine_counts_nonbulk` reuse; make `bin_hmm` default after A/B.
+
 ## RD bias correction (potential over-correction)
 
 Observed on `hatchet2_chr22_simulation` (chr22-only, matched normal + 3 tumors): GC/RT
@@ -54,20 +78,20 @@ over CNA-contaminated bins (`rd_correct_utils.py`; highest-CNA sample hurt most)
       bin count makes the quadratic fit unreliable.
 - [ ] Lower-order or regularized model when a covariate's bias is weak.
 
-## Unify WGS/WES windows and allow mixing in bulk genotyping (IMPLEMENTED)
+## Unified bulk grid: WES treated exactly like WGS (IMPLEMENTED)
 
-Done: `build_segment_bed` (region_id arm + seg_id chunk) + per-stream window BEDs
-(`{wgs,wes}_windows.bed.gz`); `combine_counts` bins on the WGS grid grouped by `seg_id`,
-projects WES depth by midpoint, and uses a per-column read threshold (`min_snp_reads` WGS,
-`min_snp_reads_wes` WES) with `max_blocksize` gated behind it; the `validate_mode` guard is
-lifted; one `bb_dir/MSR{msr}/bulk/`; per-stream `rdr_base_dataset_id` validation. Verified
-by DAG tests only (incl. a mixed WGS+WES case). Follow-ups:
+Done: `build_segment_bed` (region_id arm + seg_id chunk) + one shared window BED
+(`aux/windows.bed.gz`, tiled from `segment.bed` at `window_size`). Every bulk assay
+(WGS/WGS-lr/WES) bins on that one grid grouped by `seg_id`, with a single read target
+`min_snp_reads` and `max_blocksize` gated behind it; one `bb_dir/MSR{msr}/bulk/`. The
+earlier WES stream (per-record `wes_targets_bed`, 267 bp exon tiling, WES-onto-WGS depth
+projection, `min_snp_reads_wes`) was removed. Verified by DAG tests only. Follow-ups:
 
-- Real-data validation: no execution-level test exists yet; run a real mixed WGS+WES bulk
-  sample end-to-end and inspect the projected WES RDR/BAF per bin.
-- Residual NaN edge: a `max_blocksize` cut in a target-free desert (no WES window in the
-  span) can still yield a WES-empty bin; the existing NaN-row drop removes it. Revisit only
-  if it discards useful WGS-covered bins.
+- Real-data validation: no execution-level test exists yet; run a real WGS+WES bulk sample
+  end-to-end and inspect per-bin WES RDR/BAF.
+- WES RD-correction: WES depth carries capture-enrichment structure; confirm the per-sample
+  LOWESS fit + `routlier`/`doutlier` handle it, or flag over-correction (see the RD bias
+  correction section above).
 
 ## streaming panel
 `https://ftp.ncbi.nih.gov/snp/organisms/`, `tabix-streams just that region from the remote file — never downloading the ~16 GB whole thing (genotype_snps.py:232): bcftools query -f '%CHROM\t%POS\n' -r chr22 <URL> -> target_chr22.pos.gz.`

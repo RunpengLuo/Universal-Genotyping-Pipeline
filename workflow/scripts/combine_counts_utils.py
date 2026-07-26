@@ -607,7 +607,7 @@ def subset_baf(
     pd.DataFrame
         Filtered subset.
     """
-    if ch != None:
+    if ch is not None:
         baf_ch = baf_df[baf_df["#CHR"] == ch]
     else:
         baf_ch = baf_df

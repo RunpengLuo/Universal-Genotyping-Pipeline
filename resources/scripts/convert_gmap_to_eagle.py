@@ -17,7 +17,6 @@ Example:
 """
 
 import argparse
-import gzip
 import os
 import sys
 

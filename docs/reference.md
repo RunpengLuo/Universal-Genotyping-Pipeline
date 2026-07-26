@@ -21,7 +21,7 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 | `reference` | Yes | Genome FASTA. |
 | `genome_size` | Yes | Two-column `chrom\tsize` file. |
 | `region_bed` | Yes | Whitelist regions, arm-level (4th column = chromosome-arm `region_id`). Stays arm-level; for bulk `build_segment_bed` derives `aux/segment.bed` (region_id + seg_id) from it, and the bulk rules read that. |
-| `window_bed` | Optional (bulk) | Pre-built window BED (`#CHR START END region_id seg_id GC [MAP] [REPLI]`); pre-built at `resources/data/windows.1kbp.{hg19,hg38,chm13v2}.bed.gz`. When set (and no `breakpoint_bedpe`), it is assumed to fit every bulk stream (wgs and wes): `build_window_bed` is skipped entirely and the file is read directly (`rd_correct` filters it to `chromosomes`, so a genome-wide file is fine). A `breakpoint_bedpe` re-tiles the arms, so `window_bed` is ignored and windows are built. A pre-built file is just `build_window_bed`'s genome-wide, no-BEDPE output (`seg_id == {region_id}#0`). |
+| `window_bed` | Optional (bulk) | Pre-built window BED (`#CHR START END region_id seg_id GC [MAP] [REPLI]`); pre-built at `resources/data/windows.1kbp.{hg19,hg38,chm13v2}.bed.gz`. When set (and no `breakpoint_bedpe`), `build_window_bed` is skipped entirely and the file is read directly by every bulk assay (`rd_correct` filters it to `chromosomes`, so a genome-wide file is fine). A `breakpoint_bedpe` re-tiles the arms, so `window_bed` is ignored and windows are built. A pre-built file is just `build_window_bed`'s genome-wide, no-BEDPE output (`seg_id == {region_id}#0`). |
 | `gtf_file` | Yes | Gene annotation GTF (gzipped). |
 | `mappability_bed` | Optional | BED mappability track (4th column = score); adds a `MAP` column to the built window BEDs. |
 | `blacklist_bed` | Optional | ENCODE-style blacklist; pre-built at `resources/data/hg38-blacklist.v2.bed.gz`. |
@@ -103,13 +103,12 @@ Used by `phase_and_concat_{bulk,nonbulk}`.
 #### `params_build_windows`
 Used by the window-BED build (`build_windows.smk`, bulk). `build_segment_bed` first
 subtracts the blacklist and splits each arm at the union of all `files.breakpoint_bedpe`
-into `aux/segment.bed` (region_id + seg_id), so no bin spans a breakpoint. Per-stream
-window BEDs are then tiled off it: `aux/wgs_windows.bed.gz`, `aux/wes_windows.bed.gz`.
+into `aux/segment.bed` (region_id + seg_id), so no bin spans a breakpoint. One window BED
+is then tiled off it: `aux/windows.bed.gz`, shared by every bulk assay (WGS/WGS-lr/WES).
 
 | Field | Default | Description |
 |---|---|---|
-| `window_size_wgs` | `1000` | WGS window size (bp); fixed tiling of the segment BED. |
-| `window_size_wes` | `267` | WES window size (bp); adaptive tiling of `wes_targets_bed` within the segment BED. |
+| `window_size` | `1000` | Window size (bp); fixed tiling of the segment BED, shared by every bulk assay. |
 
 #### `params_mosdepth`
 Used by `run_mosdepth` (bulk).
@@ -137,8 +136,7 @@ Used by `combine_counts` (bulk) and `combine_counts_nonbulk` (single-cell).
 
 | Field | Default | Description |
 |---|---|---|
-| `min_snp_reads` | `[500, 1000]` | SNP-read target per bin (WGS tumor columns). A list sweeps binning: one job preprocesses once and writes one `MSR{msr}/` subdir per value. |
-| `min_snp_reads_wes` | `100` | SNP-read target per bin for WES tumor columns, applied per-column alongside `min_snp_reads` (AND) when WGS and WES are mixed. A single scalar left at its default; not swept. |
+| `min_snp_reads` | `[500, 1000]` | SNP-read target per bin, applied to every bulk tumor column (WGS/WGS-lr/WES alike). A list sweeps binning: one job preprocesses once and writes one `MSR{msr}/` subdir per value. |
 | `min_snp_per_bin` | `2` | Minimum SNPs per bin. |
 | `gene_aware_binning` | `true` | `true` = a bin grows by whole genes (GTF `feature_id`) and never splits one; `false` = window/SNP-granular binning. |
 | `nu` | `1` | Scale of the Haldane map `(1 - exp(-2*nu*d)) / 2` turning cM distance into a switch probability. |
@@ -153,12 +151,11 @@ Used by `combine_counts` (bulk) and `combine_counts_nonbulk` (single-cell).
 | `phase_flip_alpha` | `0.05` | Significance level of that test (bulk). |
 
 > [!NOTE]
-> Bulk read target, per assay composition: the target is applied per tumor column and a
-> bin closes only when every column meets its own target.
-> - **WGS-only**: `min_snp_reads` applies to every column (swept); `min_snp_reads_wes` is unused.
-> - **WES-only**: only `min_snp_reads_wes` applies; `min_snp_reads` has no effect, so every
->   `MSR{msr}/` subdir is identical. Set `min_snp_reads_wes` to tune the WES bin resolution.
-> - **Mixed WGS + WES**: WGS columns use `min_snp_reads`, WES columns use `min_snp_reads_wes`.
+> Bulk read target: `min_snp_reads` is applied per tumor column and a bin closes only when
+> every column (WGS/WGS-lr/WES) meets it. WES is handled identically to WGS -- same
+> `segment.bed`/`window_size` grid, no capture-target file -- so WGS/WGS-lr/WES of one
+> patient bin together on one grid. See [`wes_bulk_genotyping.md`](wes_bulk_genotyping.md)
+> for the WES RD-correction caveat.
 
 #### `threads`
 Used by all multi-thread rules.
@@ -186,8 +183,8 @@ Bulk binning nests five levels, coarse to fine. The SNP is the separate allele a
 |---|---|---|
 | Region (chromosome arm) | `region_id` | From `region_bed`'s 4th column, e.g. `chr1:0-121700000`. Carried for RDR/QC; a bin belongs to one arm. |
 | Segment (breakpoint chunk) | `seg_id` | `build_segment_bed` splits each arm at the union of `breakpoint_bedpe` cuts, `{region_id}#{k}`. The hard bin boundary: binning groups by `seg_id` and never merges across it (== one-per-arm with no breakpoints). |
-| Window | window-BED row | Per-stream fixed tile (`window_size_wgs` = 1 kb WGS / `window_size_wes` = 267 bp WES) that `run_mosdepth` counts and `rd_correct` bias-corrects. Intermediate; carries `#CHR/START/END/region_id/seg_id` + `GC/MAP/REPLI`. Not an output unit. |
-| Bin | `bb_id` | Final unit: `adaptive_segmentation` merges consecutive WGS windows within one `seg_id` until every tumor column meets its per-column read target (`min_snp_reads` WGS / `min_snp_reads_wes` WES) and `min_snp_per_bin`; `max_blocksize` caps only once the read target is met. WES depth is projected onto these bins by midpoint. Rows of `bb.tsv.gz` and every `bb.*.npz`. |
+| Window | window-BED row | Fixed tile (`window_size` = 1 kb) shared by every bulk assay, that `run_mosdepth` counts and `rd_correct` bias-corrects. Intermediate; carries `#CHR/START/END/region_id/seg_id` + `GC/MAP/REPLI`. Not an output unit. |
+| Bin | `bb_id` | Final unit: `adaptive_segmentation` merges consecutive windows within one `seg_id` until every tumor column meets `min_snp_reads` and `min_snp_per_bin`; `max_blocksize` caps only once the read target is met. Each assay's window depth is aggregated onto these bins. Rows of `bb.tsv.gz` and every `bb.*.npz`. |
 | SNP | row of `snps.tsv.gz` | Phased het SNP; the allele axis. Assigned to its containing window/bin; `bb.{T,A,B}allele` aggregate a bin's SNP counts. |
 
 ### Final bins
@@ -196,7 +193,7 @@ Input for HATCHet3 / CalicoST. `min_snp_reads` may be a list: one job preprocess
 
 | Mode | Location |
 |---|---|
-| `bulk_genotyping` | `bb_dir/MSR{msr}/bulk/` (one joint grid over all bulk assays, WGS and WES mixed) |
+| `bulk_genotyping` | `bb_dir/MSR{msr}/bulk/` (one joint grid over all bulk assays: WGS/WGS-lr/WES) |
 | `single_cell_genotyping` | `bb_dir/MSR{msr}/{assay_type}/` |
 | `copytyping_preprocess` | `bb_dir/{assay_type}/` (not MSR-driven) |
 
@@ -237,7 +234,7 @@ Input for HATCHet3 / CalicoST. `min_snp_reads` may be a list: one job preprocess
 | `pileup_dir/` | One cellsnp-lite dir per `{assay_type}_{dataset_id}`; bulk also `{assay_type}/windows.bed.gz` (per-assay mosdepth grid), `{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz`, `window.dp.npz`, `window.tsv.gz`, `depth_statistics.tsv`. |
 | `allele_dir/` | `bulk/` (one joint set over all bulk assays) or per `{assay_type}` (single-cell): `snps.tsv.gz`, `snp.{T,A,B}allele.npz`, `sample_ids.tsv`, and for single-cell `barcodes{,.full}.tsv.gz`, `unique_snp_ids.npy`. |
 | `bb_dir/{assay_type}.h5ad` | Gene x cell AnnData (single-cell RNA / spatial); MSR-independent, so it sits flat. |
-| `aux_dir/` | Bulk window build: `segment.bed` (region_id arm + seg_id chunk, built from `region_bed`), `{wgs,wes}_windows.bed.gz` (per-stream window BEDs), and `repliseq/{name}.{reference_version}.bedGraph` (Repli-seq tracks, cached across window rebuilds) when `do_repliseq`. Source bigWigs are hg19: an hg19 run uses them directly; an hg38 run lifts hg19 -> hg38 first. |
+| `aux_dir/` | Bulk window build: `segment.bed` (region_id arm + seg_id chunk, built from `region_bed`), `windows.bed.gz` (the one shared window BED), and `repliseq/{name}.{reference_version}.bedGraph` (Repli-seq tracks, cached across window rebuilds) when `do_repliseq`. Source bigWigs are hg19: an hg19 run uses them directly; an hg38 run lifts hg19 -> hg38 first. |
 
 ### TSV columns
 

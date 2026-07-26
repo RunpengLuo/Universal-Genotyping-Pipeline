@@ -78,7 +78,6 @@ if workflow_mode == "bulk_genotyping":
             min_switchprob=config["params_combine_counts"]["min_switchprob"],
             switchprob_ps=config["params_combine_counts"]["switchprob_ps"],
             min_snp_reads=msr_list,
-            min_snp_reads_wes=config["params_combine_counts"]["min_snp_reads_wes"],
             min_snp_per_bin=config["params_combine_counts"]["min_snp_per_bin"],
             gene_aware_binning=config["params_combine_counts"]["gene_aware_binning"],
             rdr_outlier_quantile=config["params_combine_counts"]["rdr_outlier_quantile"],
@@ -288,7 +287,6 @@ elif workflow_mode == "copytyping_preprocess":
             qc_dir=config["qc_dir"],
             sample_name=sample_id,
             assay_type=lambda wc: wc.assay_type,
-            feature_type=lambda wc: ASSAY_TYPE2FEATURE_TYPE[wc.assay_type],
             run_id=_run_id,
         script:
             """../scripts/combine_counts_fixed_bins.py"""

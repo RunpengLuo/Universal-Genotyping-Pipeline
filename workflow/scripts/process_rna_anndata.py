@@ -1,4 +1,6 @@
-import os, logging, tempfile
+import os
+import logging
+import tempfile
 
 snakemake_handle = snakemake
 

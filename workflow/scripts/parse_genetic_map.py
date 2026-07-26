@@ -1,4 +1,5 @@
-import os, logging
+import os
+import logging
 
 snakemake_handle = snakemake
 
@@ -9,7 +10,6 @@ os.environ["MKL_NUM_THREADS"] = str(t)
 os.environ["VECLIB_MAXIMUM_THREADS"] = str(t)
 os.environ["NUMEXPR_NUM_THREADS"] = str(t)
 
-import numpy as np
 import pandas as pd
 
 from utils import sort_df_chr, REFVER2SEXCHROM
@@ -131,7 +131,7 @@ if phaser == "shapeit":
             comment="#",
         )
         assert "pos" in genetic_map.columns and "cM" in genetic_map.columns, (
-            f"gmap.gz file is invalid"
+            "gmap.gz file is invalid"
         )
         genetic_map["#CHR"] = f"chr{chrname}"
         genetic_map["POS"] = genetic_map["pos"]

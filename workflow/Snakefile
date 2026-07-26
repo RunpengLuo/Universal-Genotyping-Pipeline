@@ -17,7 +17,6 @@ from const import (
     LONGREAD_ASSAYS,
     ALLOWED_ASSAY_TYPES,
     ASSAY_TYPE2MODALITY,
-    ASSAY_TYPE2FEATURE_TYPE,
     RANGER_LAYOUT,
     REPLISEQ_BIGWIG_FILES,
     UCSC_REPLISEQ_BASE,
@@ -63,13 +62,10 @@ if _has_config:
     require_genetic_map = _wf["require_genetic_map"]
     segment_bed = _wf["segment_bed"]
     bedpe_files = _wf["bedpe_files"]
-    wes_targets_files = _wf["wes_targets_files"]
     has_breakpoints = _wf["has_breakpoints"]
     use_prebuilt_windows = _wf["use_prebuilt_windows"]
-    window_streams = _wf["window_streams"]
     do_repliseq = _wf["do_repliseq"]
-    window_size_wgs = _wf["window_size_wgs"]
-    window_size_wes = _wf["window_size_wes"]
+    window_size = _wf["window_size"]
     genotype_files = _wf["genotype_files"]
     phase_files = _wf["phase_files"]
     get_genetic_map = _wf["get_genetic_map"]

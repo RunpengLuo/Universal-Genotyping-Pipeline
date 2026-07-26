@@ -12,9 +12,9 @@
 # The window BED is EITHER consumed pre-built OR built (see the if/else below):
 #
 #   use_prebuilt_windows [window_bed set, no BEDPE]:
-#       config["window_bed"] is read directly by the consumers for every stream
-#       (get_assay_window_bed); nothing is built and the Repli-seq fetch is skipped.
-#       rd_correct filters it to config["chromosomes"], so extra contigs are harmless.
+#       config["window_bed"] is read directly by the consumers (window_bed_path);
+#       nothing is built and the Repli-seq fetch is skipped. rd_correct filters it to
+#       config["chromosomes"], so extra contigs are harmless.
 #
 #   else -- build the window BED (all inside the `if not use_prebuilt_windows` block):
 #     . repliseq_bigwig_to_bedgraph    [do_repliseq only, per bigWig {name}]
@@ -22,33 +22,25 @@
 #     . repliseq_liftover              [do_repliseq + hg38 target only, per {name}]
 #         in : {name}.hg19.bedGraph + chain URL (storage)
 #         out: {name}.hg38.bedGraph (cached under aux); hg19 runs skip this
-#     . build_window_bed              [per stream = wgs / wes]
+#     . build_window_bed              [one grid for every bulk assay: WGS/WGS-lr/WES]
 #         in : segment_bed + reference + genome_size, and the optional
-#              wes_targets (wes), mappability_bed, {reference_version} bedgraphs
-#         out: {stream}_windows.bed.gz  (#CHR START END region_id seg_id GC [MAP] [REPLI])
+#              mappability_bed, {reference_version} bedgraphs
+#         out: windows.bed.gz  (#CHR START END region_id seg_id GC [MAP] [REPLI])
 #              + qc_pdf (segment- and window-length histograms)
 #
 #   . window_bed_to_3bed               [per assay_type]
-#       in : {stream}_windows.bed.gz           out: pileup/{assay}/windows.bed.gz (mosdepth --by)
+#       in : windows.bed.gz           out: pileup/{assay}/windows.bed.gz (mosdepth --by)
 #
-# Globals from parse_workflow: segment_bed, bedpe_files, wes_targets_files,
-# has_breakpoints, use_prebuilt_windows, window_streams, do_repliseq,
-# window_size_wgs, window_size_wes.
+# Globals from parse_workflow: segment_bed, bedpe_files, has_breakpoints,
+# use_prebuilt_windows, do_repliseq, window_size.
 ##################################################
 
-
-def get_assay_window_bed(assay_type):
-    """Per-assay window BED path (bulkWES -> wes stream, WGS family -> wgs stream).
-
-    With use_prebuilt_windows, the pre-built window_bed is consumed directly for every
-    stream (assumed to fit both wgs and wes): rd_correct filters it to
-    config["chromosomes"] and window_bed_to_3bed only cuts columns, so extra contigs
-    are harmless and nothing is built.
-    """
-    if use_prebuilt_windows:
-        return config["window_bed"]
-    stream = "wes" if assay_type == "bulkWES" else "wgs"
-    return config["aux_dir"] + f"/{stream}_windows.bed.gz"
+# One window BED for every bulk assay (WGS/WGS-lr/WES share the segment.bed grid).
+window_bed_path = (
+    config["window_bed"]
+    if use_prebuilt_windows
+    else config["aux_dir"] + "/windows.bed.gz"
+)
 
 
 if workflow_mode == "bulk_genotyping":
@@ -76,11 +68,11 @@ if workflow_mode == "bulk_genotyping":
             "../scripts/build_segment_bed.py"
 
     # ------------------------------------------------------------------------
-    # Window BED: EITHER consumed pre-built, OR built from scratch.
+    # Window BED: EITHER consumed pre-built, OR built from scratch (window_bed_path).
     #   use_prebuilt_windows (window_bed set, no BEDPE) -> config["window_bed"] is read
-    #     directly for every stream (get_assay_window_bed); nothing is built here, and
-    #     the Repli-seq fetch/convert is skipped (only build_window_bed consumes it).
-    #   else -> build_window_bed builds the window BED for every stream (wgs and wes),
+    #     directly; nothing is built here, and the Repli-seq fetch/convert is skipped
+    #     (only build_window_bed consumes it).
+    #   else -> build_window_bed builds the one shared window BED (all bulk assays),
     #     fed by the Repli-seq bedGraphs staged just below (when do_repliseq).
     # ------------------------------------------------------------------------
     if not use_prebuilt_windows:
@@ -145,22 +137,17 @@ if workflow_mode == "bulk_genotyping":
                         "{output.unmapped} 2> {log}"
 
         rule build_window_bed:
-            """Build a stream's window BED in one pass -> config["aux_dir"]/{stream}_windows.bed.gz.
+            """Build the window BED in one pass -> config["aux_dir"]/windows.bed.gz.
 
-            Tiles segment_bed (wgs) or wes_targets (wes), assigns region_id + seg_id, then
-            annotates GC (always), MAP (when mappability_bed is set), and REPLI (when
-            Repli-seq bedGraphs are available). Optional inputs are empty ([]) when absent,
-            and the script skips the covariate whose input is empty.
+            Tiles segment_bed, assigns region_id + seg_id, then annotates GC (always),
+            MAP (when mappability_bed is set), and REPLI (when Repli-seq bedGraphs are
+            available). Optional inputs are empty ([]) when absent, and the script skips
+            the covariate whose input is empty. One grid for every bulk assay.
             """
             input:
                 region_bed=segment_bed,
                 reference=config["reference"],
                 genome_size=config["genome_size"],
-                wes_targets_bed=lambda wc: (
-                    [file_input(f) for f in wes_targets_files]
-                    if wc.stream == "wes"
-                    else []
-                ),
                 mappability_bed=config.get("mappability_bed") or [],
                 bedgraphs=(
                     [
@@ -171,30 +158,23 @@ if workflow_mode == "bulk_genotyping":
                     else []
                 ),
             output:
-                window_bed=config["aux_dir"] + "/{stream}_windows.bed.gz",
+                window_bed=config["aux_dir"] + "/windows.bed.gz",
                 qc_pdf=report(
-                    config["qc_dir"] + "/build_window_bed.{stream}.pdf",
+                    config["qc_dir"] + "/build_window_bed.pdf",
                     category="QC plots",
                     subcategory="window build",
-                    labels={"stream": "{stream}"},
                 ),
             log:
-                config["log_dir"]
-                + f"/build_window_bed/build_window_bed.{{stream}}.{_run_id}.log",
+                config["log_dir"] + f"/build_window_bed/build_window_bed.{_run_id}.log",
             benchmark:
                 config["bench_dir"]
-                + f"/build_window_bed/build_window_bed.{{stream}}.{_run_id}.tsv"
-            wildcard_constraints:
-                stream="(wgs|wes)",
+                + f"/build_window_bed/build_window_bed.{_run_id}.tsv"
             conda:
                 "../envs/base.yaml"
             params:
-                mode=lambda wc: wc.stream,
                 reference_version=config["reference_version"],
                 chromosomes=config["chromosomes"],
-                window_size=lambda wc: (
-                    window_size_wes if wc.stream == "wes" else window_size_wgs
-                ),
+                window_size=window_size,
             script:
                 "../scripts/build_window_bed.py"
 
@@ -202,7 +182,7 @@ if workflow_mode == "bulk_genotyping":
 rule window_bed_to_3bed:
     """Per-assay headerless 3-column BED (#CHR/START/END) for mosdepth --by."""
     input:
-        window_bed=lambda wc: get_assay_window_bed(wc.assay_type),
+        window_bed=window_bed_path,
     output:
         mosdepth_bed=temp(config["pileup_dir"] + "/{assay_type}/windows.bed.gz"),
     log:

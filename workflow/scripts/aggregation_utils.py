@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import numba
 
-from scipy.sparse import csr_matrix, hstack, issparse
+from scipy.sparse import csr_matrix, issparse
 from scipy.stats import beta as beta_dist
 
 import scanpy as sc
@@ -325,7 +325,7 @@ def adaptive_segmentation(
     min_snp_reads : int or array-like
         Minimum total tumor reads for a bin, per tumor column. A scalar is
         broadcast to every tumor column; an array of length ``M - tumor_sidx``
-        sets a per-column threshold (e.g. ``min_snp_reads_wes`` on WES columns).
+        sets a per-column threshold.
     min_snp_per_bin : int
         Minimum number of SNPs per bin.
     grp_cols : list of str
@@ -746,7 +746,7 @@ def snp_to_region(
     logging.info(f"#{assay_type}-SNP (remain)={len(snp_df)}")
 
     counts = snp_df[region_id].value_counts()
-    region_df[f"#SNPS"] = region_df[region_id].map(counts).fillna(0).astype(int)
+    region_df["#SNPS"] = region_df[region_id].map(counts).fillna(0).astype(int)
     return snp_df
 
 

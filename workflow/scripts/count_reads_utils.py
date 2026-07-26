@@ -3,10 +3,7 @@
 Used by rd_correct.py and combine_counts.py.
 """
 
-import logging
-
 import numpy as np
-import pandas as pd
 
 
 def compute_gc_rd_stats(mat, gc_vals, labels, n_gc_bins=100):
