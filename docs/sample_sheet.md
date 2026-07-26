@@ -48,7 +48,7 @@ Sample file is a JSON-format configuration file contains dataset records over mu
 | `assay_type` | Yes | `bulkWGS` \| `bulkWGS-lr` \| `bulkWES` \| `scRNA` \| `scATAC` \| `VISIUM` \| `VISIUM3prime`. |
 | `sample_type` | Yes | `normal` \| `tumor`. |
 | `files` | Yes | Input files; see [Files](#files). |
-| `rdr_base_dataset_id` | No | Normal `dataset_id` used as the RDR baseline; see [RDR normalization](workflow.md#bulk_genotyping). |
+| `rdr_base_dataset_id` | No | matched-normal sample `dataset_id`; see [RDR normalization](workflow.md#bulk_genotyping). |
 | `passage_id` | No | e.g. `p23`. |
 | `platform` | No | e.g. `Illumina PCR-free`. |
 | `reference_version` | No | e.g. `GRCh38-GIABv3`; see [Workflow](workflow.md). |

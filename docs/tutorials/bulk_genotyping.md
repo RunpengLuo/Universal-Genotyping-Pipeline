@@ -1,6 +1,6 @@
-# Tutorial: Bulk WGS Genotyping (hg38)
+# Tutorial: Bulk WGS/WES Genotyping for HATCHet
 
-This tutorial preprocess the bulk sequencing data to run HATCHet. See [README](../../README.md#installation) first to install the pipeline.
+This tutorial preprocess the bulk WGS/WES sequencing data to run [HATCHet3](https://github.com/raphael-group/hatchet/tree/hatchet3-dev). See [README](../../README.md#installation) first to install the pipeline.
 
 ## Prepare inputs
 ### 1. Sample file
