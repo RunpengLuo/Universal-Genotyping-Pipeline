@@ -1,7 +1,0 @@
-name: genotyping-samtools
-channels:
-  - bioconda
-  - conda-forge
-dependencies:
-  - samtools>=1.19
-  - htslib>=1.19

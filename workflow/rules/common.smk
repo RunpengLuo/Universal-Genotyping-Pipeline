@@ -10,40 +10,18 @@ def file_input(paths):
     return storage(str(paths)) if is_url(paths) else str(paths)
 
 
-# Remote bulk alignments are region-subset to `chromosomes` once (subset_remote_alignment),
-# so every consuming rule reads a small local BAM instead of storage()-ing the whole file.
-# Maps the remote alignment URL -> its local subset BAM path; local or single-cell inputs
-# are absent and keep the storage()/local path.
-remote_bulk_subset = {
-    files["alignment"]: config["aux_dir"]
-    + f"/remote_subset/{assay_type}_{dataset_id}.bam"
-    for (assay_type, dataset_id), files in get_data.items()
-    if assay_type in BULK_ASSAYS and is_url(files["alignment"])
-}
-
-
 def alignment_input(files):
-    """Rule input for the .bam/.cram of one files map, or a list of files maps.
-
-    A remote bulk alignment is redirected to its local region-subset BAM
-    (subset_remote_alignment); any other URL falls back to whole-file storage().
-    """
+    """Rule input for the .bam/.cram of one files map, or a list of files maps."""
     if isinstance(files, (list, tuple)):
         return [alignment_input(f) for f in files]
-    subset = remote_bulk_subset.get(files["alignment"])
-    return subset if subset else file_input(files["alignment"])
+    return file_input(files["alignment"])
 
 
 def alignment_index_input(files):
-    """Rule input for the alignment index of one files map, or a list of files maps.
-
-    For a remote bulk alignment the index is the subset BAM's local ``.bai``; any
-    other URL falls back to whole-file storage() of the provided index.
-    """
+    """Rule input for the .bai/.crai of one files map, or a list of files maps."""
     if isinstance(files, (list, tuple)):
         return [alignment_index_input(f) for f in files]
-    subset = remote_bulk_subset.get(files["alignment"])
-    return subset + ".bai" if subset else file_input(files["alignment_index"])
+    return file_input(files["alignment_index"])
 
 
 def download_slots(files):
@@ -105,44 +83,3 @@ def cli_flags_str(params_dict, *specs):
         is_bool = len(spec) > 2 and spec[2]
         parts.extend(cli_flag(params_dict, spec[0], spec[1], is_bool=is_bool))
     return " ".join(parts)
-
-
-# When a bulk alignment is a remote URL, fetch only `chromosomes` once into a local BAM
-# via the remote index (htslib HTTP range reads), so genotype/phase/pileup/mosdepth all
-# read the subset rather than downloading the whole file. BAM or CRAM in (the reference
-# decodes CRAM, ignored for BAM); output is always BAM. Single-cell not covered.
-if remote_bulk_subset:
-
-    rule subset_remote_alignment:
-        input:
-            reference=config["reference"],
-        output:
-            bam=temp(config["aux_dir"] + "/remote_subset/{assay_type}_{dataset_id}.bam"),
-            bai=temp(
-                config["aux_dir"] + "/remote_subset/{assay_type}_{dataset_id}.bam.bai"
-            ),
-        log:
-            config["log_dir"]
-            + f"/subset_remote_alignment/subset_remote_alignment.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
-        benchmark:
-            config["bench_dir"]
-            + f"/subset_remote_alignment/subset_remote_alignment.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
-        wildcard_constraints:
-            assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
-        conda:
-            "../envs/samtools.yaml"
-        threads: config["threads"]["pileup"]
-        resources:
-            downloads=1,
-        params:
-            aln_url=lambda wc: get_data[(wc.assay_type, wc.dataset_id)]["alignment"],
-            idx_url=lambda wc: get_data[(wc.assay_type, wc.dataset_id)][
-                "alignment_index"
-            ],
-            regions=" ".join(f"chr{c}" for c in config["chromosomes"]),
-        shell:
-            r"""
-            samtools view -b -@ {threads} -T "{input.reference}" -o "{output.bam}" \
-                -X "{params.aln_url}" "{params.idx_url}" {params.regions} 2> {log}
-            samtools index -@ {threads} "{output.bam}" 2>> {log}
-            """

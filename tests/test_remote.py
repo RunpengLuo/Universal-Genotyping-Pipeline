@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""Remote sample-file inputs.
+"""Remote sample-file inputs: URLs are wrapped in storage() and fetched with their index.
 
 Runpeng Luo (2026-07-12)
 
-A remote BULK alignment is region-subset to `chromosomes` by the
-`subset_remote_alignment` rule (samtools reads the URL + remote index directly, no
-whole-file storage()); other remote inputs are still wrapped in storage(). The local
-test serves a stub alignment over http://127.0.0.1 and dry-runs against it, so no
-network is needed. The GIAB test resolves real URLs and is marked `network`; it is
-deselected unless `-m network` is given.
+The local test serves a stub alignment over http://127.0.0.1 and dry-runs against
+it, so no network is needed. The GIAB test resolves real URLs and is marked
+`network`; it is deselected unless `-m network` is given.
 
 Dependencies:
   pytest; snakemake with snakemake-storage-plugin-http.
@@ -72,8 +69,8 @@ def _remote_sheet(path, alignment, index):
     return path
 
 
-def test_remote_bulk_alignment_is_subset(workspace, http_server):
-    """A remote bulk alignment is region-subset (not storage()); URL + index are params."""
+def test_local_url_is_retrieved_from_storage(workspace, http_server):
+    """An http(s) alignment and its index are both planned as storage retrievals."""
     sheet = _remote_sheet(
         os.path.join(workspace["root"], "remote.json"),
         f"{http_server}/remote.bam",
@@ -81,11 +78,8 @@ def test_remote_bulk_alignment_is_subset(workspace, http_server):
     )
     proc = dryrun(workspace, sheet, "T1", "bulk_genotyping", ["bulkWGS"])
     assert proc.returncode == 0, proc.stderr[-2000:]
-    assert "subset_remote_alignment" in proc.stdout
-    assert f"{http_server}/remote.bam" in proc.stdout
-    assert f"{http_server}/remote.bam.bai" in proc.stdout
-    # the whole-file storage() path is bypassed for the bulk alignment
-    assert "retrieve from storage" not in proc.stdout
+    assert proc.stdout.count("retrieve from storage") >= 2
+    assert "remote.bam.bai" in proc.stdout
 
 
 def test_local_and_remote_mix(workspace, http_server):
@@ -123,19 +117,16 @@ def test_local_and_remote_mix(workspace, http_server):
 
     proc = dryrun(workspace, sheet, "T1", "bulk_genotyping", ["bulkWGS"])
     assert proc.returncode == 0, proc.stderr[-2000:]
-    # remote N1 is subset via samtools; local D1 passes through as a plain path
-    assert "subset_remote_alignment" in proc.stdout
-    assert f"{http_server}/remote.bam" in proc.stdout
+    assert "retrieve from storage" in proc.stdout
     assert f"{ref}/tumor.bam" in proc.stdout
 
 
 @pytest.mark.network
 def test_giab_url_resolves(workspace):
-    """A real GIAB alignment URL plans a region subset (no download in -n)."""
+    """A real GIAB alignment URL plans a storage retrieval (no download in -n)."""
     sheet = _remote_sheet(
         os.path.join(workspace["root"], "giab.json"), GIAB_BAM, GIAB_BAM + ".bai"
     )
     proc = dryrun(workspace, sheet, "T1", "bulk_genotyping", ["bulkWGS"])
     assert proc.returncode == 0, proc.stderr[-2000:]
-    assert "subset_remote_alignment" in proc.stdout
-    assert GIAB_BAM in proc.stdout
+    assert "retrieve from storage" in proc.stdout
