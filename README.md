@@ -6,7 +6,7 @@ Universal Genotyping Pipeline inputs BAMs from various assay types (bulk LR/SR W
 
 ## Installation
 
-Requires [conda](https://docs.conda.io/en/latest/) and [Snakemake](https://snakemake.readthedocs.io/) >= 9. Every tool dependency is declared per-rule under `workflow/envs/` (`base.yaml` — Python scientific stack; `tools.yaml` — bcftools, cellsnp-lite, mosdepth, samtools, tabix; `phase.yaml` — eagle2, shapeit5, longphase) and built by Snakemake itself:
+Requires [conda](https://docs.conda.io/en/latest/) and [Snakemake](https://snakemake.readthedocs.io/) >= 9. Tool dependencies are declared under `workflow/envs/`, split per tool group so `--use-conda` builds only what a run needs (`base.yaml` — Python scientific stack; `bcftools.yaml`, `eagle.yaml`, `shapeit.yaml`, `longphase.yaml`, `cellsnp.yaml`, `mosdepth.yaml`, `ucsc.yaml` — external CLI tools), built by Snakemake itself:
 
 ```sh
 snakemake --profile /path/to/workflow/profile/ \

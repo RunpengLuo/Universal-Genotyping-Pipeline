@@ -1,0 +1,6 @@
+name: genotyping-cellsnp
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - cellsnp-lite>=1.2

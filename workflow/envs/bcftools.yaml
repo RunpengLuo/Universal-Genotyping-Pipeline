@@ -1,0 +1,7 @@
+name: genotyping-bcftools
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - bcftools>=1.19
+  - tabix>=1.11

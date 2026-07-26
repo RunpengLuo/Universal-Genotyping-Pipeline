@@ -16,7 +16,7 @@ if run_phasing and config["phaser"] == "shapeit":
             config["bench_dir"]
             + f"/phase_snps_shapeit/phase_snps.chr{{chrname}}.{_run_id}.tsv"
         conda:
-            "../envs/tools.yaml"
+            "../envs/shapeit.yaml"
         threads: config["threads"]["phase"]
         params:
             chrom="chr{chrname}",
@@ -51,7 +51,7 @@ if run_phasing and config["phaser"] == "eagle":
             config["bench_dir"]
             + f"/phase_snps_eagle/phase_snps.chr{{chrname}}.{_run_id}.tsv"
         conda:
-            "../envs/tools.yaml"
+            "../envs/eagle.yaml"
         threads: config["threads"]["phase"]
         params:
             chrom="chr{chrname}",
@@ -86,7 +86,7 @@ if run_phasing and config["phaser"] == "longphase":
             config["bench_dir"]
             + f"/phase_snps_longphase/phase_snps.chr{{chrname}}.{_run_id}.tsv"
         conda:
-            "../envs/tools.yaml"
+            "../envs/longphase.yaml"
         threads: config["threads"]["phase"]
         resources:
             downloads=download_slots(phase_files),
@@ -133,7 +133,7 @@ if run_phasing:
         benchmark:
             config["bench_dir"] + f"/concat_and_extract_phased_het_snps/{_run_id}.tsv"
         conda:
-            "../envs/tools.yaml"
+            "../envs/bcftools.yaml"
         threads: 1
         shell:
             r"""

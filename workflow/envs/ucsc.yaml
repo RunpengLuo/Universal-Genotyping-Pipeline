@@ -1,0 +1,7 @@
+name: genotyping-ucsc
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - ucsc-bigwigtobedgraph>=482
+  - ucsc-liftover>=482

@@ -20,7 +20,7 @@ rule pileup_snps_bulk_mode1b:
     wildcard_constraints:
         assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
     conda:
-        "../envs/tools.yaml"
+        "../envs/cellsnp.yaml"
     threads: config["threads"]["pileup"]
     resources:
         downloads=lambda wc: download_slots(get_data[(wc.assay_type, wc.dataset_id)]),
@@ -67,7 +67,7 @@ rule pileup_snps_nonbulk_mode1a:
     wildcard_constraints:
         assay_type="(scRNA|scATAC|VISIUM|VISIUM3prime)",
     conda:
-        "../envs/tools.yaml"
+        "../envs/cellsnp.yaml"
     threads: config["threads"]["pileup"]
     resources:
         downloads=lambda wc: download_slots(get_data[(wc.assay_type, wc.dataset_id)]),

@@ -1,0 +1,8 @@
+name: genotyping-shapeit
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - shapeit5>=5.1.1
+  - bcftools>=1.19
+  - tabix>=1.11

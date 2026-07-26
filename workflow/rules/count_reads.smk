@@ -28,7 +28,7 @@ rule run_mosdepth:
     wildcard_constraints:
         assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
     conda:
-        "../envs/tools.yaml"
+        "../envs/mosdepth.yaml"
     threads: config["threads"]["mosdepth"]
     resources:
         downloads=lambda wc: download_slots(get_data[(wc.assay_type, wc.dataset_id)]),

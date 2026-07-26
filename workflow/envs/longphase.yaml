@@ -1,0 +1,7 @@
+name: genotyping-longphase
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - longphase>=2.0.2
+  - tabix>=1.11

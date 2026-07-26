@@ -24,7 +24,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
         benchmark:
             config["bench_dir"] + f"/genotype_snps_bulk/chr{{chrname}}.{_run_id}.tsv"
         conda:
-            "../envs/tools.yaml"
+            "../envs/bcftools.yaml"
         threads: config["threads"]["genotype"]
         resources:
             downloads=download_slots(genotype_files),
@@ -88,9 +88,10 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
         log:
             config["log_dir"] + f"/genotype_snps_pseudobulk/{{modality}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"] + f"/genotype_snps_pseudobulk/{{modality}}.{_run_id}.tsv"
+            config["bench_dir"]
+            + f"/genotype_snps_pseudobulk/{{modality}}.{_run_id}.tsv"
         conda:
-            "../envs/tools.yaml"
+            "../envs/cellsnp.yaml"
         threads: config["threads"]["genotype"]
         resources:
             downloads=lambda wc: download_slots(modality2files[wc.modality]),
@@ -171,7 +172,7 @@ if not run_genotyping and run_phasing:
         benchmark:
             config["bench_dir"] + f"/split_het_snp_vcf/chr{{chrname}}.{_run_id}.tsv"
         conda:
-            "../envs/tools.yaml"
+            "../envs/bcftools.yaml"
         threads: 1
         params:
             chrom="chr{chrname}",

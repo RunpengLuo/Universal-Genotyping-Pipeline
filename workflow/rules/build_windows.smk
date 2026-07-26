@@ -112,7 +112,7 @@ if workflow_mode == "bulk_genotyping":
                 wildcard_constraints:
                     name="[A-Za-z0-9]+",
                 conda:
-                    "../envs/tools.yaml"
+                    "../envs/ucsc.yaml"
                 resources:
                     downloads=1,
                 shell:
@@ -136,7 +136,7 @@ if workflow_mode == "bulk_genotyping":
                     wildcard_constraints:
                         name="[A-Za-z0-9]+",
                     conda:
-                        "../envs/tools.yaml"
+                        "../envs/ucsc.yaml"
                     resources:
                         downloads=1,
                     shell:

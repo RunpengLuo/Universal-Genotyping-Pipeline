@@ -98,34 +98,32 @@ if _has_config:
 
 else:
 
-    # install conda env
-    rule _conda_env_base:
-        output:
-            temp(".conda_env_base"),
-        conda:
-            "envs/base.yaml"
-        shell:
-            "touch {output}"
+    # No config: one target per conda env so a plain `snakemake --use-conda` run
+    # (or `--conda-create-envs-only`) pre-builds them all.
+    _ENV_YAMLS = [
+        "base",
+        "bcftools",
+        "eagle",
+        "shapeit",
+        "longphase",
+        "cellsnp",
+        "mosdepth",
+        "ucsc",
+    ]
 
-    rule _conda_env_tools:
-        output:
-            temp(".conda_env_tools"),
-        conda:
-            "envs/tools.yaml"
-        shell:
-            "touch {output}"
+    for _env in _ENV_YAMLS:
 
-    rule _conda_env_phase:
-        output:
-            temp(".conda_env_phase"),
-        conda:
-            "envs/phase.yaml"
-        shell:
-            "touch {output}"
+        rule:
+            name:
+                f"_conda_env_{_env}"
+            output:
+                temp(f".conda_env_{_env}"),
+            conda:
+                f"envs/{_env}.yaml"
+            shell:
+                "touch {output}"
 
     rule all:
         default_target: True
         input:
-            ".conda_env_base",
-            ".conda_env_tools",
-            ".conda_env_phase",
+            expand(".conda_env_{env}", env=_ENV_YAMLS),
