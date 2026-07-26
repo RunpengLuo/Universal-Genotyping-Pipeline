@@ -47,7 +47,7 @@ from combine_counts_utils import (
     setup_phaseset_groups,
 )
 from matplotlib.backends.backend_pdf import PdfPages
-from plot_utils import plot_allele_freqs, plot_rdr_baf, plot_segmentation_qc
+from plot_utils import plot_rdr_baf, plot_segmentation_qc
 from switchprobs import (
     interp_cM_blocks,
     estimate_switchprobs_cM,
@@ -301,21 +301,6 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
             tot_mtx_bb,
             pdf=pdf,
             gene_count=bb_gene_count,
-        )
-        plot_allele_freqs(
-            bbs,
-            sample_labels,
-            tot_mtx_bb,
-            b_mtx_bb,
-            genome_size,
-            qc_dir,
-            apply_pseudobulk=False,
-            allele="B",
-            unit="bb",
-            region_bed=region_bed,
-            blacklist_bed=blacklist_bed,
-            run_id=f"{run_id}.MSR{msr}",
-            pdf=pdf,
         )
         plot_rdr_baf(
             bbs,
