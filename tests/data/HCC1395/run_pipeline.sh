@@ -7,10 +7,11 @@
 #   Run inside the genotyping-env env (the CI/act job activates it).
 #
 # Usage:
-#   [RUN=<out_dir>] [CONFIG=<config>] [CORES=<n>] bash run_pipeline.sh
-#           RUN     # output root (default: <repo>/.test-run/<case>)
-#           CONFIG  # config file (default: <case>/config.yaml)
-#           CORES   # snakemake --cores (default: 4)
+#   [RUN=<out_dir>] [CONFIG=<config>] [CORES=<n>] [PROFILE=<dir>] bash run_pipeline.sh
+#           RUN      # output root (default: <repo>/.test-run/<case>)
+#           CONFIG   # config file (default: <case>/config.yaml)
+#           CORES    # snakemake --cores (default: 4)
+#           PROFILE  # snakemake --profile dir (default: profile/, repo-relative)
 # Notes:
 #   cwd is forced to the repo root so the config's repo-relative reference paths
 #   resolve; output dirs are redirected under RUN. CASE is inferred from this
@@ -26,10 +27,11 @@ CASENAME="$(basename "$HERE")"
 RUN="${RUN:-$REPO/.test-run/$CASENAME}"
 CONFIG="${CONFIG:-$CASE/config.yaml}"
 CORES="${CORES:-4}"
+PROFILE="${PROFILE:-profile/}"
 
 snakemake -s workflow/Snakefile \
   --configfile "$CONFIG" \
-  --profile profile/ --cores "$CORES" \
+  --profile "$PROFILE" --cores "$CORES" \
   --config \
     snp_dir="$RUN/snps" phase_dir="$RUN/phase" pileup_dir="$RUN/pileup" \
     allele_dir="$RUN/allele" bb_dir="$RUN/bb" qc_dir="$RUN/qc" \
