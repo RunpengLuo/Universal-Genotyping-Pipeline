@@ -130,6 +130,41 @@ def read_VCF(
     return snps
 
 
+def read_bcftools_counts(tsv_file: str):
+    """Read a bcftools per-locus AD table into a DataFrame.
+
+    Input is the output of ``pileup_snps_bulk_bcftools``: tab-separated
+    ``#CHROM POS REF ALT AD`` where ALT is a comma-list (e.g. ``C,<*>``) and AD is a
+    comma-list of allele depths (``ref,alt1,...``), one row per het locus with reads.
+
+    Args:
+        tsv_file: Path to the (optionally gzipped) counts TSV.
+
+    Returns:
+        DataFrame with columns ``#CHROM``, ``POS``, ``REF``, ``ALT`` (list[str]),
+        ``AD`` (list[int]), ``KEY`` (``#CHROM_POS``, matching ``read_VCF``), and
+        ``RAW_SNP_IDX`` (file row order). Empty DataFrame if the file has no records.
+    """
+    df = pd.read_csv(
+        tsv_file,
+        sep="\t",
+        header=None,
+        names=["#CHROM", "POS", "REF", "ALT", "AD"],
+        dtype={"#CHROM": "string", "REF": "string", "ALT": "string", "AD": "string"},
+    )
+    if df.empty:
+        return df
+    df["POS"] = df["POS"].astype(np.int64)
+    if not str(df["#CHROM"].iloc[0]).startswith("chr"):
+        df["#CHROM"] = "chr" + df["#CHROM"].astype(str)
+    df["#CHROM"] = df["#CHROM"].str.replace("^chrMT$", "chrM", regex=True)
+    df["KEY"] = df["#CHROM"].astype(str) + "_" + df["POS"].astype(str)
+    df["RAW_SNP_IDX"] = np.arange(len(df))
+    df["ALT"] = df["ALT"].str.split(",")
+    df["AD"] = df["AD"].str.split(",").apply(lambda xs: [int(x) for x in xs])
+    return df
+
+
 def read_BED(bed_file: str, addchr=True, extra_columns=("region_id", "seg_id")):
     """Read a BED file: the first 3 columns are ``#CHR``/``START``/``END``.
 

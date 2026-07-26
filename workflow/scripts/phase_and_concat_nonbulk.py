@@ -85,7 +85,7 @@ for idx, dataset_id in enumerate(dataset_ids):
     barcodes = pd.read_table(sample_tsvs[idx], sep="\t", header=None, names=["BARCODE"])
     barcodes["BARCODE"] = barcodes["BARCODE"].astype(str) + f"_{dataset_id}"
     barcodes_list.append(barcodes)
-    tot_canon, ad_canon = canon_mat_one_replicate(
+    tot_canon, ad_canon = canon_mat_from_files(
         parent_keys,
         vcf_files[idx],
         tot_mtx_files[idx],

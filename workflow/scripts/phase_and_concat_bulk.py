@@ -56,10 +56,7 @@ setup_logging(log_file)
 logging.info("joint phase and concat for bulk assays")
 
 # inputs
-vcf_files = snakemake_handle.input["vcfs"]
-sample_tsvs = snakemake_handle.input["sample_tsvs"]
-tot_mtx_files = snakemake_handle.input["tot_mtxs"]
-ad_mtx_files = snakemake_handle.input["ad_mtxs"]
+counts_files = snakemake_handle.input["counts"]
 snp_vcf = snakemake_handle.input["snp_vcf"]
 region_bed = snakemake_handle.input["region_bed"]
 genome_size = snakemake_handle.input["genome_size"]
@@ -96,12 +93,17 @@ logging.info(
 snps = read_VCF(snp_vcf, addkey=True, add_phase1=True, add_pos0=True)
 parent_keys = pd.Index(snps["KEY"])
 assert not parent_keys.duplicated().any(), "invalid bi-allelic SNP VCF file"
+parent_alt_by_key = dict(zip(snps["KEY"], snps["ALT"]))
 
 tot_mtx_list = []
 ad_mtx_list = []
 for idx in range(n_samples):
+    bcf_df = read_bcftools_counts(counts_files[idx])
+    child_snps, tot_child, ad_child = bcftools_counts_to_child_mats(
+        bcf_df, parent_alt_by_key
+    )
     tot_canon, ad_canon = canon_mat_one_replicate(
-        parent_keys, vcf_files[idx], tot_mtx_files[idx], ad_mtx_files[idx], 1
+        parent_keys, child_snps, tot_child, ad_child, 1
     )
     tot_mtx_list.append(tot_canon)
     ad_mtx_list.append(ad_canon)

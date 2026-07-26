@@ -73,8 +73,8 @@ def test_bulk_rules(workspace):
     )
     counts = job_counts(proc.stdout)
     assert {"genotype_snps_bulk", "phase_snps_eagle", "combine_counts"} <= set(counts)
-    # one pileup and one mosdepth per dataset (normal + tumor)
-    assert counts["pileup_snps_bulk_mode1b"] == 2
+    # one bcftools pileup and one mosdepth per dataset (normal + tumor)
+    assert counts["pileup_snps_bulk_bcftools"] == 2
     assert counts["run_mosdepth"] == 2
 
 
@@ -281,7 +281,7 @@ def test_phased_het_snp_vcf_skips_phasing(workspace):
     for rule in counts:
         assert not rule.startswith(("genotype_snps", "phase_snps", "split_het_snp_vcf"))
     assert "concat_and_extract_phased_het_snps" not in counts
-    assert "pileup_snps_bulk_mode1b" in counts
+    assert "pileup_snps_bulk_bcftools" in counts
 
 
 def test_copytyping_requires_phased_vcf(workspace):

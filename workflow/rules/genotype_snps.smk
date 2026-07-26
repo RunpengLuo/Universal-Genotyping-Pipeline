@@ -37,6 +37,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
             min_dp=config["params_bcftools"]["min_dp"],
             max_depth=config["params_bcftools"]["max_depth"],
             min_qual=config["params_bcftools"]["min_qual"],
+            extra_params=config["params_bcftools"]["extra_params"],
         shell:
             r"""
             bcftools mpileup {input.alignment} \
@@ -48,6 +49,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
                 -q {params.min_mapq} \
                 -Q {params.min_baseq} \
                 -d {params.max_depth} \
+                {params.extra_params} \
                 -T {input.target_pos} \
             | bcftools call -m \
                 -Oz -o {output.unfiltered_vcf} 2> {log}

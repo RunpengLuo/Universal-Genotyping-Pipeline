@@ -1,11 +1,24 @@
-# Input / Output Reference
+# Reference
+
+## Table of Contents
+- [Sample File](#sample-file)
+- [Configuration](#configuration)
+  - [Input Data](#input-data)
+  - [Parameters](#parameters)
+- [Outputs](#outputs)
+  - [Genomic grid levels](#genomic-grid-levels)
+  - [Final bins](#final-bins)
+  - [Intermediates](#intermediates)
+  - [TSV columns](#tsv-columns)
+  - [Barcodes (single-cell)](#barcodes-single-cell)
+  - [QC](#qc-qc_dir)
 
 ## Sample File
 Refer to spec **[sample_sheet.md](sample_sheet.md)** and [templates](../resources/templates/).
 
 ---
 
-## Config Keys
+## Configuration
 Defaults in `config/config.yaml`, template in [templates](../resources/templates/). Override with `--config key=value`.
 
 ### Input Data
@@ -41,6 +54,28 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 
 Defaults are those in `config/config.yaml`.
 
+#### `params_build_windows`
+Used by the window-BED build (`build_windows.smk`, bulk). `build_segment_bed` first
+subtracts the blacklist and splits each arm at the union of all `files.breakpoint_bedpe`
+into `aux/segment.bed` (region_id + seg_id), so no bin spans a breakpoint. One window BED
+is then tiled off it: `aux/windows.bed.gz`, shared by every bulk assay (WGS/WGS-lr/WES).
+
+| Field | Default | Description |
+|---|---|---|
+| `window_size` | `1000` | Window size (bp); fixed tiling of the segment BED, shared by every bulk assay. |
+
+#### `params_bcftools`
+Used by `genotype_snps_bulk` and `pileup_snps_bulk_bcftools` (bulk het-SNP read counting).
+
+| Field | Default | Description |
+|---|---|---|
+| `min_mapq` | `20` | Skip alignments below this mapping quality (genotype + pileup). |
+| `min_baseq` | `20` | Skip bases below this base quality (genotype + pileup). |
+| `min_dp` | `5` | Minimum depth to keep a site (genotype only). |
+| `max_depth` | `1000` | Per-file depth cap in `mpileup` (genotype + pileup). |
+| `min_qual` | `30` | Minimum variant QUAL (genotype only). |
+| `extra_params` | `""` | Extra `mpileup` flags applied to bulk genotyping + pileup; use a read-type preset, e.g. `-X ont-sup` (ONT), `-X pacbio-ccs`, or `""`/`-X illumina` for short-read. |
+
 #### `params_cellsnp_lite`
 Used by `genotype_snps_pseudobulk_mode1b`, `pileup_snps_*` (single-cell).
 
@@ -52,17 +87,6 @@ Used by `genotype_snps_pseudobulk_mode1b`, `pileup_snps_*` (single-cell).
 | `minCOUNT_genotype` | `2` | Minimum aggregate count when genotyping. |
 | `minMAF_pileup` | `0` | Minimum minor-allele frequency when piling up. |
 | `minCOUNT_pileup` | `1` | Minimum aggregate count when piling up. |
-
-#### `params_bcftools`
-Used by `genotype_snps_bulk`.
-
-| Field | Default | Description |
-|---|---|---|
-| `min_mapq` | `20` | Skip alignments below this mapping quality. |
-| `min_baseq` | `20` | Skip bases below this base quality. |
-| `min_dp` | `5` | Minimum depth to keep a site. |
-| `max_depth` | `1000` | Per-file depth cap in `mpileup`. |
-| `min_qual` | `30` | Minimum variant QUAL. |
 
 #### `params_annotate_snps`
 Used by `annotate_snps_pseudobulk` (single-cell).
@@ -99,16 +123,6 @@ Used by `phase_and_concat_{bulk,nonbulk}`.
 | `min_depth` | `1` | Minimum depth in every sample to keep a SNP (bulk). |
 | `gamma` | `0.05` | Credible-interval level of the balanced-het test on the normal; a SNP is kept when its beta posterior interval covers 0.5 (bulk). |
 | `exon_only` | `false` | Keep exonic SNPs only. |
-
-#### `params_build_windows`
-Used by the window-BED build (`build_windows.smk`, bulk). `build_segment_bed` first
-subtracts the blacklist and splits each arm at the union of all `files.breakpoint_bedpe`
-into `aux/segment.bed` (region_id + seg_id), so no bin spans a breakpoint. One window BED
-is then tiled off it: `aux/windows.bed.gz`, shared by every bulk assay (WGS/WGS-lr/WES).
-
-| Field | Default | Description |
-|---|---|---|
-| `window_size` | `1000` | Window size (bp); fixed tiling of the segment BED, shared by every bulk assay. |
 
 #### `params_mosdepth`
 Used by `run_mosdepth` (bulk).
@@ -164,7 +178,7 @@ Used by all multi-thread rules.
 |---|---|---|
 | `genotype` | `4` | Threads for genotyping. |
 | `phase` | `4` | Threads for phasing. |
-| `pileup` | `8` | Threads for cellsnp-lite pileup. |
+| `pileup` | `8` | Threads for the pileup step (bulk `bcftools mpileup`; single-cell cellsnp-lite). |
 | `mosdepth` | `4` | Threads for mosdepth. |
 
 ---
@@ -231,7 +245,7 @@ Input for HATCHet3 / CalicoST. `min_snp_reads` may be a list: one job preprocess
 |---|---|
 | `snp_dir/` | `chr{chrname}.vcf.gz` (bi-allelic SNPs); `pseudobulk_{modality}/cellSNP.*` and `pseudobulk_snp_statistics.tsv` (single-cell). |
 | `phase_dir/` | `chr{chrname}.vcf.gz` (phased); `phased_het_snps.vcf.gz(.tbi)`; `germline_snp_statistics.tsv`; `genetic_map.tsv.gz` (eagle/shapeit). |
-| `pileup_dir/` | One cellsnp-lite dir per `{assay_type}_{dataset_id}`; bulk also `{assay_type}/windows.bed.gz` (per-assay mosdepth grid), `{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz`, `window.dp.npz`, `window.tsv.gz`, `depth_statistics.tsv`. |
+| `pileup_dir/` | One pileup dir per `{assay_type}_{dataset_id}`: bulk `bcftools.counts.tsv.gz` (bcftools REF/ALT depths at the phased loci, consumed by `phase_and_concat_bulk`), single-cell `cellSNP.*` (cellsnp-lite); bulk also `{assay_type}/windows.bed.gz` (per-assay mosdepth grid), `{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz`, `window.dp.npz`, `window.tsv.gz`, `depth_statistics.tsv`. |
 | `allele_dir/` | `bulk/` (one joint set over all bulk assays) or per `{assay_type}` (single-cell): `snps.tsv.gz`, `snp.{T,A,B}allele.npz`, `sample_ids.tsv`, and for single-cell `barcodes{,.full}.tsv.gz`, `unique_snp_ids.npy`. |
 | `bb_dir/{assay_type}.h5ad` | Gene x cell AnnData (single-cell RNA / spatial); MSR-independent, so it sits flat. |
 | `aux_dir/` | Bulk window build: `segment.bed` (region_id arm + seg_id chunk, built from `region_bed`), `windows.bed.gz` (the one shared window BED), and `repliseq/{name}.{reference_version}.bedGraph` (Repli-seq tracks, cached across window rebuilds) when `do_repliseq`. Source bigWigs are hg19: an hg19 run uses them directly; an hg38 run lifts hg19 -> hg38 first. |

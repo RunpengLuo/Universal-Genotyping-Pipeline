@@ -1,7 +1,7 @@
 ##################################################
 # Genotyping YAML configuration file (default)
 #
-# Key reference (types, ranges, defaults): docs/reference.md
+# See docs/reference.md for full descriptions
 ##################################################
 
 snp_dir: "snps"
@@ -31,27 +31,38 @@ bb_file: null
 # Reference
 reference_version: null
 reference: null
+gtf_file: null
 genome_size: null
 region_bed: null
-window_bed: null
-mappability_bed: null
+
+# Blacklist excluded regions/genes
 blacklist_bed: null
 gene_blacklist_file: null
-gtf_file: null
 
 ##################################################
-# Build initial windows
+# Build windows (bulk)
+window_bed: null
+mappability_bed: null
 params_build_windows:
   window_size: 1000
 
 ##################################################
-# SNP genotyping and population haplotype panel
+# Genotyping
 snp_panel: null
 snp_targets: null
-phasing_panel: null
+genotype_dataset_ids: []
 
-##################################################
-# Genotype and pileup (single_cell_genotyping)
+# bulk genotyping + bulk pileup (bcftools mpileup)
+params_bcftools:
+  min_mapq: 20
+  min_baseq: 20
+  min_dp: 5
+  max_depth: 1000
+  min_qual: 30
+  # e.g., "-X ont-sup" (ONT) / "-X pacbio-ccs"
+  extra_params: ""
+
+# single-cell genotyping + pileup (cellsnp-lite)
 params_cellsnp_lite:
   UMItag: "Auto"
   cellTAG: "CB"
@@ -60,15 +71,7 @@ params_cellsnp_lite:
   minMAF_pileup: 0
   minCOUNT_pileup: 1
 
-params_bcftools:
-  min_mapq: 20
-  min_baseq: 20
-  min_dp: 5
-  max_depth: 1000
-  min_qual: 30
-
-##################################################
-# Annotate SNP genotypes (single_cell_genotyping)
+# single-cell pseudobulk genotype annotation
 params_annotate_snps:
   min_het_reads: 2
   min_hom_dp: 10
@@ -77,28 +80,30 @@ params_annotate_snps:
   filter_hom_ALT: false
 
 ##################################################
-# Genotyping
-genotype_dataset_ids: []
-
-##################################################
 # Phasing
 phaser: "eagle"
 phase_dataset_ids: []
+phasing_panel: null
 gmap_path: null
 params_longphase:
   min_mapq: 20
   extra_params: "--pb"
 
 ##################################################
+# Pileup / allele concat
+# single-cell RNA/spatial h5ad (pileup Xcount)
 params_process_anndata:
   gene_id_colname: gene_ids
   min_frac_barcodes: 5e-3
 
+# merge + filter het SNPs across all samples
 params_phase_and_concat:
   min_depth: 1
   gamma: 0.05
   exon_only: false
 
+##################################################
+# Read-depth + bias correction (bulk)
 params_mosdepth:
   read_quality: 11
   extra_params: "--no-per-base --fast-mode"
@@ -112,6 +117,8 @@ params_count_reads:
   doutlier: 0.001
   min_mappability: 0.9
 
+##################################################
+# Segmentation (adaptive binning + RDR/BAF)
 params_combine_counts:
   min_switchprob: 1e-6
   nu: 1

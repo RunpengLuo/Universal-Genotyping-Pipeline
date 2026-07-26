@@ -30,7 +30,10 @@ end-to-end job behind a manual/scheduled trigger, keep dry-run tests on every pu
 ## Others
 - Distinguish germline Het from Hom-alt SNPs from high purity tumor sample without matched-normal sample. Adapt https://github.com/raphael-group/hetdetect.
     - retrieve population ALT frequency as prior genotype info. high ALT freq indicates likely hom-alt 
-- Streaming remote data rather than downloading them. Currently `cellsnp-lite` don't allow URL inputs.
+- Streaming remote data rather than downloading them. Bulk pileup now uses `bcftools`
+  (`pileup_snps_bulk_bcftools`), which is htslib/URL-capable; single-cell still uses
+  `cellsnp-lite`, which rejects URL inputs (its `access(F_OK)` guard). Whole-file `storage()`
+  download is still the default (streaming = whole-file transfer + fragility tradeoffs).
 
 ## Within-bin BAF phasing (`phase_hmm.py`)
 

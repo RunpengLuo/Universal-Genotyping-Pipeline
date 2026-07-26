@@ -16,22 +16,89 @@ from io_utils import read_VCF
 from utils import sort_df_chr
 
 
-def canon_mat_one_replicate(
+def canon_mat_from_files(
     parent_keys: pd.Index,
     vcf_file: str,
     tot_mtx_file: str,
     ad_mtx_file: str,
     ncells: int,
 ):
+    """Read a replicate's cellSNP-format files, then canonicalize onto the parent grid.
+
+    Thin file-reading wrapper over ``canon_mat_one_replicate`` for the cellsnp-lite path
+    (single-cell). Bulk builds the DataFrame/matrices from bcftools counts instead.
     """
-    Map SNP by barcode DP/AD sparse mats to same SNP position index defined by parent SNP file.
+    child_snps = read_VCF(vcf_file, addkey=True)
+    tot_mtx = mmread(tot_mtx_file).tocsr()
+    ad_mtx = mmread(ad_mtx_file).tocsr()
+    return canon_mat_one_replicate(parent_keys, child_snps, tot_mtx, ad_mtx, ncells)
+
+
+def bcftools_counts_to_child_mats(bcf_df: pd.DataFrame, parent_alt_by_key: dict):
+    """Convert a bcftools counts DataFrame into ``(child_snps, tot_mtx, ad_mtx)`` for canon.
+
+    ``ALT`` per locus is the depth of the *parent* ALT allele (matched against the bcftools
+    ALT list; 0 when the parent ALT was not observed), ``DP = ref + alt`` (usable het depth,
+    so downstream ``REF = DP - ALT`` is exact). Rows follow ``bcf_df`` order.
+
+    Args:
+        bcf_df: output of ``read_bcftools_counts`` (KEY, ALT list, AD list, RAW_SNP_IDX).
+        parent_alt_by_key: parent ALT allele keyed by ``#CHROM_POS``.
+
+    Returns:
+        ``(child_snps, tot_mtx, ad_mtx)``: child_snps has KEY + RAW_SNP_IDX; matrices are
+        ``(len(bcf_df), 1)`` csr.
+    """
+    n = len(bcf_df)
+    keys = bcf_df["KEY"].to_numpy()
+    alt_lists = bcf_df["ALT"].to_numpy()
+    ad_lists = bcf_df["AD"].to_numpy()
+    tot = np.zeros(n, dtype=np.int64)
+    ad = np.zeros(n, dtype=np.int64)
+    for i in range(n):
+        adv = ad_lists[i]
+        ref_cnt = adv[0] if len(adv) else 0
+        palt = parent_alt_by_key.get(keys[i])
+        alts = alt_lists[i]
+        alt_cnt = (
+            adv[1 + alts.index(palt)] if (palt is not None and palt in alts) else 0
+        )
+        ad[i] = alt_cnt
+        tot[i] = ref_cnt + alt_cnt
+    child_snps = pd.DataFrame({"KEY": keys, "RAW_SNP_IDX": np.arange(n)})
+    tr = np.flatnonzero(tot)
+    ar = np.flatnonzero(ad)
+    tot_mtx = csr_matrix(
+        (tot[tr], (tr, np.zeros(len(tr), dtype=np.int64))), shape=(n, 1)
+    )
+    ad_mtx = csr_matrix((ad[ar], (ar, np.zeros(len(ar), dtype=np.int64))), shape=(n, 1))
+    return child_snps, tot_mtx, ad_mtx
+
+
+def canon_mat_one_replicate(
+    parent_keys: pd.Index,
+    child_snps: pd.DataFrame,
+    tot_mtx: csr_matrix,
+    ad_mtx: csr_matrix,
+    ncells: int,
+):
+    """Map a replicate's DP/AD matrices onto the parent SNP grid (0-fill missing loci).
+
+    Args:
+        parent_keys: parent SNP KEYs (``#CHROM_POS``) in output row order.
+        child_snps: DataFrame with ``KEY`` + ``RAW_SNP_IDX`` for this replicate's loci
+            (in the matrices' row order).
+        tot_mtx, ad_mtx: ``(m, ncells)`` count matrices, ``m == len(child_snps)``.
+        ncells: number of columns (1 for bulk pseudobulk; #barcodes for single-cell).
+
+    Returns:
+        ``(tot_canon, ad_canon)`` csr matrices of shape ``(len(parent_keys), ncells)``.
     """
     M = len(parent_keys)
-    child_snps = read_VCF(vcf_file, addkey=True)
     m = len(child_snps)
 
-    tot_mtx: csr_matrix = mmread(tot_mtx_file).tocsr()
-    ad_mtx: csr_matrix = mmread(ad_mtx_file).tocsr()
+    tot_mtx = tot_mtx.tocsr()
+    ad_mtx = ad_mtx.tocsr()
     assert tot_mtx.shape == ad_mtx.shape
     assert tot_mtx.shape == (m, ncells)
 

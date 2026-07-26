@@ -20,7 +20,7 @@ Assays: `bulkWGS`, `bulkWGS-lr`, `bulkWES` (all share one grid). Needs bulk reco
 | Phase SNPs | `phase_snps_{eagle,shapeit,longphase}` | `phase_dir/chr{chrname}.vcf.gz` |
 | Concat phased VCFs | `concat_and_extract_phased_het_snps` | `phase_dir/phased_het_snps.vcf.gz` |
 | Parse genetic map | `parse_genetic_map` | `phase_dir/genetic_map.tsv.gz` |
-| Pileup at het SNPs | `pileup_snps_bulk_mode1b` | `pileup_dir/{assay_type}_{dataset_id}/` |
+| Pileup at het SNPs | `pileup_snps_bulk_bcftools` | `pileup_dir/{assay_type}_{dataset_id}/bcftools.counts.tsv.gz` |
 | Phase and concat (joint, all bulk assays) | `phase_and_concat_bulk` | `allele_dir/bulk/` |
 | Build segment BED (split arms at breakpoints) | `build_segment_bed` | `aux_dir/segment.bed` |
 | Build the window BED (GC/MAP/REPLI) | `build_window_bed` | `aux_dir/windows.bed.gz` |

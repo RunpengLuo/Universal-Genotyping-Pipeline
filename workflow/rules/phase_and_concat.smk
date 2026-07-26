@@ -4,23 +4,8 @@
 # all bulk assays jointly processed in one job -> one joint matrix
 rule phase_and_concat_bulk:
     input:
-        vcfs=[
-            config["pileup_dir"] + f"/{at}_{rid}/cellSNP.base.vcf.gz"
-            for at in assay_types
-            for rid in assay2dataset_ids[at]
-        ],
-        sample_tsvs=[
-            config["pileup_dir"] + f"/{at}_{rid}/cellSNP.samples.tsv"
-            for at in assay_types
-            for rid in assay2dataset_ids[at]
-        ],
-        tot_mtxs=[
-            config["pileup_dir"] + f"/{at}_{rid}/cellSNP.tag.DP.mtx"
-            for at in assay_types
-            for rid in assay2dataset_ids[at]
-        ],
-        ad_mtxs=[
-            config["pileup_dir"] + f"/{at}_{rid}/cellSNP.tag.AD.mtx"
+        counts=[
+            config["pileup_dir"] + f"/{at}_{rid}/bcftools.counts.tsv.gz"
             for at in assay_types
             for rid in assay2dataset_ids[at]
         ],

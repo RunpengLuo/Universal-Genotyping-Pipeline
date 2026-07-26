@@ -1,44 +1,51 @@
-rule pileup_snps_bulk_mode1b:
+rule pileup_snps_bulk_bcftools:
+    """Bulk het-SNP read counting with bcftools (REF/ALT allele depths at the phased loci)."""
     input:
         alignment=lambda wc: alignment_input(get_data[(wc.assay_type, wc.dataset_id)]),
         alignment_index=lambda wc: alignment_index_input(
             get_data[(wc.assay_type, wc.dataset_id)]
         ),
         snp_vcf=phased_snp_vcf,
+        reference=config["reference"],
     output:
-        out_dir=directory(config["pileup_dir"] + "/{assay_type}_{dataset_id}/"),
-        out_vcf=config["pileup_dir"] + "/{assay_type}_{dataset_id}/cellSNP.base.vcf.gz",
-        out_tsv=config["pileup_dir"] + "/{assay_type}_{dataset_id}/cellSNP.samples.tsv",
-        out_dp=config["pileup_dir"] + "/{assay_type}_{dataset_id}/cellSNP.tag.DP.mtx",
-        out_ad=config["pileup_dir"] + "/{assay_type}_{dataset_id}/cellSNP.tag.AD.mtx",
+        counts=config["pileup_dir"]
+        + "/{assay_type}_{dataset_id}/bcftools.counts.tsv.gz",
     log:
         config["log_dir"]
-        + f"/pileup_snps_bulk_mode1b/pileup_snps_bulk_mode1b.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
+        + f"/pileup_snps_bulk_bcftools/pileup_snps_bulk_bcftools.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
     benchmark:
         config["bench_dir"]
-        + f"/pileup_snps_bulk_mode1b/pileup_snps_bulk_mode1b.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
+        + f"/pileup_snps_bulk_bcftools/pileup_snps_bulk_bcftools.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
     wildcard_constraints:
         assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
     conda:
-        "../envs/cellsnp.yaml"
+        "../envs/bcftools.yaml"
     threads: config["threads"]["pileup"]
     resources:
         downloads=lambda wc: download_slots(get_data[(wc.assay_type, wc.dataset_id)]),
     params:
-        minMAF=config["params_cellsnp_lite"]["minMAF_pileup"],
-        minCOUNT=config["params_cellsnp_lite"]["minCOUNT_pileup"],
+        min_mapq=config["params_bcftools"]["min_mapq"],
+        min_baseq=config["params_bcftools"]["min_baseq"],
+        max_depth=config["params_bcftools"]["max_depth"],
+        extra_params=config["params_bcftools"]["extra_params"],
     shell:
         r"""
-        cellsnp-lite \
-            -s "{input.alignment}" \
-            -R "{input.snp_vcf}" \
-            -O "{output.out_dir}" \
-            -p {threads} \
-            --minMAF {params.minMAF} \
-            --minCOUNT {params.minCOUNT} \
-            --UMItag None \
-            --cellTAG None \
-            --gzip > {log} 2>&1
+        set -euo pipefail
+        (
+          bcftools mpileup "{input.alignment}" \
+              -f "{input.reference}" \
+              -Ou \
+              --threads {threads} \
+              -a FORMAT/AD \
+              --skip-indels \
+              -q {params.min_mapq} \
+              -Q {params.min_baseq} \
+              -d {params.max_depth} \
+              {params.extra_params} \
+              -T "{input.snp_vcf}" \
+          | bcftools query -f '%CHROM\t%POS\t%REF\t%ALT\t[%AD]\n' \
+          | bgzip -c > {output.counts}
+        ) 2> {log}
         """
 
 
