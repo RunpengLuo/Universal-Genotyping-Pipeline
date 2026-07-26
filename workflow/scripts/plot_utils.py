@@ -61,20 +61,26 @@ def _plot_cov_panel(
     rng = np.random.default_rng(0)
     if n_pts > 20000:
         idx = rng.choice(n_pts, size=20000, replace=False)
-        kde = gaussian_kde(np.vstack([x[idx], y[idx]]))
+        xs, ys = x[idx], y[idx]
     else:
-        kde = gaussian_kde(np.vstack([x, y]))
+        xs, ys = x, y
 
     xlo = xlim[0] if xlim is not None else x.min()
     xhi = xlim[1] if xlim is not None else x.max()
-    xgrid = np.linspace(xlo, xhi, 200)
-    ygrid = np.linspace(0, ylim * 1.5, 200)
-    xx, yy = np.meshgrid(xgrid, ygrid)
-    positions = np.vstack([xx.ravel(), yy.ravel()])
-    zz = kde(positions).reshape(xx.shape)
-
-    ax.pcolormesh(xx, yy, zz, shading="gouraud", cmap="Blues", rasterized=True)
-    ax.contour(xx, yy, zz, levels=6, colors="steelblue", linewidths=0.5, alpha=0.5)
+    try:
+        kde = gaussian_kde(np.vstack([xs, ys]))
+        xgrid = np.linspace(xlo, xhi, 200)
+        ygrid = np.linspace(0, ylim * 1.5, 200)
+        xx, yy = np.meshgrid(xgrid, ygrid)
+        zz = kde(np.vstack([xx.ravel(), yy.ravel()])).reshape(xx.shape)
+        ax.pcolormesh(xx, yy, zz, shading="gouraud", cmap="Blues", rasterized=True)
+        ax.contour(xx, yy, zz, levels=6, colors="steelblue", linewidths=0.5, alpha=0.5)
+    except np.linalg.LinAlgError:
+        # near-constant covariate -> singular KDE covariance; plain scatter instead
+        logging.warning(
+            f"KDE failed ({xlabel}, {label}): near-constant covariate; scatter fallback"
+        )
+        ax.scatter(xs, ys, s=2, color="steelblue", alpha=0.3, rasterized=True)
 
     mad = np.median(np.abs(y - np.median(y)))
     r_pearson, _ = pearsonr(x, y)
@@ -556,23 +562,10 @@ def plot_rdr_baf(
 # ---------------------------------------------------------------------------
 
 
-# native per-segment count label by assay (ax-1 of the segmentation QC page-2).
-# Bulk passes total aligned bases (sum of per-window depth*length), shown in Mbp;
-# ASSAY_COUNT_SCALE divides the raw values to match the label's unit.
-ASSAY_COUNT_LABEL = {
-    "bulkWGS": "DNA aligned bases (Mbp)",
-    "bulkWGS-lr": "DNA aligned bases (Mbp)",
-    "bulkWES": "DNA aligned bases (Mbp)",
-    "scRNA": "UMI count",
-    "VISIUM": "UMI count",
-    "VISIUM3prime": "UMI count",
-    "scATAC": "ATAC fragment count",
-}
-ASSAY_COUNT_SCALE = {
-    "bulkWGS": 1e6,
-    "bulkWGS-lr": 1e6,
-    "bulkWES": 1e6,
-}
+# native per-segment count scale/label for the segmentation QC page-2 first column:
+# the raw values are divided by NATIVE_COUNT_SCALE and shown in kbp.
+NATIVE_COUNT_SCALE = 1e3
+NATIVE_COUNT_LABEL = "native count (kbp)"
 
 
 def _seg_gene_counts(seg_df, gene_count, gene_col):
@@ -637,8 +630,8 @@ def plot_segmentation_qc(
     Page 1 — two histograms over all segments:
       (i) segment length (kbp), (ii) per-segment gene count.
     Page 2 — one row per REP_ID, three histograms:
-      native counts (DNA reads / UMI / ATAC fragments, by assay), B-allele counts,
-      total-allele counts. Every subplot title is multi-line and carries
+      native counts (kbp; raw values / 1e3), B-allele counts, total-allele counts.
+      Every subplot title is multi-line and carries
       ``{SAMPLE} {REP_ID} {assay_type} {sample_type}`` plus mean/median.
 
     Parameters
@@ -696,9 +689,11 @@ def plot_segmentation_qc(
             f"{row.get(name_col, '')} {row.get('REP_ID', '')}\n"
             f"{assay} {row.get('sample_type', '')}"
         )
-        x_label = ASSAY_COUNT_LABEL.get(assay, "count")
-        x_scale = ASSAY_COUNT_SCALE.get(assay, 1.0)
-        _hist_with_stats(axes[ri, 0], _extract_col(x_count_mat, ri) / x_scale, x_label)
+        _hist_with_stats(
+            axes[ri, 0],
+            _extract_col(x_count_mat, ri) / NATIVE_COUNT_SCALE,
+            NATIVE_COUNT_LABEL,
+        )
         _hist_with_stats(axes[ri, 1], _extract_col(b_count_mat, ri), "B-allele count")
         _hist_with_stats(
             axes[ri, 2], _extract_col(tot_count_mat, ri), "total allele count"
