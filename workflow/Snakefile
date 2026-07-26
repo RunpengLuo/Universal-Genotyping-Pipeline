@@ -103,6 +103,7 @@ else:
     _ENV_YAMLS = [
         "base",
         "bcftools",
+        "samtools",
         "eagle",
         "shapeit",
         "longphase",
