@@ -1,0 +1,87 @@
+name: it-hatchet2_chr22_simulation_dbsnp151
+
+# End-to-end integration variant: bulk_genotyping, hg19 WGS, chr22, dbSNP151 + SHAPEIT5.
+# Candidate SNPs from dbSNP151 GRCh37 GATK (chr22), phasing with SHAPEIT5 (phase_common).
+# Matches how the HATCHet2 demo data was simulated (variants seeded at dbSNP151 positions).
+# HATCHet demo-complete data (1 matched normal + 3 tumors) streamed from Zenodo 4046906.
+# Heavy (multi-GB download, per-rule conda builds): manual + weekly, not per-push.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * 1"  # Mondays 07:00 UTC (after the eagle variant)
+
+concurrency:
+  group: it-hatchet2_chr22_simulation_dbsnp151
+  cancel-in-progress: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: bash -el {0}  # login shell so `conda activate` works
+    env:
+      CASE: tests/data/hatchet2_chr22_simulation
+      CONFIG: tests/data/hatchet2_chr22_simulation/config.dbsnp151.yaml
+      RUN: ${{ github.workspace }}/.test-run-dbsnp151/hatchet2_chr22_simulation
+    steps:
+      - name: Free disk space
+        if: ${{ !env.ACT }}  # GitHub runner only; these paths are busy mounts under act
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      # --- install: runner engine env + a tools env for reference staging ---
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          activate-environment: genotyping-env
+          environment-file: environment.yaml
+          conda-remove-defaults: true
+
+      # prepare only needs bcftools/samtools/bgzip/tabix, not any pipeline env; the
+      # per-tool rule envs (shapeit/bcftools/mosdepth/... only what the DAG needs) build
+      # in the next step. Keeps the required order: prepare -> build envs -> run.
+      - name: Create reference-staging env
+        run: mamba create -y -n genotyping-prep -c bioconda -c conda-forge bcftools samtools htslib
+
+      # --- prepare: stage hg19 chr22 reference + panel + SHAPEIT map + dbSNP151 targets ---
+      - name: Prepare references
+        run: |
+          conda activate genotyping-prep
+          bash "$CASE/prepare_refs.dbsnp151.sh"
+
+      # --- install per-rule conda envs (separate from the run; SHAPEIT env built here) ---
+      - name: Build per-rule conda envs
+        run: |
+          conda activate genotyping-env
+          snakemake -s workflow/Snakefile \
+            --configfile "$CONFIG" \
+            --profile profile/ --cores 4 \
+            --conda-create-envs-only
+
+      # --- run: full pipeline to bb_dir; outputs isolated under $RUN ---
+      # `act` runs this same workflow in a Linux container, so CI and local match.
+      - name: Run pipeline
+        run: |
+          conda activate genotyping-env
+          CONFIG="$CONFIG" CORES=4 bash "$CASE/run_pipeline.sh"
+
+      # --- check: assert the expected bulk outputs exist and are non-empty ---
+      - name: Check outputs
+        run: bash "$CASE/check_outputs.sh"
+
+      - name: Upload outputs
+        if: ${{ always() && !env.ACT }}  # GitHub only; act can't run the JS action (no node), outputs are on host via --bind
+        uses: actions/upload-artifact@v4
+        with:
+          name: bb_dir-and-qc-dbsnp151
+          path: |
+            ${{ env.RUN }}/bb/**
+            ${{ env.RUN }}/qc/**
+          if-no-files-found: warn
+          retention-days: 14

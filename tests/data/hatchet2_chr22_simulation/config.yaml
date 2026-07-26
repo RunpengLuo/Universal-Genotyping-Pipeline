@@ -1,0 +1,75 @@
+##################################################
+# Integration test: bulk_genotyping, hg19 WGS, chr22 only
+#
+# Data: HATCHet demo-complete (1 matched normal + 3 tumors), chr22, hg19/GRCh37.
+#   Alignments: Zenodo record 4046906 (referenced by URL in samples.json; fetched
+#   on demand via snakemake-storage-plugin-http, deleted after the last job).
+#   Phasing panel: HATCHet CI 1000GP Phase3 chr22 (Zenodo record 6709541).
+#   https://zenodo.org/records/4046906   https://zenodo.org/records/6709541
+#   https://raphael-group.github.io/hatchet/examples/demo-complete/demo-complete.html
+#
+# Paths below are relative to the repo root; run snakemake from the repo root.
+# Staged references live under the gitignored .test-run/<case>/reference/ and are
+# produced by prepare_refs.sh (see README.md); alignments are pulled from Zenodo.
+##################################################
+
+snp_dir: "snps"
+phase_dir: "phase"
+pileup_dir: "pileup"
+allele_dir: "allele"
+bb_dir: "bb"
+qc_dir: "qc"
+log_dir: "logs"
+aux_dir: "aux"
+
+workflow_mode: "bulk_genotyping"
+assay_types: ["bulkWGS"]
+
+##################################################
+# Input
+sample_id: DEMO
+sample_file: tests/data/hatchet2_chr22_simulation/samples.json
+chromosomes: [22]
+
+het_snp_vcf: null
+het_snp_vcf_phased: true
+bb_file: null
+
+##################################################
+# Reference (hg19 / GRCh37, chr-prefixed contigs). window_bed is the pre-built hg19
+# window BED subset to chr22 (GC + MAP + REPLI baked in), so build_window_bed and the
+# Repli-seq fetch are skipped and no mappability track is needed. rd_correct still runs
+# gc/rt correction from the bed's GC/MAP/REPLI columns. Tracks staged by prepare_refs.sh.
+reference_version: "hg19"
+reference: .test-run/hatchet2_chr22_simulation/reference/hg19.chr22.fa
+genome_size: resources/data/hg19.chrom.sizes
+region_bed: resources/data/hg19.regions.bed
+window_bed: .test-run/hatchet2_chr22_simulation/reference/windows.1kbp.hg19.chr22.bed.gz
+mappability_bed: null
+blacklist_bed: .test-run/hatchet2_chr22_simulation/reference/hg19-blacklist.v2.chr22.bed.gz
+gene_blacklist_file: null
+gtf_file: .test-run/hatchet2_chr22_simulation/reference/gencode.v19.chr22.gtf.gz
+
+##################################################
+# Population panel (HATCHet CI 1000GP Phase3 chr22, Zenodo 6709541; staged as a
+# chr-prefixed BCF by prepare_refs.sh).
+# snp_panel is consumed only by the single-cell path; bulk uses snp_targets.
+snp_panel: null
+snp_targets: .test-run/hatchet2_chr22_simulation/reference/snp_targets
+phasing_panel: .test-run/hatchet2_chr22_simulation/reference/phasing_panel
+
+##################################################
+# Phasing (Eagle2 ships its own genetic map)
+phaser: "eagle"
+gmap_path: .test-run/hatchet2_chr22_simulation/reference/genetic_map_hg19_withX.txt.gz
+
+##################################################
+# Read-depth correction: OFF (raw depth); gc_correct=False skips all bias correction.
+params_count_reads:
+  gc_correct: false
+  rt_correct: false
+
+##################################################
+# Adaptive binning
+params_combine_counts:
+  min_snp_reads: [3000]

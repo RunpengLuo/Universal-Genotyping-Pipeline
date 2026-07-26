@@ -17,11 +17,13 @@ CHM13V2_BCF="1KGP.CHM13v2.0.whole_genome.recalibrated.snp_indel.pass.phased.nati
 
 usage() {
   cat >&2 <<EOF
-Usage: $0 --ref <hg38|chm13v2> <output_dir> [--bcf /path/to/existing.bcf.gz]
+Usage: $0 --ref <hg38|chm13v2> <output_dir> [--bcf /path/to/existing.bcf.gz] [--chroms "8 10"]
 
   --ref      Reference version (required): hg38 or chm13v2
   output_dir Directory to write outputs
   --bcf      Path to pre-downloaded whole-genome BCF (chm13v2 only; skips download)
+  --chroms   Space-separated chromosomes to process (default: "1..22 X"); use to
+             stage only a subset, e.g. --chroms "8 10" for a chr8/chr10 test case
 EOF
   exit 1
 }
@@ -29,11 +31,13 @@ EOF
 REFVERS=""
 OUT=""
 BCF_INPUT=""
+CHROMS=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --ref) REFVERS="$2"; shift 2 ;;
     --bcf) BCF_INPUT="$2"; shift 2 ;;
+    --chroms) CHROMS="$2"; shift 2 ;;
     -h|--help) usage ;;
     *)
       if [[ -z "${OUT}" ]]; then
@@ -47,6 +51,7 @@ done
 
 [[ -z "${REFVERS}" || -z "${OUT}" ]] && usage
 [[ "${REFVERS}" != "hg38" && "${REFVERS}" != "chm13v2" ]] && { echo "ERROR: --ref must be hg38 or chm13v2" >&2; exit 1; }
+[[ -z "${CHROMS}" ]] && CHROMS="$(seq 1 22) X"
 
 mkdir -p "${OUT}"/{snps,target_positions,phasing_panel}
 
@@ -80,7 +85,7 @@ fi
 ##################################################
 
 : > "${OUT}/snp_vcfs.lst"
-for chr in $(seq 1 22) X; do
+for chr in ${CHROMS}; do
   date
   echo "chr${chr}"
 

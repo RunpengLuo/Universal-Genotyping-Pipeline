@@ -1,0 +1,76 @@
+##################################################
+# Integration test variant: bulk_genotyping, hg19 WGS, chr22 only
+#   dbSNP151 candidate positions + SHAPEIT5 phasing (matches how the HATCHet2
+#   demo data was simulated: variants seeded at dbSNP151 positions).
+#
+# Data: HATCHet demo-complete (1 matched normal + 3 tumors), chr22, hg19/GRCh37.
+#   Alignments: Zenodo record 4046906 (by URL in samples.json; fetched on demand).
+#   Candidate SNPs: dbSNP151 GRCh37 GATK build (chr-prefixed contigs), chr22.
+#   Phasing panel + map: 1000GP Phase3 chr22 (Zenodo record 6709541).
+#   https://ftp.ncbi.nih.gov/snp/organisms/human_9606_b151_GRCh37p13/VCF/GATK/00-All.vcf.gz
+#   https://zenodo.org/records/4046906   https://zenodo.org/records/6709541
+#
+# References staged under .test-run-dbsnp151/<case>/reference/ by
+# prepare_refs.dbsnp151.sh; alignments pulled from Zenodo. Paths repo-relative.
+##################################################
+
+snp_dir: "snps"
+phase_dir: "phase"
+pileup_dir: "pileup"
+allele_dir: "allele"
+bb_dir: "bb"
+qc_dir: "qc"
+log_dir: "logs"
+aux_dir: "aux"
+
+workflow_mode: "bulk_genotyping"
+assay_types: ["bulkWGS"]
+
+##################################################
+# Input
+sample_id: DEMO
+sample_file: tests/data/hatchet2_chr22_simulation/samples.json
+chromosomes: [22]
+
+het_snp_vcf: null
+het_snp_vcf_phased: true
+bb_file: null
+
+##################################################
+# Reference (hg19 / GRCh37, chr-prefixed contigs). window_bed is the pre-built hg19
+# window BED subset to chr22 (GC + MAP + REPLI baked in), so build_window_bed and the
+# Repli-seq fetch are skipped and no mappability track is needed. rd_correct still runs
+# gc/rt correction from the bed's GC/MAP/REPLI columns. Tracks staged by prepare_refs.
+reference_version: "hg19"
+reference: .test-run-dbsnp151/hatchet2_chr22_simulation/reference/hg19.chr22.fa
+genome_size: resources/data/hg19.chrom.sizes
+region_bed: resources/data/hg19.regions.bed
+window_bed: .test-run-dbsnp151/hatchet2_chr22_simulation/reference/windows.1kbp.hg19.chr22.bed.gz
+mappability_bed: null
+blacklist_bed: .test-run-dbsnp151/hatchet2_chr22_simulation/reference/hg19-blacklist.v2.chr22.bed.gz
+gene_blacklist_file: null
+gtf_file: .test-run-dbsnp151/hatchet2_chr22_simulation/reference/gencode.v19.chr22.gtf.gz
+
+##################################################
+# Candidate SNPs: dbSNP151 GRCh37 GATK build, chr22 positions (staged by prepare_refs).
+# snp_panel is consumed only by the single-cell path; bulk uses snp_targets.
+snp_panel: null
+snp_targets: .test-run-dbsnp151/hatchet2_chr22_simulation/reference/snp_targets
+phasing_panel: .test-run-dbsnp151/hatchet2_chr22_simulation/reference/phasing_panel
+
+##################################################
+# Phasing: SHAPEIT5 (phase_common). Genetic map is the 1000GP chr22 combined map
+# converted to SHAPEIT format (pos chr cM); gmap_path carries a {chrname} placeholder.
+phaser: "shapeit"
+gmap_path: .test-run-dbsnp151/hatchet2_chr22_simulation/reference/maps/chr{chrname}.b37.gmap.gz
+
+##################################################
+# Read-depth correction: OFF (raw depth); gc_correct=False skips all bias correction.
+params_count_reads:
+  gc_correct: false
+  rt_correct: false
+
+##################################################
+# Adaptive binning (same as the eagle test, for an apples-to-apples BAF comparison).
+params_combine_counts:
+  min_snp_reads: [3000]

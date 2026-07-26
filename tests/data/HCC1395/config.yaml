@@ -1,0 +1,78 @@
+##################################################
+# Test case: HCC1395 / HCC1395BL (SEQC2), real triple-negative breast cancer
+# tumor-normal WGS, hg38, two CNA-bearing chromosomes.
+#
+# Data: SEQC2 Somatic Mutation Working Group Illumina NovaSeq WGS, BWA-MEM to
+#   GRCh38.d1.vd1 (chr-prefixed, no ALT contigs). Tumor HCC1395 + matched normal
+#   HCC1395BL stream from NCBI ReferenceSamples by URL (samples.json); the index
+#   lets the pipeline read only `chromosomes`, not the ~120 GB whole-genome BAMs.
+#   https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/seqc/Somatic_Mutation_WG/data/WGS/
+#
+# Chromosomes 6 and 16 carry strong CNAs in HCC1395: 6p and 16q arm-level loss with
+#   LOH, so BAF/RDR show a clear within-chromosome copy-number transition.
+#   Gong, Fang et al., Genome Biology 25:158 (2024), doi:10.1186/s13059-024-03294-8.
+#
+# Population panel is 1000G n=3202 phased panel (GRCh38), NOT dbSNP: build with
+#   resources/scripts/process_1kGP_3202_panel.sh --ref hg38 <out> (see README).
+##################################################
+
+snp_dir: "snps"
+phase_dir: "phase"
+pileup_dir: "pileup"
+allele_dir: "allele"
+bb_dir: "bb"
+qc_dir: "qc"
+log_dir: "logs"
+aux_dir: "aux"
+
+workflow_mode: "bulk_genotyping"
+assay_types: ["bulkWGS"]
+
+##################################################
+# Input
+sample_id: HCC1395
+sample_file: tests/data/HCC1395/samples.json
+chromosomes: [6, 16]
+
+het_snp_vcf: null
+het_snp_vcf_phased: true
+bb_file: null
+
+##################################################
+# Reference (hg38 / GRCh38, chr-prefixed contigs). The pre-built genome-wide hg38
+# window BED (GC baked in) and blacklist are used directly; rd_correct filters the
+# window BED to `chromosomes`, so a genome-wide file is fine. Reference FASTA + GTF
+# are staged under the gitignored .test-run/ dir (see README).
+reference_version: "hg38"
+reference: .test-run/HCC1395/reference/hg38.fa
+genome_size: resources/data/hg38.chrom.sizes
+region_bed: resources/data/hg38.regions.bed
+window_bed: resources/data/windows.1kbp.hg38.bed.gz
+mappability_bed: null
+blacklist_bed: resources/data/hg38-blacklist.v2.bed.gz
+gene_blacklist_file: null
+gtf_file: .test-run/HCC1395/reference/gencode.hg38.gtf.gz
+
+##################################################
+# Population panel (1000G n=3202 phased, GRCh38; biallelic SNPs). Staged as per-chr
+# BCF + target position lists by process_1kGP_3202_panel.sh. snp_panel is unset - the
+# bulk path genotypes off snp_targets.
+snp_panel: null
+snp_targets: .test-run/HCC1395/reference/target_positions
+phasing_panel: .test-run/HCC1395/reference/phasing_panel
+
+##################################################
+# Phasing (Eagle2 short-read statistical phasing against the 1000G panel)
+phaser: "eagle"
+gmap_path: .test-run/HCC1395/reference/genetic_map_hg38_withX.txt.gz
+
+##################################################
+# Read-depth correction: GC on (from the window BED), replication timing off.
+params_count_reads:
+  gc_correct: true
+  rt_correct: false
+
+##################################################
+# Adaptive binning
+params_combine_counts:
+  min_snp_reads: [3000]

@@ -1,0 +1,83 @@
+##################################################
+# Test case: COLO829 / COLO829BL, real melanoma tumor-normal WGS, hg38, two
+# CNA-bearing chromosomes. Long-read (Oxford Nanopore) variant of the bulk path.
+#
+# Data: ONT Open Data colo829_2024.03, Dorado sup basecalls, minimap2 to GRCh38
+#   (chr-prefixed). Tumor COLO829 + matched normal COLO829BL stream from the public
+#   AWS ont-open-data bucket by URL (samples.json); one PromethION flowcell per sample.
+#   https://labs.epi2me.io/colo-2024.03/
+#   (No anonymous hg38 Illumina pure T/N pair exists for COLO829; this is the clean
+#    hg38 open pair, so the case runs the long-read path: assay bulkWGS-lr + longphase.)
+#
+# Chromosomes 8 and 10 carry clear CNAs in COLO829: chr8 gain (trisomy 8) and chr10
+#   loss/LOH (10p loss + PTEN homozygous deletion at 10q23), so BAF/RDR show strong
+#   allelic imbalance. Velazquez-Villarreal et al., Commun Biol 3:318 (2020),
+#   doi:10.1038/s42003-020-1044-8 (PMC7316972).
+#
+# Population panel is 1000G n=3202 phased panel (GRCh38), NOT dbSNP: it supplies the
+#   het-SNP `snp_targets` genotyped by bcftools. Phasing is read-backed (longphase),
+#   so no phasing_panel/gmap are used.
+##################################################
+
+snp_dir: "snps"
+phase_dir: "phase"
+pileup_dir: "pileup"
+allele_dir: "allele"
+bb_dir: "bb"
+qc_dir: "qc"
+log_dir: "logs"
+aux_dir: "aux"
+
+workflow_mode: "bulk_genotyping"
+assay_types: ["bulkWGS-lr"]
+
+##################################################
+# Input
+sample_id: COLO829
+sample_file: tests/data/COLO829/samples.json
+chromosomes: [8, 10]
+
+het_snp_vcf: null
+het_snp_vcf_phased: true
+bb_file: null
+
+##################################################
+# Reference (hg38 / GRCh38, chr-prefixed contigs). Pre-built genome-wide hg38 tracks
+# are used directly; rd_correct filters window_bed to `chromosomes`. Reference FASTA +
+# GTF are staged under the gitignored .test-run/ dir (see README).
+reference_version: "hg38"
+reference: .test-run/COLO829/reference/hg38.fa
+genome_size: resources/data/hg38.chrom.sizes
+region_bed: resources/data/hg38.regions.bed
+window_bed: resources/data/windows.1kbp.hg38.bed.gz
+mappability_bed: null
+blacklist_bed: resources/data/hg38-blacklist.v2.bed.gz
+gene_blacklist_file: null
+gtf_file: .test-run/COLO829/reference/gencode.hg38.gtf.gz
+
+##################################################
+# Population panel (1000G n=3202 phased, GRCh38; biallelic SNPs). Only snp_targets is
+# used here (het-SNP genotyping sites); longphase does not consume the phasing panel.
+# Build with resources/scripts/process_1kGP_3202_panel.sh --ref hg38 <out>.
+snp_panel: null
+snp_targets: .test-run/COLO829/reference/target_positions
+phasing_panel: null
+
+##################################################
+# Phasing: read-backed (long-read), no reference panel / genetic map. ONT reads ->
+# longphase --ont (default --pb is PacBio).
+phaser: "longphase"
+gmap_path: null
+params_longphase:
+  extra_params: "--ont"
+
+##################################################
+# Read-depth correction: GC on (from the window BED), replication timing off.
+params_count_reads:
+  gc_correct: true
+  rt_correct: false
+
+##################################################
+# Adaptive binning
+params_combine_counts:
+  min_snp_reads: [3000]

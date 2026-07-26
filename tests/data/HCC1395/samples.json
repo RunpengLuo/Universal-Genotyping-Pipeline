@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "samples": [
+    {
+      "sample_id": "HCC1395",
+      "dataset_id": "N1",
+      "assay_type": "bulkWGS",
+      "sample_type": "normal",
+      "reference_version": "hg38",
+      "files": {
+        "alignment": "https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/seqc/Somatic_Mutation_WG/data/WGS/WGS_IL_N_1.bwa.dedup.bam",
+        "alignment_index": "https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/seqc/Somatic_Mutation_WG/data/WGS/WGS_IL_N_1.bwa.dedup.bai"
+      }
+    },
+    {
+      "sample_id": "HCC1395",
+      "dataset_id": "T1",
+      "rdr_base_dataset_id": "N1",
+      "assay_type": "bulkWGS",
+      "sample_type": "tumor",
+      "reference_version": "hg38",
+      "files": {
+        "alignment": "https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/seqc/Somatic_Mutation_WG/data/WGS/WGS_IL_T_1.bwa.dedup.bam",
+        "alignment_index": "https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/seqc/Somatic_Mutation_WG/data/WGS/WGS_IL_T_1.bwa.dedup.bai"
+      }
+    }
+  ]
+}

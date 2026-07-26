@@ -16,3 +16,4 @@ test*
 !tests/
 !tests/*.py
 *.log
+.test-run*/
