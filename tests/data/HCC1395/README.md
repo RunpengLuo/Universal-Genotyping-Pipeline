@@ -50,3 +50,12 @@ bash tests/data/HCC1395/prepare_refs.sh
 RUN=/scratch/HCC1395 CORES=<N> bash tests/data/HCC1395/run_pipeline.sh
 RUN=/scratch/HCC1395 bash tests/data/HCC1395/check_outputs.sh
 ```
+
+To run genome-wide (autosomes 1-22) instead of chr16, stage whole-genome references
+(`CHROMS`) and use the whole-genome runner; `check_outputs.sh` takes the matching `RUN`:
+
+```sh
+CHROMS="$(seq 1 22)" bash tests/data/HCC1395/prepare_refs.sh
+RUN=/scratch/HCC1395_wg CORES=<N> bash tests/data/HCC1395/run_pipeline.whole_genome.sh
+RUN=/scratch/HCC1395_wg bash tests/data/HCC1395/check_outputs.sh
+```
