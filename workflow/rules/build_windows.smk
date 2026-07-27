@@ -28,8 +28,8 @@
 #         out: windows.bed.gz  (#CHR START END region_id seg_id GC [MAP] [REPLI])
 #              + qc_pdf (segment- and window-length histograms)
 #
-#   . window_bed_to_3bed               [per assay_type]
-#       in : windows.bed.gz           out: pileup/{assay}/windows.bed.gz (mosdepth --by)
+#   . window_bed_to_3bed               [one shared file for every bulk assay]
+#       in : windows.bed.gz           out: aux/windows.3col.bed.gz (mosdepth --by)
 #
 # Globals from parse_workflow: segment_bed, bedpe_files, has_breakpoints,
 # use_prebuilt_windows, do_repliseq, window_size.
@@ -180,17 +180,15 @@ if workflow_mode == "bulk_genotyping":
 
 
 rule window_bed_to_3bed:
-    """Per-assay headerless 3-column BED (#CHR/START/END) for mosdepth --by."""
+    """Headerless 3-column BED (#CHR/START/END) for mosdepth --by; one grid, all bulk assays."""
     input:
         window_bed=window_bed_path,
     output:
-        mosdepth_bed=temp(config["pileup_dir"] + "/{assay_type}/windows.bed.gz"),
+        mosdepth_bed=temp(config["aux_dir"] + "/windows.3col.bed.gz"),
     log:
-        config["log_dir"]
-        + f"/window_bed_to_3bed/window_bed_to_3bed.{{assay_type}}.{_run_id}.log",
+        config["log_dir"] + f"/window_bed_to_3bed/window_bed_to_3bed.{_run_id}.log",
     benchmark:
-        config["bench_dir"]
-        + f"/window_bed_to_3bed/window_bed_to_3bed.{{assay_type}}.{_run_id}.tsv"
+        config["bench_dir"] + f"/window_bed_to_3bed/window_bed_to_3bed.{_run_id}.tsv"
     shell:
         "gzip -dc {input.window_bed} | tail -n +2 | cut -f1-3 | gzip -c "
         "> {output.mosdepth_bed} 2> {log}"

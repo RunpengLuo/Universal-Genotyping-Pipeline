@@ -19,7 +19,7 @@ if not remote_stream:
             alignment_index=lambda wc: alignment_index_input(
                 get_data[(wc.assay_type, wc.dataset_id)]
             ),
-            windows_bed=config["pileup_dir"] + "/{assay_type}/windows.bed.gz",
+            windows_bed=config["aux_dir"] + "/windows.3col.bed.gz",
         output:
             mosdepth_file=config["pileup_dir"]
             + "/{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz",
@@ -61,7 +61,7 @@ else:
             alignment_index=lambda wc: bam_stream_index_input(
                 get_data[(wc.assay_type, wc.dataset_id)]
             ),
-            windows_bed=config["pileup_dir"] + "/{assay_type}/windows.bed.gz",
+            windows_bed=config["aux_dir"] + "/windows.3col.bed.gz",
             reference=config["reference"],
         output:
             mosdepth_file=temp(
