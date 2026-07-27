@@ -85,13 +85,16 @@ gtf_file: /path/to/gencode.v38.annotation.gtf.gz
 > [!NOTE]
 > (Experimental!) When SV breakpoints are provided, `window_bed` will be ignored and re-built according to `window_size` (default is 1kbp) and breakpoints.
 
-3. specify the targeted positions (`snp_targets`) and list of normal datasets (`genotype_dataset_ids`, default is all normal samples) for germline SNPs genotyping via bcftools. See [snp-panels](../resources/README.md#snp-panels) for details.
+3. specify the targeted positions (`snp_targets`) and list of normal datasets (`genotype_dataset_ids`, default is all normal samples) for germline SNPs genotyping via [bcftools](https://github.com/samtools/bcftools). See [snp-panels](../resources/README.md#snp-panels) for details.
 
 ```yaml
 snp_targets: /path/to/target_positions
 ```
 
-4. our pipeline supports various haplotype phasing softwares (`phaser`) including Eagle2, Shapeit5, and LongPhase.
+> [!IMPORTANT]
+> For long-read datasets, set `params_bcftools.extra_params` to the matching bcftools mpileup platform preset so genotyping and pileup use the correct long-read error model: `-X ont-sup` (Oxford Nanopore) or `-X pacbio-ccs` (PacBio HiFi). Run `bcftools mpileup -X list` for all available profiles.
+
+4. our pipeline supports various haplotype phasing softwares (`phaser`) including [Eagle2](https://github.com/poruloh/Eagle), [Shapeit5](https://github.com/odelaneau/shapeit), and [LongPhase](https://github.com/twolinin/longphase).
 - For short-read phasing via Eagle2 and Shapeit5, genetic map file (`gmap_path`, see [genetic-maps](../resources/README.md#genetic-maps)) and population haplotype panel (`phasing_panel`, see [population-haplotype-panels](../resources/README.md#population-haplotype-panels)) are required. 
 - For long-read phasing via LongPhase, genetic map and haplotype panel are ignored. Set `params_longphase.extra_params` according to specific long-read sequencing technology (e.g., `"--pb"` for Pacbio HiFi).
 
@@ -103,9 +106,12 @@ gmap_path: /path/to/Eagle_v2.4.1/tables/genetic_map_hg38_withX.txt.gz
 ```
 
 > [!NOTE]
-> If germline (phased) Het SNPs information is already exist, user may also specify the path via `het_snp_vcf` and set `het_snp_vcf_phased` to indicate if the VCF file is phased or not. This will skip the germline SNP genotyping (and haplotype phasing if `het_snp_vcf_phased=true`).
+> If a set of confident germline (phased) Het SNPs information already exist, user may specify the path via `het_snp_vcf` and set `het_snp_vcf_phased` to indicate if the VCF file is phased or not. This will skip the germline SNP genotyping (and haplotype phasing if `het_snp_vcf_phased=true`).
 
-5. By default, our pipeline performs dataset-specific read-depth bias correction (`gc_correct_method`, default is median regression, lowess is also provided) against covariates including GC-content and replication timing (RT). For long-read sequencing datasets where GC bias are less common, user can disable them by setting `gc_correct` (and `rt_correct`) to `false` as follows.
+> [!IMPORTANT]
+> For long-read phasing via LongPhase, set `params_longphase.extra_params` to the sequencing platform flag: `--ont` (Oxford Nanopore) or `--pb` (PacBio HiFi/CCS).
+
+5. By default, our pipeline performs dataset-specific read-depth bias correction (`gc_correct_method`, default is median regression, lowess is also provided) against covariates including GC-content and replication timing (RT). For long-read sequencing datasets where GC bias are less common, user can disable them by setting `gc_correct` (and `rt_correct`) to `false`:
 
 ```yaml
 params_count_reads:

@@ -4,7 +4,6 @@
 # See docs/reference.md for full descriptions
 # and config/config.yaml for default parameters
 ##################################################
-
 # Output paths (relative to snakemake --directory)
 snp_dir: "snps"
 phase_dir: "phase"
@@ -33,27 +32,32 @@ bb_file: null
 # Reference
 reference_version: "hg38"
 reference: /path/to/reference.fa
+gtf_file: /path/to/genes.gtf.gz
 genome_size: /path/to/genome.sizes
 region_bed: /path/to/regions.bed
-window_bed: null
-mappability_bed: null
+
+# Blacklist excluded regions/genes
 blacklist_bed: null
 gene_blacklist_file: null
-gtf_file: /path/to/genes.gtf.gz
 
 ##################################################
-# Population Panel
+# Build windows (bulk)
+window_bed: null
+mappability_bed: null
+
+##################################################
+# Genotyping
 snp_panel: /path/to/snps.vcf.gz
 snp_targets: /path/to/target_positions
-phasing_panel: /path/to/phasing_panel
 
 ##################################################
 # Phasing
-phaser: "shapeit"
-gmap_path: "/path/to/shapeit5/resources/maps/b38/chr{chrname}.b38.gmap.gz"
+phaser: "eagle"
+phasing_panel: /path/to/phasing_panel
+gmap_path: "/path/to/eagle/resources/maps/b38/chr{chrname}.b38.gmap.gz"
 
 ##################################################
-# Adaptive binning
+# Segmentation (adaptive binning + RDR/BAF)
 params_combine_counts:
   min_snp_reads: [500, 1000]
 

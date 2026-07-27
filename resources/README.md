@@ -19,7 +19,7 @@
 
 VCF format. Set via `snp_panel` or `snp_targets` in config.
 
-| Panel | Species | Reference | Download |
+| Panel | Species | Reference | Source |
 |-------|---------|-----------|----------|
 | 1kGP phase3 AF>=5e-2 | Human | hg38 | [download](https://sourceforge.net/projects/cellsnp/files/SNPlist/genome1K.phase3.SNP_AF5e2.chr1toX.hg38.vcf.gz) |
 | 1kGP phase3 AF>=5e-4 | Human | hg38 | [download](https://sourceforge.net/projects/cellsnp/files/SNPlist/genome1K.phase3.SNP_AF5e4.chr1toX.hg38.vcf.gz) |
@@ -42,7 +42,7 @@ bash resources/scripts/build_snp_targets.sh /path/to/snp_panel.vcf.gz /path/to/s
 
 ## Population-haplotype Panels
 
-| Panel | Species | Reference | Download |
+| Panel | Species | Reference | Source |
 |-------|---------|-----------|----------|
 | 1kGP phase3 (n=2,504) | Human | hg38 | [download](http://pklab.med.harvard.edu/teng/data/1000G_hg38.zip) |
 | 1kGP phase3 (n=3,202) | Human | hg38 | produced by `process_1kGP_3202_panel.sh --ref hg38` (see SNP Panels) |
@@ -53,11 +53,23 @@ bash resources/scripts/build_snp_targets.sh /path/to/snp_panel.vcf.gz /path/to/s
 
 ### Genetic Maps
 
-| Reference | Source | Example `gmap_path` |
+| Species | Reference | Source |
 |---|---|---|
-| **hg38** | bundled with Eagle2 (`tables/`) and SHAPEIT5 (`resources/maps/b38/`) | SHAPEIT5: `/path/to/shapeit5/resources/maps/b38/chr{chrname}.b38.gmap.gz`<br>Eagle2: `/path/to/Eagle_v2.4.1/tables/genetic_map_hg38_withX.txt.gz` |
-| **chm13v2** | download [T2T-native scaled maps](https://github.com/JosephLalli/phasing_T2T/tree/main/resources/recombination_maps/t2t_native_scaled_maps); convert via [`scripts/convert_gmap_to_eagle.py`](scripts/convert_gmap_to_eagle.py) for Eagle2 | SHAPEIT5: `/path/to/chm13v2_maps/chr{chrname}.t2t.scaled.gmap.gz`<br>Eagle2: `/path/to/eagle_chm13v2/genetic_map_chm13v2_withX.txt.gz` |
-| **mm10** | build from Karl Broman's CoxMapV3 (`build_mouse_gmap_mm10.sh`, TODO) — produces both SHAPEIT5 per-chrom files and a single Eagle2 file | SHAPEIT5: `/path/to/mm10_gmap/shapeit5/chr{chrname}.mm10.gmap.gz`<br>Eagle2: `/path/to/mm10_gmap/eagle2/genetic_map_mm10_withX.txt.gz` |
+| Human | **hg38** | bundled with [Eagle2](https://github.com/poruloh/Eagle) (`tables/`) and [SHAPEIT5](https://github.com/odelaneau/shapeit) (`resources/maps/b38/`) |
+| Human | **chm13v2** | download [T2T-native scaled maps](https://github.com/JosephLalli/phasing_T2T/tree/main/resources/recombination_maps/t2t_native_scaled_maps); convert via [`scripts/convert_gmap_to_eagle.py`](scripts/convert_gmap_to_eagle.py) for Eagle2 |
+| Mouse | **mm10** | build from Karl Broman's CoxMapV3 (`build_mouse_gmap_mm10.sh`, TODO) — produces both SHAPEIT5 per-chrom files and a single Eagle2 file |
+
+Example (hg38), set `phaser` and `gmap_path` in config:
+
+```yaml
+# Eagle2 (single file)
+phaser: "eagle"
+gmap_path: "/path/to/Eagle_v2.4.1/tables/genetic_map_hg38_withX.txt.gz"
+
+# SHAPEIT5 (per-chromosome, {chrname} substituted per chromosome)
+phaser: "shapeit"
+gmap_path: "/path/to/shapeit5/resources/maps/b38/chr{chrname}.b38.gmap.gz"
+```
 
 ---
 
@@ -65,7 +77,7 @@ bash resources/scripts/build_snp_targets.sh /path/to/snp_panel.vcf.gz /path/to/s
 
 Set via `gtf_file` in config.
 
-| Source | Species | Reference | Download |
+| Annotation | Species | Reference | Source |
 |--------|---------|-----------|----------|
 | GENCODE v38 | Human | hg38 | [gencode.v38.annotation.gtf.gz](https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_38/gencode.v38.annotation.gtf.gz) |
 | 10x GRCh38-2024-A | Human | hg38 | [refdata-gex-GRCh38-2024-A.tar.gz](https://cf.10xgenomics.com/supp/cell-exp/refdata-gex-GRCh38-2024-A.tar.gz): `genes/genes.gtf.gz` |
@@ -107,7 +119,7 @@ Set via `genome_size` (two-column `chrom<TAB>size`) and `region_bed` (arm-level 
 
 Set via `blacklist_bed` in config; both pre-built under `data/`.
 
-| Blacklist | Species | Reference | Download |
+| Blacklist | Species | Reference | Source |
 |-----------|---------|-----------|----------|
 | ENCODE blacklist v2 | Human | hg38 | [hg38-blacklist.v2.bed.gz](https://github.com/Boyle-Lab/Blacklist/blob/master/lists/hg38-blacklist.v2.bed.gz) |
 | ENCODE blacklist v2 | Mouse | mm10 | [mm10-blacklist.v2.bed.gz](https://github.com/Boyle-Lab/Blacklist/blob/master/lists/mm10-blacklist.v2.bed.gz) |
@@ -119,7 +131,7 @@ Set via `blacklist_bed` in config; both pre-built under `data/`.
 
 Optional; set `mappability_bed` in config to add the `MAP` column. Convert the bigWig to BED with `bigWigToBedGraph` (UCSC tools).
 
-| Track | Species | Reference | Download |
+| Track | Species | Reference | Source |
 |-------|---------|-----------|----------|
 | k100 Umap multi-track | Human | hg38 | [k100.Umap.MultiTrackMappability.bw](http://hgdownload.soe.ucsc.edu/gbdb/hg38/hoffmanMappability/k100.Umap.MultiTrackMappability.bw) |
 
@@ -127,7 +139,7 @@ Optional; set `mappability_bed` in config to add the `MAP` column. Convert the b
 
 This is automatically handled by the pipeline via rule `repliseq_bigwig_to_bedgraph` and lift-over to `hg38` via [hg19ToHg38.over.chain.gz](https://hgdownload.cse.ucsc.edu/goldenpath/hg19/liftOver/hg19ToHg38.over.chain.gz) using `repliseq_liftover` if needed.
 
-| Track | Species | Reference | Download |
+| Track | Species | Reference | Source |
 |-------|---------|-----------|----------|
 | ENCODE UW Repli-seq WaveSignal (16 bigWig) | Human | hg19 | [UCSC](http://hgdownload.cse.ucsc.edu/goldenpath/hg19/encodeDCC/wgEncodeUwRepliSeq/) |
 
