@@ -1,10 +1,11 @@
 ##################################################
 # Genotyping YAML configuration file (user)
+#
+# See docs/reference.md for full descriptions
+# and config/config.yaml for default parameters
 ##################################################
-# This template lists the keys most users override. For the full set of defaults
-# (every params_* block) see config/config.yaml; for what each key means, its range
-# and its default, see docs/reference.md.
 
+# Output paths (relative to snakemake --directory)
 snp_dir: "snps"
 phase_dir: "phase"
 pileup_dir: "pileup"
