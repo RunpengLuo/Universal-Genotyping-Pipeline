@@ -1,6 +1,6 @@
 # Bulk Genotyping
 
-This documentation covers input preparation and result intepretation for bulk genotyping using **short-read** WGS/WES and/or **long-read** (e.g., PacBio HiFi, Oxford Nanopore) sequencing data to run [HATCHet](https://github.com/raphael-group/hatchet). Refer to [Installation](installation.md) and [run.md](./run.md) for Snakemake pipeline installation and execution instructions.
+This documentation covers input preparation and result intepretation for bulk genotyping using **short-read** WGS/WES and/or **long-read** (e.g., PacBio HiFi, Oxford Nanopore) sequencing data to run [HATCHet](https://github.com/raphael-group/hatchet). Refer to [Pipeline](pipeline.md) for Snakemake pipeline installation and execution instructions.
 
 <p align="center">
   <img src="imgs/rulegraph.bulk_genotyping.png" alt="bulk_genotyping rule graph" width="500">
@@ -92,7 +92,7 @@ snp_targets: /path/to/target_positions
 ```
 
 4. our pipeline supports various haplotype phasing softwares (`phaser`) including Eagle2, Shapeit5, and LongPhase.
-- For short-read phasing via Eagle2 and Shapeit5, genetic map file (`gmap_path`, see [genetic-maps](../resources/README.md#genetic-maps)) and population haplotype panel (`phasing_panel`, see [phasing-panels](../resources/README.md#phasing-panels)) are required. 
+- For short-read phasing via Eagle2 and Shapeit5, genetic map file (`gmap_path`, see [genetic-maps](../resources/README.md#genetic-maps)) and population haplotype panel (`phasing_panel`, see [population-haplotype-panels](../resources/README.md#population-haplotype-panels)) are required. 
 - For long-read phasing via LongPhase, genetic map and haplotype panel are ignored. Set `params_longphase.extra_params` according to specific long-read sequencing technology (e.g., `"--pb"` for Pacbio HiFi).
 
 An example for Eagle2 as follows.

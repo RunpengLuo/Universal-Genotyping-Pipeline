@@ -1,6 +1,6 @@
 # Copytyping Preprocess
 
-This documentation covers input preparation and result interpretation for the copytyping preprocess mode, which aggregates single-cell / spatial (**scRNA**, **scATAC**, **Visium**) allele and native counts onto a **pre-computed** set of copy-number blocks to run [CalicoST](https://github.com/raphael-group/CalicoST). This mode never genotypes or phases: a pre-computed phased het-SNP VCF (`het_snp_vcf`) and the genomic bin annotations (`bb_file`) are **required** inputs from running genotyping using matched bulk samples. Refer to [Installation](installation.md) and [run.md](./run.md) for Snakemake pipeline installation and execution instructions.
+This documentation covers input preparation and result interpretation for the copytyping preprocess mode, which aggregates single-cell / spatial (**scRNA**, **scATAC**, **Visium**) allele and native counts onto a **pre-computed** set of copy-number blocks to run [CalicoST](https://github.com/raphael-group/CalicoST). This mode never genotypes or phases: a pre-computed phased het-SNP VCF (`het_snp_vcf`) and the genomic bin annotations (`bb_file`) are **required** inputs from running genotyping using matched bulk samples. Refer to [Pipeline](pipeline.md) for Snakemake pipeline installation and execution instructions.
 
 <p align="center">
   <img src="imgs/rulegraph.copytyping_preprocess.png" alt="copytyping_preprocess rule graph" width="260">

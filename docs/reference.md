@@ -168,8 +168,8 @@ Used by `combine_counts` (bulk) and `combine_counts_nonbulk` (single-cell).
 > Bulk read target: `min_snp_reads` is applied per tumor column and a bin closes only when
 > every column (WGS/WGS-lr/WES) meets it. WES is handled identically to WGS -- same
 > `segment.bed`/`window_size` grid, no capture-target file -- so WGS/WGS-lr/WES of one
-> patient bin together on one grid. See [`wes_bulk_genotyping.md`](wes_bulk_genotyping.md)
-> for the WES RD-correction caveat.
+> patient bin together on one grid. WES depth carries capture-enrichment structure, so its
+> post-correction RDR is noisier than WGS; inspect `qc/rd_correction.bulkWES.pdf`.
 
 #### `threads`
 Used by all multi-thread rules.

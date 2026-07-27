@@ -1,6 +1,6 @@
 # Single-Cell Genotyping
 
-This documentation covers input preparation and result interpretation for single-cell and spatial genotyping using **scRNA**, **scATAC** (incl. 10x Epi Multiome), and **Visium** (`VISIUM`/`VISIUM3prime`) data to run [CalicoST](https://github.com/raphael-group/CalicoST). Germline SNPs are genotyped from a pseudobulk of the sample's own cells (cellsnp-lite), phased, then pileup-counted per cell. Refer to [Installation](installation.md) and [run.md](./run.md) for Snakemake pipeline installation and execution instructions.
+This documentation covers input preparation and result interpretation for single-cell and spatial genotyping using **scRNA**, **scATAC** (incl. 10x Epi Multiome), and **Visium** (`VISIUM`/`VISIUM3prime`) data to run [CalicoST](https://github.com/raphael-group/CalicoST). Germline SNPs are genotyped from a pseudobulk of the sample's own cells (cellsnp-lite), phased, then pileup-counted per cell. Refer to [Pipeline](pipeline.md) for Snakemake pipeline installation and execution instructions.
 
 <p align="center">
   <img src="imgs/rulegraph.single_cell_genotyping.png" alt="single_cell_genotyping rule graph" width="440">
@@ -86,7 +86,7 @@ gene_blacklist_file: resources/data/ig_gene_list.txt
 snp_panel: /path/to/snp_panel.vcf.gz
 ```
 
-4. our pipeline supports various haplotype phasing softwares (`phaser`) including Eagle2, Shapeit5, and LongPhase. For short-read phasing via Eagle2 and Shapeit5, genetic map file (`gmap_path`, see [genetic-maps](../resources/README.md#genetic-maps)) and population haplotype panel (`phasing_panel`, see [phasing-panels](../resources/README.md#phasing-panels)) are required.
+4. our pipeline supports various haplotype phasing softwares (`phaser`) including Eagle2, Shapeit5, and LongPhase. For short-read phasing via Eagle2 and Shapeit5, genetic map file (`gmap_path`, see [genetic-maps](../resources/README.md#genetic-maps)) and population haplotype panel (`phasing_panel`, see [population-haplotype-panels](../resources/README.md#population-haplotype-panels)) are required.
 
 ```yaml
 phaser: "eagle"
