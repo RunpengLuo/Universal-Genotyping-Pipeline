@@ -29,8 +29,6 @@ if not remote_stream:
         benchmark:
             config["bench_dir"]
             + f"/run_mosdepth/run_mosdepth.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
-        wildcard_constraints:
-            assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
         conda:
             "../envs/mosdepth.yaml"
         threads: config["threads"]["mosdepth"]
@@ -76,8 +74,6 @@ else:
         benchmark:
             config["bench_dir"]
             + f"/run_mosdepth/run_mosdepth.{{assay_type}}_{{dataset_id}}.chr{{chrname}}.{_run_id}.tsv"
-        wildcard_constraints:
-            assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
         conda:
             "../envs/mosdepth.yaml"
         threads: config["threads"]["mosdepth"]
@@ -120,8 +116,6 @@ else:
         log:
             config["log_dir"]
             + f"/run_mosdepth/merge_mosdepth.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
-        wildcard_constraints:
-            assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
         shell:
             r"""
             cat {input.per_chrom} > {output.mosdepth_file} 2> {log}
@@ -159,8 +153,6 @@ rule rd_correct:
         config["log_dir"] + f"/rd_correct/rd_correct.{{assay_type}}.{_run_id}.log",
     benchmark:
         config["bench_dir"] + f"/rd_correct/rd_correct.{{assay_type}}.{_run_id}.tsv"
-    wildcard_constraints:
-        assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
     conda:
         "../envs/base.yaml"
     params:

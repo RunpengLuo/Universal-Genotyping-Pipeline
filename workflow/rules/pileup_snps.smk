@@ -16,8 +16,6 @@ rule pileup_snps_bulk_bcftools:
     benchmark:
         config["bench_dir"]
         + f"/pileup_snps_bulk_bcftools/pileup_snps_bulk_bcftools.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
-    wildcard_constraints:
-        assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
     conda:
         "../envs/bcftools.yaml"
     threads: config["threads"]["pileup"]

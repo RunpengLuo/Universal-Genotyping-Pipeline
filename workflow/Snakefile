@@ -75,6 +75,16 @@ if _has_config:
 
     os.makedirs(config["qc_dir"], exist_ok=True)
 
+    # Global wildcard grammar: the token universe for wildcards shared across rules.
+    # Rules may narrow a wildcard further (e.g. non-bulk rules restrict assay_type).
+    # Pinning dataset_id/chrname stops a greedy wildcard from swallowing an adjacent
+    # path segment (e.g. mosdepth {dataset_id}.chr{chrname} vs {dataset_id}).
+    wildcard_constraints:
+        assay_type="|".join(sorted(ALLOWED_ASSAY_TYPES, key=len, reverse=True)),
+        dataset_id=r"[^./]+",
+        chrname=r"[0-9]+|[XYM]",
+        modality="|".join(sorted(set(ASSAY_TYPE2MODALITY.values()))),
+
     # entrypoint
     include: "rules/common.smk"
     include: "rules/build_windows.smk"

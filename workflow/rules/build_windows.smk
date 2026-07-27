@@ -191,8 +191,6 @@ rule window_bed_to_3bed:
     benchmark:
         config["bench_dir"]
         + f"/window_bed_to_3bed/window_bed_to_3bed.{{assay_type}}.{_run_id}.tsv"
-    wildcard_constraints:
-        assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
     shell:
         "gzip -dc {input.window_bed} | tail -n +2 | cut -f1-3 | gzip -c "
         "> {output.mosdepth_bed} 2> {log}"

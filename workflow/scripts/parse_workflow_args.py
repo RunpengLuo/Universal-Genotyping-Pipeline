@@ -222,6 +222,12 @@ def validate_records(records, path, workflow_mode, sample_id, configured_assay_t
             )
         if rec["sample_type"] not in ("normal", "tumor"):
             raise ValueError(f"{at}: sample_type must be 'normal' or 'tumor'")
+        did = rec["dataset_id"]
+        if not did or not all(c.isalnum() or c in "_-" for c in did):
+            raise ValueError(
+                f"{at}: dataset_id must be non-empty and match [A-Za-z0-9_-] "
+                f"(no dots or slashes; used verbatim in output paths), got {did!r}"
+            )
         if not isinstance(rec["files"], dict):
             raise ValueError(f"{at}: files must be an object")
 
