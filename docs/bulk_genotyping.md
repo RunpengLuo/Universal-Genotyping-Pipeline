@@ -1,14 +1,29 @@
 # Bulk Genotyping
 
-This documentation covers input preparation and result intepretation for bulk genotyping using **short-read** WGS/WES and/or **long-read** (e.g., PacBio HiFi, Oxford Nanopore) sequencing data to run [HATCHet](https://github.com/raphael-group/hatchet). Refer to [Pipeline](pipeline.md) for Snakemake pipeline installation and execution instructions.
+This documentation covers input preparation and result intepretation for preprocessing **short-read** WGS/WES and/or **long-read** (e.g., PacBio HiFi, Oxford Nanopore) sequencing data to run [HATCHet](https://github.com/raphael-group/hatchet). Refer to [Pipeline](pipeline.md) for Snakemake pipeline installation and execution instructions.
+
+## Table of Contents
+1. [Overview](#overview) <br>
+2. [Input](#input) <br>
+3. [Output](#output) <br>
+
+## Overview
+
+The rule graph below shows the stages of the bulk genotyping workflow.
 
 <p align="center">
   <img src="imgs/rulegraph.bulk_genotyping.png" alt="bulk_genotyping rule graph" width="500">
 </p>
 
-## Table of Contents
-1. [Input](#input) <br>
-2. [Output](#output) <br>
+### Features
+- Joint genotyping and segmentation across multiple bulk samples of mixed **short-reads** and **long-reads** DNA sequencing platforms on one shared genomic bin coordinates.
+- Large data hosted on cloud or FTP servers can be streamed rather than download to local storage. (`remote_mode=stream`).
+- Sequencing read-depth bias correction (GC-content, mappability, replication timing).
+- Multi-sample adaptive genomic bin segmentation to achieve sufficient count statistics.
+
+### Limitations
+- We require a matched-normal sample for genotyping germline SNPs. We plan to extend the pipeline to genotype germline SNPs using tumor-only samples in the future.
+- Automated model-selection for segmentation parameters with respect to sequencing coverages and segmentation variances.
 
 ## Input
 
@@ -119,11 +134,15 @@ params_count_reads:
   rt_correct: false
 ```
 
-6. The final step of the pipeline is to perform variable-length segmentation over genomic windows jointly across all tumor samples and obtain genomic bin by sample read-depth ratio (RDR), phased B-allele counts, and total-allele count matrices. each value in minimum-SNP-covering reads parameter (`min_snp_reads`) gives one segmentation result. We recommend setting `min_snp_reads` to a list of values and manually pick the lowest parameter that gives reliable BAF signals. In practice, we recommend using `MSR5000` as the final output.
+6. The final step of the pipeline is to perform variable-length segmentation over genomic windows jointly across all tumor samples and obtain genomic bin by sample read-depth ratio (RDR), phased B-allele counts, and total-allele count matrices. each value in minimum-SNP-covering reads parameter (`min_snp_reads`) gives one segmentation result. We recommend setting `min_snp_reads` to a list of values and inspect the QC plots for varying `min_snp_reads`, then pick the lowest value that gives reliable BAF signals. In practice, we recommend using `MSR5000` as the final output.
 ```yaml
 params_combine_counts:
-  min_snp_reads: [500, 1000, 3000, 5000, 10000]
+  min_snp_reads: [100, 500, 1000, 2000, 3000, 5000, 7500, 10000]
 ```
+
+> [!TIP]
+> 1. For high-coverage (>=30x) data, we recommend to use `min_snp_reads>2500`. In practice we usually use 5000.
+> 2. For low-coverage/targeted data, we recommend to use `min_snp_reads<500`. In practice we usually use 100.
 
 ## Output
 
