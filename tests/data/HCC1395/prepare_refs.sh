@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage hg38 chr6+chr16 reference + 1000G panel + Eagle map for the HCC1395 test case.
+# Stage hg38 chr16 reference + 1000G panel + Eagle map for the HCC1395 test case.
 #
 # Runpeng Luo (2026-07-26)
 #
@@ -11,10 +11,10 @@
 #   bash prepare_refs.sh [out_dir]
 #           out_dir  # default: <repo>/.test-run/HCC1395/reference (gitignored)
 # Outputs (match tests/data/HCC1395/config.yaml keys):
-#   hg38.fa (+ .fai)                           -> reference (chr6 + chr16)
-#   gencode.hg38.gtf.gz                         -> gtf_file (chr6 + chr16)
-#   target_positions/target.chr{6,16}.pos.gz   -> snp_targets (1000G n=3202)
-#   phasing_panel/chr{6,16}.genotypes.bcf       -> phasing_panel (Eagle reference)
+#   hg38.fa (+ .fai)                           -> reference (chr16)
+#   gencode.hg38.gtf.gz                         -> gtf_file (chr16)
+#   target_positions/target.chr16.pos.gz       -> snp_targets (1000G n=3202)
+#   phasing_panel/chr16.genotypes.bcf           -> phasing_panel (Eagle reference)
 #   genetic_map_hg38_withX.txt.gz               -> gmap_path (Eagle2)
 # Notes/References:
 #   Reference: UCSC hg38 per-chromosome FASTA (GRCh38 primary; matches the chr-prefixed
@@ -36,26 +36,26 @@ UCSC="https://hgdownload.soe.ucsc.edu/goldenPath/hg38/chromosomes"
 GENCODE_GTF="https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_44/gencode.v44.annotation.gtf.gz"
 EAGLE_TAR="https://storage.googleapis.com/broad-alkesgroup-public/Eagle/downloads/Eagle_v2.4.1.tar.gz"
 
-echo "[1/4] reference FASTA (hg38 chr6 + chr16)"
+echo "[1/4] reference FASTA (hg38 chr16)"
 if [ ! -f "${OUT}/hg38.fa.fai" ]; then
   : > "${OUT}/hg38.fa"
-  for c in chr6 chr16; do
+  for c in chr16; do
     curl -fsSL "${UCSC}/${c}.fa.gz" | gunzip -c >> "${OUT}/hg38.fa"
   done
   samtools faidx "${OUT}/hg38.fa"
 fi
 
-echo "[2/4] GENCODE v44 GTF (chr6 + chr16)"
+echo "[2/4] GENCODE v44 GTF (chr16)"
 if [ ! -f "${OUT}/gencode.hg38.gtf.gz" ]; then
   curl -fsSL "${GENCODE_GTF}" | gunzip -c \
-    | awk -F'\t' '$1=="chr6" || $1=="chr16"' \
+    | awk -F'\t' '$1=="chr16"' \
     | gzip -c > "${OUT}/gencode.hg38.gtf.gz"
 fi
 
-echo "[3/4] 1000G n=3202 targets + phasing panel (chr6, chr16)"
+echo "[3/4] 1000G n=3202 targets + phasing panel (chr16)"
 if [ ! -f "${OUT}/phasing_panel/chr16.genotypes.bcf.csi" ]; then
   bash "${REPO}/resources/scripts/process_1kGP_3202_panel.sh" \
-    --ref hg38 --chroms "6 16" "${OUT}"
+    --ref hg38 --chroms "16" "${OUT}"
 fi
 
 echo "[4/4] Eagle hg38 genetic map"
