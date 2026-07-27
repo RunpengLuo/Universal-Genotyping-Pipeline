@@ -22,7 +22,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "workflow", "scripts"))
+_SCRIPTS = os.path.join(os.path.dirname(__file__), "..", "workflow", "scripts")
+for _sub in ("", "script_utils", "plot"):
+    sys.path.insert(0, os.path.join(_SCRIPTS, _sub))
 pytest.importorskip("numba")
 agg = pytest.importorskip("aggregation_utils")
 

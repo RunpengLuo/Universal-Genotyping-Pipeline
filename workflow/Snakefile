@@ -10,6 +10,8 @@ configfile: os.path.join(workflow.basedir, "../config/config.yaml")
 
 sys.path.insert(0, os.path.join(workflow.basedir, "../config"))
 sys.path.insert(0, os.path.join(workflow.basedir, "scripts"))
+sys.path.insert(0, os.path.join(workflow.basedir, "scripts", "script_utils"))
+sys.path.insert(0, os.path.join(workflow.basedir, "scripts", "plot"))
 from const import (
     BULK_ASSAYS,
     NONBULK_ASSAYS,
@@ -95,6 +97,7 @@ if _has_config:
     include: "rules/phase_and_concat.smk"
     include: "rules/count_reads.smk"
     include: "rules/combine_counts.smk"
+    include: "rules/quality_control.smk"
 
     report: "report/workflow.rst"
 

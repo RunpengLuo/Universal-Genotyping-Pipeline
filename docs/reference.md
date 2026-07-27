@@ -50,6 +50,7 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 | `het_snp_vcf` | Optional; required for `copytyping_preprocess` | Pre-computed het SNP VCF. Set in any mode to skip genotyping. |
 | `het_snp_vcf_phased` | Optional | Default `true`: the VCF is taken as phased, so phasing is skipped too. `false` phases it. Read only with `het_snp_vcf`. |
 | `bb_file` | copytyping_preprocess | Pre-computed BB block annotations TSV. |
+| `qc_genotype_snps` | Optional (bulk) | Default `true`: when genotyping runs, render `qc/genotype_snp_qc.pdf` (het vs hom-alt ref-AF diagnostic from the genotyped VCF). `false` skips it. |
 
 ### Parameters
 
@@ -276,6 +277,7 @@ One multi-page PDF per rule, flat:
 
 | File | Contents |
 |---|---|
+| `genotype_snp_qc.pdf` | Genotyping diagnostic (bulk, when genotyping runs): genome-wide reference-AF colored het vs hom-alt, plus per-genotype AF/depth histograms. Gated by `qc_genotype_snps`. |
 | `phase_and_concat.{stream_or_assay}.pdf` | SNP allele frequency (unphased REF/TOTAL, then phased BAF) and SNP depth histogram. |
 | `rd_correction.{assay_type}.pdf` | Read-depth bias correction (bulk): RD before/after, GC/MAP/RT diagnostics. |
 | `combine_counts.{stream_or_assay}.MSR{msr}.pdf` | Binning QC, one PDF per `min_snp_reads` value. |

@@ -18,7 +18,7 @@ The rule graph below shows the stages of the single-cell genotyping workflow.
 ## Input
 
 ### Sample file
-A sample sheet in JSON format is required to specify the locations and data configurations for input datasets. Detailed JSON format can be found at [sample_sheet.md](./sample_sheet.md). Here is an example for a 10x Epi Multiome dataset `U1` (one `scRNA` record and one `scATAC` record sharing the `dataset_id`) from patient `HT001`.
+A sample sheet in JSON format is required to specify the locations and data configurations for input datasets. Detailed JSON format can be found at [sample_sheet.md](./sample_sheet.md). Here is an example for a 10x Epi Multiome dataset `U1` from patient `HT001`.
 
 ```json
 {
@@ -55,7 +55,8 @@ A sample sheet in JSON format is required to specify the locations and data conf
 > [!IMPORTANT]
 > Here are a few important constraints for sample files:
 > - All alignment files must come from same reference version.
-> - Each tuple (`sample_id`, `dataset_id`) defines a unique dataset; a multiome pair shares one `dataset_id`, one `scRNA` and one `scATAC` record.
+> - Each tuple (`sample_id`, `dataset_id`) defines a unique dataset.
+> - A multiome paired dataset share the same `dataset_id`, one `scRNA` and one `scATAC` record.
 > - BAM file (`alignment`) must be sorted, and its index file (`alignment_index`) must present!
 > - Each assay reads a specific set of `files` (`barcodes`, `fragments`, `matrix_h5`, `tissue_positions`, `scalefactors`, `image_hires`, `image_lowres`); see [sample_sheet.md](sample_sheet.md#files) for the per-assay requirement.
 

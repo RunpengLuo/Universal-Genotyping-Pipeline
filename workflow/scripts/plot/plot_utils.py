@@ -32,6 +32,21 @@ def _extract_col(mat, col_idx):
     return np.asarray(mat[:, col_idx]).ravel()
 
 
+# Full names for value-type abbreviations, used in figure titles only (ylabels keep
+# the short form). AF is the reference-allele frequency (ref / total).
+_VAL_TYPE_FULL = {
+    "AF": "REF-allele frequency",
+    "BAF": "B-allele frequency",
+    "RD": "Read depth",
+    "RDR": "Read-depth ratio",
+}
+
+
+def _val_full(val_type):
+    """Full title name for a value-type abbreviation (falls back to the input)."""
+    return _VAL_TYPE_FULL.get(val_type, val_type)
+
+
 # ---------------------------------------------------------------------------
 # rd_correct_utils plots
 # ---------------------------------------------------------------------------
@@ -225,9 +240,10 @@ def plot_rd_1d_scatter(
             if ylim is not None:
                 ax.set_ylim(0.0, ylim)
             ax.grid(axis="y", alpha=0.2)
-            ax.set_title(f"{title} — {val_type} ({unit})", fontsize=10)
+            ax.set_title(f"{title} — {_val_full(val_type)}", fontsize=10)
             ax.set_ylabel(val_type, fontsize=10)
         fig.suptitle(str(label), fontsize=12, y=1.0)
+        fig.supxlabel(f"Genome positions ({unit})")
         fig.tight_layout()
         pdf.savefig(fig, dpi=dpi)
         plt.close(fig)
@@ -271,10 +287,19 @@ def _genome_coords(pos_df, genome_size):
     return genome_x, chrom_bounds, cum
 
 
+# genome-wide x-axis tick spacing (bp), labeled in Mb and reset per chromosome
+_XTICK_STEP_BP = 20_000_000
+
+
 def _add_chrom_decorations(
     ax, chrom_bounds, total_len, region_by_chr, blacklist_by_chr
 ):
-    """Add chromosome boundaries, labels, and region/blacklist shading to an axis."""
+    """Add chromosome boundaries, labels, and region/blacklist shading to an axis.
+
+    X ticks fall every _XTICK_STEP_BP within each chromosome, labeled in Mb and
+    reset per chromosome; chromosome names sit below the tick row.
+    """
+    xticks, xticklabels = [], []
     for chrom, offset, sz in chrom_bounds:
         ax.axvline(offset, color="black", linewidth=0.5, alpha=0.3)
         if chrom in region_by_chr:
@@ -290,15 +315,20 @@ def _add_chrom_decorations(
         label = chrom.replace("chr", "")
         ax.text(
             offset + sz / 2,
-            -0.06,
+            -0.10,
             label,
             ha="center",
             va="top",
             fontsize=7,
             transform=ax.get_xaxis_transform(),
         )
+        for p in range(_XTICK_STEP_BP, int(sz), _XTICK_STEP_BP):
+            xticks.append(offset + p)
+            xticklabels.append(p // 1_000_000)
     ax.set_xlim(0, total_len)
-    ax.set_xticks([])
+    ax.set_xticks(xticks)
+    ax.set_xticklabels(xticklabels, fontsize=5)
+    ax.tick_params(axis="x", length=2)
 
 
 def _parse_bed_by_chr(bed_path):
@@ -380,8 +410,9 @@ def plot_1d_multi_sample(
             ax.grid(axis="y", alpha=0.2)
 
         if si == 0:
-            ax.set_title(f"{val_type} ({unit})")
+            ax.set_title(_val_full(val_type))
 
+    fig.supxlabel(f"Genome positions ({unit})")
     fig.tight_layout()
     if pdf is not None:
         pdf.savefig(fig, dpi=dpi)
@@ -404,11 +435,17 @@ def plot_1d_sample(
     min_ylim=0.0,
     max_ylim=None,
     mask: np.ndarray | None = None,
+    mask_labels=("kept", "filtered"),
+    mask_colors=("blue", "red"),
     region_bed: str | None = None,
     blacklist_bed: str | None = None,
     pdf: PdfPages | None = None,
 ):
-    """Single-sample 1-D genome-wide scatter plot: all chromosomes on one page."""
+    """Single-sample 1-D genome-wide scatter plot: all chromosomes on one page.
+
+    When *mask* is given, ``mask``-true points use ``mask_colors[0]``/``mask_labels[0]``
+    and ``mask``-false points use ``mask_colors[1]``/``mask_labels[1]``, with a legend.
+    """
     logging.info(f"genome-wide {unit}-level {val_type} plot, out_file={out_file}")
     genome_x, chrom_bounds, total_len = _genome_coords(pos_df, genome_size)
     region_by_chr = _parse_bed_by_chr(region_bed)
@@ -421,27 +458,27 @@ def plot_1d_sample(
     _add_chrom_decorations(ax, chrom_bounds, total_len, region_by_chr, blacklist_by_chr)
 
     if mask is not None:
-        kept = m & mask
-        filt = m & ~mask
-        if filt.any():
+        on = m & mask
+        off = m & ~mask
+        if off.any():
             ax.scatter(
-                genome_x[filt],
-                val[filt],
+                genome_x[off],
+                val[off],
                 s=s_plot,
                 alpha=0.8,
-                color="red",
+                color=mask_colors[1],
                 rasterized=True,
-                label=f"filtered ({filt.sum()})",
+                label=f"{mask_labels[1]} ({off.sum()})",
             )
-        if kept.any():
+        if on.any():
             ax.scatter(
-                genome_x[kept],
-                val[kept],
+                genome_x[on],
+                val[on],
                 s=s_plot,
                 alpha=0.8,
-                color="blue",
+                color=mask_colors[0],
                 rasterized=True,
-                label=f"kept ({kept.sum()})",
+                label=f"{mask_labels[0]} ({on.sum()})",
             )
         ax.legend(loc="upper right", fontsize=8, markerscale=2)
     else:
@@ -457,7 +494,8 @@ def plot_1d_sample(
     ax.set_ylabel(val_type)
     if val_type not in ["AF", "BAF"]:
         ax.grid(axis="y", alpha=0.2)
-    ax.set_title(f"{val_type} ({unit})")
+    ax.set_title(_val_full(val_type))
+    fig.supxlabel(f"Genome positions ({unit})")
     fig.tight_layout()
     if pdf is not None:
         pdf.savefig(fig, dpi=dpi)
@@ -465,6 +503,45 @@ def plot_1d_sample(
         fig.savefig(out_file, dpi=dpi)
     plt.close(fig)
     return
+
+
+def plot_genotype_af_depth(ref_af, total_depth, is_het, pdf, *, dpi=150):
+    """One page: ref-AF and total-depth histograms, het vs hom-alt overlaid.
+
+    ref_af : per-SNP reference allele fraction (ref / (ref + alt)).
+    total_depth : per-SNP ref + alt allele depth.
+    is_het : boolean mask, True for heterozygous SNPs (else homozygous ALT).
+    """
+    het = np.asarray(is_het, dtype=bool)
+    ref_af = np.asarray(ref_af, dtype=float)
+    total_depth = np.asarray(total_depth, dtype=float)
+
+    fig, (ax_af, ax_dp) = plt.subplots(1, 2, figsize=(11, 4))
+    groups = [
+        ("het", "tab:blue", het),
+        ("hom-alt", "tab:orange", ~het),
+    ]
+    for label, color, sel in groups:
+        af = ref_af[sel & np.isfinite(ref_af)]
+        if len(af):
+            ax_af.hist(af, bins=50, range=(0, 1), alpha=0.6, color=color, label=f"{label} ({sel.sum()})")
+        dp = total_depth[sel & np.isfinite(total_depth)]
+        if len(dp):
+            hi = np.quantile(dp, 0.99) if len(dp) > 1 else dp.max()
+            ax_dp.hist(dp[dp <= max(hi, 1)], bins=50, alpha=0.6, color=color, label=label)
+    ax_af.axvline(0.5, color="grey", linestyle=":", linewidth=1)
+    ax_af.set_xlim(0, 1)
+    ax_af.set_xlabel("REF-allele frequency")
+    ax_af.set_ylabel("# SNPs")
+    ax_af.set_title("REF-allele frequency by genotype (het vs hom-alt)", fontsize=9)
+    ax_af.legend(fontsize=8)
+    ax_dp.set_xlabel("Total allele depth (ref + alt)")
+    ax_dp.set_ylabel("# SNPs")
+    ax_dp.set_title("Depth by genotype", fontsize=9)
+    ax_dp.legend(fontsize=8)
+    fig.tight_layout()
+    pdf.savefig(fig, dpi=dpi)
+    plt.close(fig)
 
 
 def plot_rdr_baf(
@@ -533,7 +610,7 @@ def plot_rdr_baf(
             ax_rdr.set_ylim(0, rdr_ylim)
         ax_rdr.set_ylabel("RDR")
         ax_rdr.grid(axis="y", alpha=0.2)
-        ax_rdr.set_title(f"{label} — RDR + BAF ({unit})")
+        ax_rdr.set_title(f"{label} — {_val_full('RDR')} + {_val_full('BAF')}")
 
         # BAF
         ax_baf = axes[1]
@@ -550,6 +627,7 @@ def plot_rdr_baf(
         ax_baf.set_ylim(-0.05, 1.05)
         ax_baf.set_ylabel("BAF")
 
+        fig.supxlabel(f"Genome positions ({unit})")
         fig.tight_layout()
         pdf_pages.savefig(fig, dpi=dpi)
         plt.close(fig)
@@ -560,13 +638,6 @@ def plot_rdr_baf(
 # ---------------------------------------------------------------------------
 # combine_counts_utils plots
 # ---------------------------------------------------------------------------
-
-
-# native per-segment count scale/label for the segmentation QC page-2 first column:
-# the raw values are divided by NATIVE_COUNT_SCALE and shown in kbp.
-NATIVE_COUNT_SCALE = 1e3
-NATIVE_COUNT_LABEL = "native count (kbp)"
-
 
 def _seg_gene_counts(seg_df, gene_count, gene_col):
     """Resolve a per-segment gene count from an explicit array or a seg_df column."""
@@ -585,11 +656,15 @@ def _seg_gene_counts(seg_df, gene_count, gene_col):
     return None
 
 
-def _hist_with_stats(ax, vals, xlabel, header="", ylabel="# segments", clip_q=0.99):
+def _hist_with_stats(
+    ax, vals, xlabel, header="", ylabel="# segments", clip_q=0.99, sci_x=False
+):
     """Histogram of *vals* with a multi-line, mean/median-annotated title.
 
     *header* is an optional first title line (used for the page-1 panel names); page-2
     rows leave it empty and carry the sample label as a vertical row label instead.
+    *sci_x* draws the x-axis in scientific notation (matplotlib's offset multiplier)
+    for large-count axes, rather than scaling the values into the label.
     """
     prefix = f"{header}\n" if header else ""
     vals = np.asarray(vals, dtype=float)
@@ -611,6 +686,8 @@ def _hist_with_stats(ax, vals, xlabel, header="", ylabel="# segments", clip_q=0.
     ax.set_title(f"{prefix}{xlabel}\nmean={mean:.1f}, median={median:.1f}", fontsize=8)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
+    if sci_x:
+        ax.ticklabel_format(axis="x", style="sci", scilimits=(0, 0))
 
 
 def plot_segmentation_qc(
@@ -629,8 +706,9 @@ def plot_segmentation_qc(
 
     Page 1 — two histograms over all segments:
       (i) segment length (kbp), (ii) per-segment gene count.
-    Page 2 — one row per REP_ID, three histograms:
-      native counts (kbp; raw values / 1e3), B-allele counts, total-allele counts.
+    Page 2 — one row per REP_ID, three histograms of raw counts: native read counts,
+      B-allele counts, total-allele counts. The count axes use scientific notation
+      (matplotlib's offset multiplier) rather than a scaled axis label.
       Every subplot title is multi-line and carries
       ``{SAMPLE} {REP_ID} {assay_type} {sample_type}`` plus mean/median.
 
@@ -690,13 +768,16 @@ def plot_segmentation_qc(
             f"{assay} {row.get('sample_type', '')}"
         )
         _hist_with_stats(
-            axes[ri, 0],
-            _extract_col(x_count_mat, ri) / NATIVE_COUNT_SCALE,
-            NATIVE_COUNT_LABEL,
+            axes[ri, 0], _extract_col(x_count_mat, ri), "Read count", sci_x=True
         )
-        _hist_with_stats(axes[ri, 1], _extract_col(b_count_mat, ri), "B-allele count")
         _hist_with_stats(
-            axes[ri, 2], _extract_col(tot_count_mat, ri), "total allele count"
+            axes[ri, 1], _extract_col(b_count_mat, ri), "B-allele count", sci_x=True
+        )
+        _hist_with_stats(
+            axes[ri, 2],
+            _extract_col(tot_count_mat, ri),
+            "total allele count",
+            sci_x=True,
         )
         axes[ri, 0].annotate(
             row_label,

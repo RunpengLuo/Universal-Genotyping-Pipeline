@@ -12,21 +12,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Initial pre-release.
 
 ### Added
-- Snakemake pipeline for SNP genotyping, phasing, and allele counting, with three
-  workflow modes: `bulk_genotyping`, `single_cell_genotyping`, `copytyping_preprocess`.
-- Bulk assays (WGS/WGS-lr/WES) on one shared window/bin grid; WES handled identically
-  to WGS.
-- Single-cell / spatial assays (scRNA, scATAC, VISIUM, VISIUM3prime), including 10x Epi
-  Multiome pairs.
-- Genotyping via bcftools (bulk) and cellsnp-lite (single-cell pseudobulk), plus a
-  tumor-only beta-binomial HMM caller when no matched normal is present.
-- Phasing via Eagle2, SHAPEIT5, or LongPhase; `het_snp_vcf` short-circuits genotyping
-  (and phasing when already phased).
-- Bulk het-SNP read counting via `bcftools mpileup` aligned to the phased VCF.
-- Read-depth counting (mosdepth) with LOWESS/median GC/MAP/replication-timing bias
-  correction, adaptive binning, and RDR/BAF output matrices for HATCHet3 / Copy-typing
-  / CalicoST.
-- JSON sample file (with legacy TSV support) and remote (`http(s)`) inputs via
-  Snakemake storage.
-- Documentation: per-mode tutorials, config/output reference, sample-sheet spec, and
-  external-resource catalog.
+
+#### Workflow
+- Snakemake pipeline for SNP genotyping, phasing, and allele counting across three
+  modes (`bulk_genotyping`, `single_cell_genotyping`, `copytyping_preprocess`), with
+  per-rule conda environments, logs, and benchmarks.
+- JSON sample file (legacy TSV supported); remote `http(s)` inputs downloaded
+  (`remote_mode: storage`) or streamed per chromosome (`stream`, bulk only).
+- Per-mode tutorials, config/output reference, sample-sheet spec, and resource catalog.
+
+#### Common rules
+- Phasing via Eagle2, SHAPEIT5, or LongPhase; a supplied `het_snp_vcf` short-circuits
+  genotyping (and phasing when already phased).
+- Multi-replicate allele and depth consolidation onto one shared SNP/bin grid.
+
+#### `bulk_genotyping`
+- Bulk assays (WGS/WGS-lr/WES) on one shared window/bin grid, WES handled like WGS.
+- bcftools genotyping from matched normals and het-SNP pileup; mosdepth depth with
+  GC/mappability/replication-timing correction; adaptive binning to RDR/BAF matrices
+  for HATCHet3.
+
+#### `single_cell_genotyping`
+- scRNA, scATAC, VISIUM/VISIUM3prime assays, including 10x Epi Multiome pairs.
+- cellsnp-lite pseudobulk genotyping and per-cell pileup to allele and native-count
+  matrices for CalicoST.
+
+#### `copytyping_preprocess`
+- Aggregate single-cell / spatial allele and native counts onto a pre-computed phased
+  VCF and bin grid (no genotyping or phasing) for CalicoST.

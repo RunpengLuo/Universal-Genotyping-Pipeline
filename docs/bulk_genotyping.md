@@ -134,7 +134,7 @@ params_count_reads:
   rt_correct: false
 ```
 
-6. The final step of the pipeline is to perform variable-length segmentation over genomic windows jointly across all tumor samples and obtain genomic bin by sample read-depth ratio (RDR), phased B-allele counts, and total-allele count matrices. each value in minimum-SNP-covering reads parameter (`min_snp_reads`) gives one segmentation result. We recommend setting `min_snp_reads` to a list of values and inspect the QC plots for varying `min_snp_reads`, then pick the lowest value that gives reliable BAF signals. In practice, we recommend using `MSR5000` as the final output.
+6. The final step of the pipeline is to perform variable-length segmentation over genomic windows jointly across all tumor samples and obtain genomic bin by sample read-depth ratio (RDR), phased B-allele counts, and total-allele count matrices. each value in minimum-SNP-covering reads parameter (`min_snp_reads`) gives one segmentation result. We recommend setting `min_snp_reads` to a list of values and inspect the QC plots for varying `min_snp_reads`, then pick the lowest value that gives reliable BAF signals.
 ```yaml
 params_combine_counts:
   min_snp_reads: [100, 500, 1000, 2000, 3000, 5000, 7500, 10000]
@@ -158,6 +158,7 @@ Here we show the key results and visualizations from bulk genotyping.
         bb.{depth,rdr}.npz             # read depth (all samples) and RDR (tumor columns)
         sample_ids.tsv                 # one row per sample, in matrix-column order
   qc/
+    genotype_snp_qc.pdf                # het vs hom-alt ref-AF diagnostic (qc_genotype_snps)
     rd_correction.{assay_type}.pdf     # read-depth bias correction, one per assay
     combine_counts.bulk.MSR{msr}.pdf   # binning QC, one per min_snp_reads value
 ```
