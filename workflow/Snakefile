@@ -45,6 +45,7 @@ if _has_config:
     _wf = parse_workflow(config)
     workflow_mode = _wf["workflow_mode"]
     sample_id = _wf["sample_id"]
+    remote_stream = _wf["remote_stream"]
     assay_types = _wf["assay_types"]
     modalities = _wf["modalities"]
     msr_list = _wf["msr_list"]

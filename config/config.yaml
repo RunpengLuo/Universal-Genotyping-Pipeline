@@ -23,6 +23,11 @@ sample_id: sample_id
 sample_file: /path/to/sample.tsv
 chromosomes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
 
+# Remote input options
+# (1) storage = download the whole file once (default);
+# (2) stream = read remote URLs directly, fetching only `chromosomes`.
+remote_mode: storage
+
 het_snp_vcf: null
 het_snp_vcf_phased: true
 bb_file: null

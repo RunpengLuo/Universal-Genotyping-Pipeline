@@ -4,13 +4,28 @@ This pipeline guide covers the installation, configuration, and execution of our
 
 ## Installation
 
-You need [conda](https://docs.conda.io/en/latest/) and [Snakemake](https://snakemake.readthedocs.io/) (version 9 or newer).
+`Universal-Genotyping-Pipeline` requires a 64-bit Linux system and [conda](https://docs.conda.io/en/latest/) and [Snakemake](https://snakemake.readthedocs.io/) (version 9 or newer). Create the runner environment from [`environment.yaml`](../environment.yaml) and activate it:
 
-Tool dependencies live under `workflow/envs/`, one file per tool group, so `--use-conda` builds only what a run needs:
-- `base.yaml` - general environment.
-- `bcftools.yaml`, `eagle.yaml`, `shapeit.yaml`, `longphase.yaml`, `cellsnp.yaml`, `mosdepth.yaml`, `ucsc.yaml` - external command-line tools.
+```sh
+conda env create -f environment.yaml
+conda activate genotyping-env
+```
 
-Build the environments once, ahead of time:
+### Pipeline Dependencies
+Pipeline dependencies live under `workflow/envs/`, one file per tool group, so `--use-conda` builds only what a run needs:
+
+| Environment | Purpose |
+|-------------|---------|
+| `base.yaml` | Python scientific stack (used by every mode). |
+| `bcftools.yaml` | bcftools/tabix: bulk genotyping + het-SNP pileup. |
+| `eagle.yaml` | Eagle2 phasing. |
+| `shapeit.yaml` | SHAPEIT5 phasing. |
+| `longphase.yaml` | LongPhase (long-read) phasing. |
+| `cellsnp.yaml` | cellsnp-lite: single-cell genotyping + pileup. |
+| `mosdepth.yaml` | mosdepth read-depth counting (bulk). |
+| `ucsc.yaml` | UCSC tools (`bigWigToBedGraph`, `liftOver`) for the Repli-seq track. |
+
+Build the conda environments for pipeline dependencies once:
 
 ```sh
 snakemake --profile profile/ \
@@ -51,7 +66,7 @@ python resources/scripts/validate_sample_file.py /path/to/samples.json --check-f
 
 ### 3. Config file
 
-The config file sets the workflow mode, reference files, and parameters. Copy the [template](../resources/templates/config.yaml) and edit it; every key is described in [reference.md](reference.md#configuration).
+The config file sets the workflow mode, reference files, and parameters. Copy the [template](../resources/templates/config.yaml) and modify it; every key is described in [reference.md](reference.md#configuration).
 
 ## Running the pipeline
 

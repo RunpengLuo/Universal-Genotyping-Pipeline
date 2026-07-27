@@ -1,8 +1,8 @@
 rule pileup_snps_bulk_bcftools:
     """Bulk het-SNP read counting with bcftools (REF/ALT allele depths at the phased loci)."""
     input:
-        alignment=lambda wc: alignment_input(get_data[(wc.assay_type, wc.dataset_id)]),
-        alignment_index=lambda wc: alignment_index_input(
+        alignment=lambda wc: bam_stream_input(get_data[(wc.assay_type, wc.dataset_id)]),
+        alignment_index=lambda wc: bam_stream_index_input(
             get_data[(wc.assay_type, wc.dataset_id)]
         ),
         snp_vcf=phased_snp_vcf,
@@ -28,11 +28,18 @@ rule pileup_snps_bulk_bcftools:
         min_baseq=config["params_bcftools"]["min_baseq"],
         max_depth=config["params_bcftools"]["max_depth"],
         extra_params=config["params_bcftools"]["extra_params"],
+        bam_arg=lambda wc: bam_stream_arg(get_data[(wc.assay_type, wc.dataset_id)]),
+        region_arg=(
+            "-r " + ",".join(f"chr{c}" for c in config["chromosomes"])
+            if remote_stream
+            else ""
+        ),
     shell:
         r"""
         set -euo pipefail
+        ALN="{input.alignment}"; [ -z "$ALN" ] && ALN="{params.bam_arg}"
         (
-          bcftools mpileup "{input.alignment}" \
+          bcftools mpileup "$ALN" \
               -f "{input.reference}" \
               -Ou \
               --threads {threads} \
@@ -42,6 +49,7 @@ rule pileup_snps_bulk_bcftools:
               -Q {params.min_baseq} \
               -d {params.max_depth} \
               {params.extra_params} \
+              {params.region_arg} \
               -T "{input.snp_vcf}" \
           | bcftools query -f '%CHROM\t%POS\t%REF\t%ALT\t[%AD]\n' \
           | bgzip -c > {output.counts}

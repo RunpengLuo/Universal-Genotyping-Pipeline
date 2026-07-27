@@ -304,7 +304,7 @@ def parse_workflow(config):
 
     Returns:
         Dict of the names workflow/Snakefile unpacks and the rules then read:
-          workflow_mode, sample_id, assay_types, modalities, msr_list, phaser,
+          workflow_mode, sample_id, remote_stream, assay_types, modalities, msr_list, phaser,
           run_genotyping, run_phasing, het_snp_vcf, phased_snp_vcf,
           require_genetic_map, final_targets, get_data, modality2files,
           assay2dataset_ids, assay2sample_types, assay2base_reps, genotype_files,
@@ -334,6 +334,20 @@ def parse_workflow(config):
     if workflow_mode not in WORKFLOW_MODES:
         raise ValueError(f"workflow_mode must be one of {list(WORKFLOW_MODES)}")
     sample_id = config["sample_id"]
+
+    # === remote input mode: whole-file storage() download vs direct URL streaming ===
+    remote_mode = config.get("remote_mode", "storage")
+    if remote_mode not in ("storage", "stream"):
+        raise ValueError(
+            f"remote_mode must be 'storage' or 'stream', got {remote_mode!r}"
+        )
+    if remote_mode == "stream" and workflow_mode != "bulk_genotyping":
+        raise ValueError(
+            "remote_mode='stream' is only supported for bulk_genotyping; single-cell "
+            "and copytyping use cellsnp-lite, which cannot read remote URLs. Use "
+            "remote_mode='storage'."
+        )
+    remote_stream = remote_mode == "stream"
 
     # === assay_types: validate against the schema, keep those this mode runs ===
     configured = config["assay_types"]
@@ -622,6 +636,7 @@ def parse_workflow(config):
     return {
         "workflow_mode": workflow_mode,
         "sample_id": sample_id,
+        "remote_stream": remote_stream,
         "assay_types": assay_types,
         "modalities": list(dict.fromkeys(r["modality"] for r in records)),
         "msr_list": msr_list,

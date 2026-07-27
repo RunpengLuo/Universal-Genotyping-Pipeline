@@ -30,6 +30,7 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 | `sample_id` | Yes | Which `sample_id` of the sample file to process. |
 | `sample_file` | Yes | Path to `samples.json`. |
 | `chromosomes` | Yes | Chromosomes to run; default `[1..22]`. |
+| `remote_mode` | Optional | Remote input handling: `storage` (default; download whole file via Snakemake storage) or `stream` (read URLs directly, fetching only `chromosomes`). |
 | `reference_version` | Yes | `hg19` \| `hg38` \| `chm13v2` \| `mm10`. Another value runs, with a warning. |
 | `reference` | Yes | Genome FASTA. |
 | `genome_size` | Yes | Two-column `chrom\tsize` file. |

@@ -24,6 +24,47 @@ def alignment_index_input(files):
     return file_input(files["alignment_index"])
 
 
+def bam_stream_input(files):
+    """Tracked `input:` for a bulk alignment, honoring `remote_mode`.
+
+    Local paths pass through. A URL is wrapped in storage() (whole-file download) under
+    `remote_mode: storage`, or dropped ([]) under `remote_mode: stream` so the URL is
+    read directly by htslib via bam_stream_arg() instead of being staged.
+    """
+    if isinstance(files, (list, tuple)):
+        out = [bam_stream_input(f) for f in files]
+        return [x for x in out if x != []]
+    aln = files["alignment"]
+    if is_url(aln):
+        return [] if remote_stream else storage(aln)
+    return str(aln)
+
+
+def bam_stream_index_input(files):
+    """Tracked `input:` for a bulk alignment index; [] for a streamed URL (see above)."""
+    if isinstance(files, (list, tuple)):
+        out = [bam_stream_index_input(f) for f in files]
+        return [x for x in out if x != []]
+    idx = files["alignment_index"]
+    if is_url(idx):
+        return [] if remote_stream else storage(idx)
+    return str(idx)
+
+
+def bam_stream_arg(files):
+    """Shell token for a streamed remote alignment (`url##idx##idxurl`), else ''.
+
+    Non-empty only under `remote_mode: stream` for a URL alignment; rules use it as the
+    fallback when the staged `{input.alignment}` is empty. For a list, joins the tokens.
+    """
+    if isinstance(files, (list, tuple)):
+        return " ".join(filter(None, (bam_stream_arg(f) for f in files)))
+    aln = files["alignment"]
+    if remote_stream and is_url(aln):
+        return f"{aln}##idx##{files['alignment_index']}"
+    return ""
+
+
 def download_slots(files):
     """Storage-retrieval cost of a job: 1 when any of its files is a URL, else 0.
 

@@ -12,8 +12,8 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
 
     rule genotype_snps_bulk:
         input:
-            alignment=alignment_input(genotype_files),
-            alignment_index=alignment_index_input(genotype_files),
+            alignment=bam_stream_input(genotype_files),
+            alignment_index=bam_stream_index_input(genotype_files),
             target_pos=lambda wc: config["snp_targets"] + "/target.chr{chrname}.pos.gz",
             reference=config["reference"],
         output:
@@ -38,9 +38,12 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
             max_depth=config["params_bcftools"]["max_depth"],
             min_qual=config["params_bcftools"]["min_qual"],
             extra_params=config["params_bcftools"]["extra_params"],
+            bam_arg=bam_stream_arg(genotype_files),
+            region_arg=lambda wc: f"-r chr{wc.chrname}" if remote_stream else "",
         shell:
             r"""
-            bcftools mpileup {input.alignment} \
+            ALN="{input.alignment}"; [ -z "$ALN" ] && ALN="{params.bam_arg}"
+            bcftools mpileup $ALN \
                 -f "{input.reference}" \
                 -Ou \
                 --threads {threads} \
@@ -50,6 +53,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
                 -Q {params.min_baseq} \
                 -d {params.max_depth} \
                 {params.extra_params} \
+                {params.region_arg} \
                 -T {input.target_pos} \
             | bcftools call -m \
                 -Oz -o {output.unfiltered_vcf} 2> {log}

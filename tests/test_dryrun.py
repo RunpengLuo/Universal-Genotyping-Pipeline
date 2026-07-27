@@ -78,6 +78,39 @@ def test_bulk_rules(workspace):
     assert counts["run_mosdepth"] == 2
 
 
+def test_bulk_stream_mode(workspace):
+    """remote_mode=stream: bcftools rules carry -r and mosdepth is per-chrom + merged."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_json"],
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=("remote_mode=stream",),
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    counts = job_counts(proc.stdout)
+    # depth becomes per-chrom mosdepth + a merge; the whole-file rule is gone
+    assert "run_mosdepth_chrom" in counts and "merge_mosdepth" in counts
+    assert "run_mosdepth" not in counts
+    # genotype/pileup restrict to the config chroms via index jumps
+    assert "-r chr22" in proc.stdout
+
+
+def test_stream_rejected_for_single_cell(workspace):
+    """remote_mode=stream errors for non-bulk modes (cellsnp-lite cannot read URLs)."""
+    proc = dryrun(
+        workspace,
+        workspace["sc_json"],
+        "S1",
+        "single_cell_genotyping",
+        ["scRNA", "scATAC"],
+        extra=("remote_mode=stream",),
+    )
+    assert proc.returncode != 0
+    assert "only supported for bulk_genotyping" in (proc.stdout + proc.stderr)
+
+
 def test_breakpoint_presegmentation(workspace):
     """build_segment_bed + per-stream window build always run for bulk; bedpe feeds the segment BED."""
     base = dryrun(

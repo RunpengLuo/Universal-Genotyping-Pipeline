@@ -70,10 +70,40 @@ Sample file is a JSON-format configuration file contains dataset records over mu
 
 ## Features
 ### Support multiome dataset
-A 10x Epi Multiome dataset is two records sharing one `dataset_id`, one `scRNA` and one `scATAC`.
+A 10x Epi Multiome dataset is two records sharing one (`sample_id`, `dataset_id`), with `assay_type` set to `scRNA` and `scATAC`, respectively.
 
 ### Support remote files
-A input file could be a local disk path or an `http(s)` URL to a FTP server. Note that `snakemake-storage-plugin-http` (in `environment.yaml`) is required. Remote files will be downloaded to `local-storage-prefix` when request by a rule and deleted afterwards. See `profile/config.yaml` for more information.
+A input file could be a local disk path or an `http(s)` URL to a FTP server, see [`remote_mode`](./reference.md#input-data) for more details. Here is an example for the GIAB HG008 tumor/normal cell line (bulkWGS) served from the NCBI GIAB FTP:
+```json
+{
+  "version": 1,
+  "samples": [
+    {
+      "sample_id": "HG008",
+      "dataset_id": "N",
+      "assay_type": "bulkWGS",
+      "sample_type": "normal",
+      "files": {
+        "alignment": "https://ftp.ncbi.nlm.nih.gov/ReferenceSamples/giab/data_somatic/HG008/HG008-N.bam",
+        "alignment_index": "https://ftp.ncbi.nlm.nih.gov/ReferenceSamples/giab/data_somatic/HG008/HG008-N.bam.bai"
+      }
+    },
+    {
+      "sample_id": "HG008",
+      "dataset_id": "T",
+      "rdr_base_dataset_id": "N",
+      "assay_type": "bulkWGS",
+      "sample_type": "tumor",
+      "files": {
+        "alignment": "https://ftp.ncbi.nlm.nih.gov/ReferenceSamples/giab/data_somatic/HG008/HG008-T.bam",
+        "alignment_index": "https://ftp.ncbi.nlm.nih.gov/ReferenceSamples/giab/data_somatic/HG008/HG008-T.bam.bai"
+      }
+    }
+  ]
+}
+```
+> [!IMPORTANT]
+> In `stream` mode, `alignment_index` must also be reachable via URL.
 
 ### Validate sample file
 Use `resources/scripts/validate_sample_file.py <sample_file>` to valid the sample file's format.

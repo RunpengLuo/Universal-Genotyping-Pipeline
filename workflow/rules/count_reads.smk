@@ -9,42 +9,123 @@
 _rdr_cfg = config["params_count_reads"]
 
 
-rule run_mosdepth:
-    input:
-        alignment=lambda wc: alignment_input(get_data[(wc.assay_type, wc.dataset_id)]),
-        alignment_index=lambda wc: alignment_index_input(
-            get_data[(wc.assay_type, wc.dataset_id)]
-        ),
-        windows_bed=config["pileup_dir"] + "/{assay_type}/windows.bed.gz",
-    output:
-        mosdepth_file=config["pileup_dir"]
-        + "/{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz",
-    log:
-        config["log_dir"]
-        + f"/run_mosdepth/run_mosdepth.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
-    benchmark:
-        config["bench_dir"]
-        + f"/run_mosdepth/run_mosdepth.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
-    wildcard_constraints:
-        assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
-    conda:
-        "../envs/mosdepth.yaml"
-    threads: config["threads"]["mosdepth"]
-    resources:
-        downloads=lambda wc: download_slots(get_data[(wc.assay_type, wc.dataset_id)]),
-    params:
-        out_prefix=config["pileup_dir"] + "/{assay_type}/out_mosdepth/{dataset_id}",
-        read_quality=config["params_mosdepth"]["read_quality"],
-        extra_params=config["params_mosdepth"]["extra_params"],
-    shell:
-        r"""
-        mosdepth \
-            -t {threads} \
-            -Q {params.read_quality} \
-            --by {input.windows_bed} \
-            {params.extra_params} \
-            {params.out_prefix} {input.alignment} > {log} 2>&1
-        """
+if not remote_stream:
+
+    rule run_mosdepth:
+        input:
+            alignment=lambda wc: alignment_input(
+                get_data[(wc.assay_type, wc.dataset_id)]
+            ),
+            alignment_index=lambda wc: alignment_index_input(
+                get_data[(wc.assay_type, wc.dataset_id)]
+            ),
+            windows_bed=config["pileup_dir"] + "/{assay_type}/windows.bed.gz",
+        output:
+            mosdepth_file=config["pileup_dir"]
+            + "/{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz",
+        log:
+            config["log_dir"]
+            + f"/run_mosdepth/run_mosdepth.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
+        benchmark:
+            config["bench_dir"]
+            + f"/run_mosdepth/run_mosdepth.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
+        wildcard_constraints:
+            assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
+        conda:
+            "../envs/mosdepth.yaml"
+        threads: config["threads"]["mosdepth"]
+        resources:
+            downloads=lambda wc: download_slots(
+                get_data[(wc.assay_type, wc.dataset_id)]
+            ),
+        params:
+            out_prefix=config["pileup_dir"] + "/{assay_type}/out_mosdepth/{dataset_id}",
+            read_quality=config["params_mosdepth"]["read_quality"],
+            extra_params=config["params_mosdepth"]["extra_params"],
+        shell:
+            r"""
+            mosdepth \
+                -t {threads} \
+                -Q {params.read_quality} \
+                --by {input.windows_bed} \
+                {params.extra_params} \
+                {params.out_prefix} {input.alignment} > {log} 2>&1
+            """
+
+else:
+
+    rule run_mosdepth_chrom:
+        """Stream mode: per-chromosome mosdepth (index jump), merged by merge_mosdepth."""
+        input:
+            alignment=lambda wc: bam_stream_input(
+                get_data[(wc.assay_type, wc.dataset_id)]
+            ),
+            alignment_index=lambda wc: bam_stream_index_input(
+                get_data[(wc.assay_type, wc.dataset_id)]
+            ),
+            windows_bed=config["pileup_dir"] + "/{assay_type}/windows.bed.gz",
+            reference=config["reference"],
+        output:
+            mosdepth_file=temp(
+                config["pileup_dir"]
+                + "/{assay_type}/out_mosdepth/{dataset_id}.chr{chrname}.regions.bed.gz"
+            ),
+        log:
+            config["log_dir"]
+            + f"/run_mosdepth/run_mosdepth.{{assay_type}}_{{dataset_id}}.chr{{chrname}}.{_run_id}.log",
+        benchmark:
+            config["bench_dir"]
+            + f"/run_mosdepth/run_mosdepth.{{assay_type}}_{{dataset_id}}.chr{{chrname}}.{_run_id}.tsv"
+        wildcard_constraints:
+            assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
+        conda:
+            "../envs/mosdepth.yaml"
+        threads: config["threads"]["mosdepth"]
+        resources:
+            downloads=lambda wc: download_slots(
+                get_data[(wc.assay_type, wc.dataset_id)]
+            ),
+        params:
+            out_prefix=config["pileup_dir"]
+            + "/{assay_type}/out_mosdepth/{dataset_id}.chr{chrname}",
+            chrom="chr{chrname}",
+            read_quality=config["params_mosdepth"]["read_quality"],
+            extra_params=config["params_mosdepth"]["extra_params"],
+            bam_arg=lambda wc: bam_stream_arg(get_data[(wc.assay_type, wc.dataset_id)]),
+        shell:
+            r"""
+            set -euo pipefail
+            ALN="{input.alignment}"; [ -z "$ALN" ] && ALN="{params.bam_arg}"
+            mosdepth \
+                -t {threads} \
+                -Q {params.read_quality} \
+                -c {params.chrom} \
+                -f {input.reference} \
+                --by {input.windows_bed} \
+                {params.extra_params} \
+                {params.out_prefix} "$ALN" > {log} 2>&1
+            """
+
+    rule merge_mosdepth:
+        """Concat per-chrom regions (config-chrom order) -> the file rd_correct reads."""
+        input:
+            per_chrom=lambda wc: [
+                config["pileup_dir"]
+                + f"/{wc.assay_type}/out_mosdepth/{wc.dataset_id}.chr{c}.regions.bed.gz"
+                for c in config["chromosomes"]
+            ],
+        output:
+            mosdepth_file=config["pileup_dir"]
+            + "/{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz",
+        log:
+            config["log_dir"]
+            + f"/run_mosdepth/merge_mosdepth.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
+        wildcard_constraints:
+            assay_type="(bulkWGS|bulkWGS-lr|bulkWES)",
+        shell:
+            r"""
+            cat {input.per_chrom} > {output.mosdepth_file} 2> {log}
+            """
 
 
 rule rd_correct:
