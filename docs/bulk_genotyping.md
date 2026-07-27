@@ -2,6 +2,10 @@
 
 This documentation covers input preparation and result intepretation for bulk genotyping using **short-read** WGS/WES and/or **long-read** (e.g., PacBio HiFi, Oxford Nanopore) sequencing data to run [HATCHet](https://github.com/raphael-group/hatchet). Refer to [Installation](installation.md) and [run.md](./run.md) for Snakemake pipeline installation and execution instructions.
 
+<p align="center">
+  <img src="imgs/rulegraph.bulk_genotyping.png" alt="bulk_genotyping rule graph" width="500">
+</p>
+
 ## Table of Contents
 1. [Input](#input) <br>
 2. [Output](#output) <br>
@@ -116,13 +120,41 @@ params_combine_counts:
 ```
 
 ## Output
-```text
-<out_dir>/
-  ...
-```
+
 Here we show the key results and visualizations from bulk genotyping.
 
+```text
+<out_dir>/
+  bb/
+    MSR{msr}/                          # one subdir per min_snp_reads value
+      bulk/                            # one joint grid over all bulk assays (WGS/WGS-lr/WES)
+        bb.tsv.gz                      # bin annotations (grid shared by every matrix below)
+        bb.{Tallele,Aallele,Ballele}.npz   # phased allele counts, bins x samples
+        bb.{depth,rdr}.npz             # read depth (all samples) and RDR (tumor columns)
+        sample_ids.tsv                 # one row per sample, in matrix-column order
+  qc/
+    rd_correction.{assay_type}.pdf     # read-depth bias correction, one per assay
+    combine_counts.bulk.MSR{msr}.pdf   # binning QC, one per min_snp_reads value
+```
 
-`<out_dir>/<bb_dir>/MSR{msr}/bulk/`: `bb.tsv.gz`, `bb.{Tallele,Aallele,Ballele,depth,rdr}.npz`, `sample_ids.tsv`. Columns: [reference.md](reference.md#outputs).
+All final bins live under `bb_dir/MSR{msr}/bulk/`, one `MSR{msr}/` subdirectory per `min_snp_reads` value. Every `.npz` is a dense matrix whose rows are the bins of `bb.tsv.gz` (same order) and whose columns are the samples of `sample_ids.tsv` (same order); BAF is never stored, derive it as `Ballele / Tallele`. Refer to [Final bins](reference.md#final-bins) for the full per-file contract.
 
-QC: `<qc_dir>/rd_correction.bulkWGS.pdf` (bias correction), `combine_counts.bulk.MSR{msr}.pdf` (one per `min_snp_reads`; compare BAF/RDR plots to pick a bin size).
+### `bb.tsv.gz`
+
+Bin annotations, one row per bin; the one grid shared by every `bb.*.npz`, its row order defining the matrix rows. Refer to [TSV columns](reference.md#tsv-columns) for the column definitions.
+
+### `bb.Tallele.npz`, `bb.Aallele.npz`, `bb.Ballele.npz`
+
+Phased allele-count matrices (bins x samples), columns concatenating all bulk samples. Inspect `qc/combine_counts.bulk.MSR{msr}.pdf` (one per `min_snp_reads`) to compare BAF signal across bin sizes.
+
+### `bb.depth.npz`
+
+Read depth per bin (bins x samples), all samples, aggregated from the bias-corrected window depth. Inspect `qc/rd_correction.{assay_type}.pdf` (RD before/after correction, GC/MAP/RT diagnostics) to confirm the depth is well corrected, especially for `bulkWES` whose capture-enrichment structure leaves a noisier post-correction signal.
+
+### `bb.rdr.npz`
+
+Read-depth ratio (RDR) for the tumor columns only (bins x tumor-samples). The denominator follows `rdr_normalization`: a tumor's `rdr_base_dataset_id` (a matched same-platform normal) when set, else the genome-wide median. Same bin rows as `bb.tsv.gz`; feeds HATCHet3 alongside `Ballele`/`Tallele`.
+
+### `sample_ids.tsv`
+
+One row per sample, its row order matching the columns of every `bb.*.npz`. Refer to [TSV columns](reference.md#tsv-columns) for the column definitions.
