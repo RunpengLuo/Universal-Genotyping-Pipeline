@@ -30,7 +30,7 @@ from rd_correct_utils import (
     correct_readcount_lowess,
     correct_readcount_quadreg,
 )
-from plot_utils import plot_rd_1d_scatter, plot_rd_2d_kde
+from plot_count_reads import plot_rd_1d_scatter, plot_rd_2d_kde
 
 import matplotlib
 

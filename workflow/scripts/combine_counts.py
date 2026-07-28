@@ -46,7 +46,8 @@ from combine_counts_utils import (
     setup_phaseset_groups,
 )
 from matplotlib.backends.backend_pdf import PdfPages
-from plot_utils import plot_rdr_baf, plot_segmentation_qc
+from plot_combine_counts import plot_rdr_baf, plot_rdr_baf_2d, plot_segmentation_qc
+from plot_utils import sample_row_order
 from switchprobs import (
     interp_cM_blocks,
     estimate_switchprobs_cM,
@@ -278,6 +279,27 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     else:
         bb_gene_count = None
 
+    depth_tumor = bb_dp[:, tumor_cols_all]
+    depth_normal = np.full_like(depth_tumor, np.nan, dtype=float)
+    rdr_titles, rdr_norm_labels = [], []
+    for j, c in enumerate(tumor_cols_all):
+        title = f"{sample_name} ({col_assay[c]}) {col_repid[c]} (T)"
+        if c in base_map:
+            depth_normal[:, j] = bb_dp[:, base_map[c]]
+            rdr_norm_labels.append("normal")
+            rdr_titles.append(f"{title} & {col_repid[base_map[c]]} (N)")
+        else:
+            rdr_norm_labels.append("median")
+            rdr_titles.append(title)
+
+    # page order: assay (WGS<WGS-lr<WES) then dataset_id (all tumors here)
+    t_order = sample_row_order(
+        [col_assay[c] for c in tumor_cols_all],
+        ["tumor"] * len(tumor_cols_all),
+        [col_repid[c] for c in tumor_cols_all],
+    )
+    baf_tumor = baf_mtx_bb[:, tumor_cols_all]
+
     with PdfPages(out_pdf) as pdf:
         plot_segmentation_qc(
             bbs,
@@ -290,15 +312,25 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         )
         plot_rdr_baf(
             bbs,
-            bb_rdr,
-            baf_mtx_bb[:, tumor_cols_all],
-            tumor_labels,
+            bb_rdr[:, t_order],
+            baf_tumor[:, t_order],
+            depth_tumor[:, t_order],
+            depth_normal[:, t_order],
+            [rdr_titles[i] for i in t_order],
+            [rdr_norm_labels[i] for i in t_order],
             genome_size,
             out_pdf,
             unit="bb",
             rdr_ylim=rdr_ylim,
             region_bed=region_bed,
             blacklist_bed=blacklist_bed,
+            pdf=pdf,
+        )
+        plot_rdr_baf_2d(
+            bb_rdr,
+            baf_mtx_bb[:, tumor_cols_all],
+            tumor_labels,
+            rdr_ylim=rdr_ylim,
             pdf=pdf,
         )
     logging.info(f"saved QC PDF to {out_pdf}")

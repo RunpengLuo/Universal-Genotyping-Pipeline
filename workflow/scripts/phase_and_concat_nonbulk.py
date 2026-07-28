@@ -27,7 +27,7 @@ from io_utils import *
 from combine_counts_utils import *
 from count_reads_utils import *
 from matplotlib.backends.backend_pdf import PdfPages
-from plot_utils import plot_allele_freqs, plot_snp_depth_histogram
+from plot_alleles import plot_allele_freqs, plot_snp_depth
 from aggregation_utils import *
 
 
@@ -154,19 +154,21 @@ ref_mtx = ref_mtx[snp_mask, :]
 a_mtx = a_mtx[snp_mask, :]
 b_mtx = b_mtx[snp_mask, :]
 
-plot_snp_depth_histogram(
-    tot_mtx,
-    dataset_ids,
-    qc_dir,
-    f"{assay_type}.{run_id}",
-    ref_mtx=ref_mtx,
-    is_bulk=False,
-    cell_rep_idx=cell_rep_idx,
-    name_prefix="phase_and_concat",
-)
-
 af_pdf_path = snakemake_handle.output["qc_pdf"]
 with PdfPages(af_pdf_path) as pdf:
+    plot_snp_depth(
+        tot_mtx,
+        dataset_ids,
+        qc_dir,
+        f"{assay_type}.{run_id}",
+        ref_mtx=ref_mtx,
+        b_mtx=b_mtx,
+        is_bulk=False,
+        cell_rep_idx=cell_rep_idx,
+        name_prefix="phase_and_concat",
+        pdf=pdf,
+        sample_id=sample_name,
+    )
     plot_allele_freqs(
         snps,
         dataset_ids,
@@ -181,6 +183,7 @@ with PdfPages(af_pdf_path) as pdf:
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         run_id=run_id,
+        sample_id=sample_name,
         pdf=pdf,
         cell_rep_idx=cell_rep_idx,
     )
@@ -198,6 +201,7 @@ with PdfPages(af_pdf_path) as pdf:
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         run_id=run_id,
+        sample_id=sample_name,
         pdf=pdf,
         cell_rep_idx=cell_rep_idx,
     )

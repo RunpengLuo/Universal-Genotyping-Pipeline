@@ -32,7 +32,8 @@ from combine_counts_utils import *
 from count_reads_utils import *
 from aggregation_utils import *
 from matplotlib.backends.backend_pdf import PdfPages
-from plot_utils import plot_allele_freqs, plot_snp_depth_histogram
+from plot_alleles import plot_allele_freqs, plot_snp_depth
+from plot_utils import sample_row_order
 
 
 def log_ref_mapping_bias(ref_counts, alt_counts, label=""):
@@ -152,19 +153,24 @@ b_mtx = b_mtx[snp_mask, :]
 
 ##################################################
 sample_labels = [f"{col_assays[k]}:{col_reps[k]}" for k in range(n_samples)]
-plot_snp_depth_histogram(
-    tot_mtx,
-    sample_labels,
-    qc_dir,
-    f"bulk.{run_id}",
-    ref_mtx=ref_mtx,
-    is_bulk=True,
-    cell_rep_idx=None,
-    name_prefix="phase_and_concat",
-)
+plot_row_order = sample_row_order(col_assays, col_sample_types, col_reps)
 
 af_pdf_path = snakemake_handle.output["qc_pdf"]
 with PdfPages(af_pdf_path) as pdf:
+    plot_snp_depth(
+        tot_mtx,
+        sample_labels,
+        qc_dir,
+        f"bulk.{run_id}",
+        ref_mtx=ref_mtx,
+        b_mtx=b_mtx,
+        is_bulk=True,
+        cell_rep_idx=None,
+        name_prefix="phase_and_concat",
+        pdf=pdf,
+        row_order=plot_row_order,
+        sample_id=sample_name,
+    )
     plot_allele_freqs(
         snps,
         sample_labels,
@@ -179,6 +185,8 @@ with PdfPages(af_pdf_path) as pdf:
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         run_id=run_id,
+        sample_id=sample_name,
+        row_order=plot_row_order,
         pdf=pdf,
     )
     plot_allele_freqs(
@@ -195,6 +203,8 @@ with PdfPages(af_pdf_path) as pdf:
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         run_id=run_id,
+        sample_id=sample_name,
+        row_order=plot_row_order,
         pdf=pdf,
     )
 

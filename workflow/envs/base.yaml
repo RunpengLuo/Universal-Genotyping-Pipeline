@@ -14,5 +14,9 @@ dependencies:
   - anndata>=0.8
   - scanpy>=1.9
   - squidpy>=1.2
+  - seaborn>=0.12
+  - adjusttext>=0.8
   - tabix
   - pip
+  - pip:
+      - git+https://github.com/raphael-group/cnplot.git@v0.1.1

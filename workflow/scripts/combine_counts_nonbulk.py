@@ -33,7 +33,7 @@ from utils import *
 from io_utils import *
 from aggregation_utils import *
 from combine_counts_utils import *
-from plot_utils import plot_allele_freqs
+from plot_alleles import plot_allele_freqs
 from matplotlib.backends.backend_pdf import PdfPages
 
 from switchprobs import *
@@ -319,6 +319,7 @@ for j, min_snp_reads in enumerate(msr_list):
             unit="bb",
             run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
             name_prefix="combine_counts",
+            sample_id=sample_name,
             pdf=pdf,
         )
 
@@ -340,6 +341,7 @@ for j, min_snp_reads in enumerate(msr_list):
             unit="multi-snp",
             run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
             name_prefix="combine_counts",
+            sample_id=sample_name,
             pdf=pdf,
         )
         pdf.close()

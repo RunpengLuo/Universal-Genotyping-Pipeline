@@ -112,7 +112,7 @@ params_combine_counts:
 
 ## Output
 
-Here we show the key results and visualizations from single-cell genotyping.
+Refer to [Final bins](reference.md#final-bins) for the full specification of each file:
 
 ```text
 <out_dir>/
@@ -132,33 +132,3 @@ Here we show the key results and visualizations from single-cell genotyping.
     phase_and_concat.{assay_type}.pdf          # SNP allele frequency + depth histogram
     combine_counts.{assay_type}.MSR{msr}.pdf   # binning QC, one per min_snp_reads value
 ```
-
-All final bins live under `bb_dir/MSR{msr}/{assay_type}/`, one `MSR{msr}/` subdirectory per `min_snp_reads` value and one `{assay_type}/` subdirectory per assay. Every `.npz` is a scipy sparse CSR matrix whose rows are the bins of `bb.tsv.gz` (same order) and whose columns are the cells of `barcodes.tsv.gz` (same order); BAF is never stored, derive it as `Ballele / Tallele`. The bin grid and sample sheet are identical across the per-assay subdirs. Refer to [Final bins](reference.md#final-bins) for the full per-file contract.
-
-### `bb.tsv.gz`
-
-Bin annotations, one row per bin; the one grid shared by every `bb.*.npz`, its row order defining the matrix rows. Refer to [TSV columns](reference.md#tsv-columns) for the column definitions.
-
-### `bb.Tallele.npz`, `bb.Aallele.npz`, `bb.Ballele.npz`
-
-Phased allele-count matrices (bins x cells). Inspect `qc/combine_counts.{assay_type}.MSR{msr}.pdf` (one per `min_snp_reads`) to compare BAF signal across bin sizes, and `qc/phase_and_concat.{assay_type}.pdf` for the SNP-level allele frequency and depth.
-
-### `bb.Xcount.npz`
-
-Native per-bin signal, same shape and column order as the allele matrices: scATAC deduped fragment counts (each fragment counted once by its midpoint, from the raw fragments), scRNA/VISIUM UMI counts from the h5ad (each gene assigned to its largest-overlap bin).
-
-### `multi_snp.tsv.gz`, `multi_snp.{Tallele,Aallele,Ballele}.npz`
-
-Multi-SNP diagnostic groups (`nsnp_multi` SNPs each); MSR-independent, so identical across the `MSR{msr}/` subdirs. Refer to [TSV columns](reference.md#tsv-columns) for the annotation columns.
-
-### `barcodes.tsv.gz`, `barcodes.full.tsv.gz`
-
-Per-assay cell barcodes in matrix-column order. Refer to [Barcodes](reference.md#barcodes-single-cell) for the exact formats.
-
-### `{assay_type}.h5ad`
-
-Gene x cell AnnData built from the RNA/spatial count matrix (scRNA / VISIUM); MSR-independent, so it sits flat under `bb_dir/`. Source of the `bb.Xcount.npz` UMI counts.
-
-### `sample_ids.tsv`
-
-One row per replicate x assay, its row order matching the matrix columns; identical copy in each subdir. Refer to [TSV columns](reference.md#tsv-columns) for the column definitions.

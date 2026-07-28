@@ -26,7 +26,7 @@ from utils import *
 from io_utils import *
 from aggregation_utils import *
 from matplotlib.backends.backend_pdf import PdfPages
-from plot_utils import plot_allele_freqs
+from plot_alleles import plot_allele_freqs
 
 COUNT_DTYPE = np.int32
 
@@ -148,6 +148,7 @@ with PdfPages(pdf_path) as pdf:
         unit="snp",
         suffix=f"_{assay_type}",
         run_id=run_id,
+        sample_id=sample_name,
         pdf=pdf,
     )
     plot_allele_freqs(
@@ -163,6 +164,7 @@ with PdfPages(pdf_path) as pdf:
         unit="bb",
         suffix=f"_{assay_type}",
         run_id=run_id,
+        sample_id=sample_name,
         pdf=pdf,
     )
 logging.info(f"saved 2-page BAF PDF to {pdf_path}")

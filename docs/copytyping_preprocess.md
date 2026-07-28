@@ -99,7 +99,7 @@ bb_file: /path/to/bb.tsv.gz
 
 ## Output
 
-Here we show the key results and visualizations from copytyping preprocess.
+Refer to [Final bins](reference.md#final-bins) for the full specification of each file:
 
 ```text
 <out_dir>/
@@ -115,29 +115,3 @@ Here we show the key results and visualizations from copytyping preprocess.
     phase_and_concat.{assay_type}.pdf          # SNP allele frequency + depth histogram
     combine_counts_fixed_bins.{assay_type}.pdf # SNP- and BB-level BAF
 ```
-
-Output is per assay and flat: because the blocks come from `bb_file`, no binning rule runs and there is no `MSR{msr}/` layer. Every `.npz` is a scipy sparse CSR matrix whose rows are the blocks of `cnv_segments.tsv` (same order) and whose columns are the cells of `barcodes.tsv.gz` (same order); BAF is never stored, derive it as `Ballele / Tallele`. Refer to [Final bins](reference.md#final-bins) for the full per-file contract.
-
-### `cnv_segments.tsv`
-
-BB block annotations, one row per block; the grid (from `bb_file`) shared by every `bb.*.npz`, its row order defining the matrix rows. Refer to [TSV columns](reference.md#tsv-columns) for the column definitions.
-
-### `bb.Tallele.npz`, `bb.Aallele.npz`, `bb.Ballele.npz`
-
-Per-block phased allele-count matrices (blocks x cells). Inspect `qc/combine_counts_fixed_bins.{assay_type}.pdf` for SNP- and BB-level BAF, and `qc/phase_and_concat.{assay_type}.pdf` for the SNP-level allele frequency and depth.
-
-### `bb.Xcount.npz`
-
-Native per-block signal, same shape and column order as the allele matrices: scATAC deduped fragment counts (each fragment counted once by its midpoint, from the raw fragments), scRNA/VISIUM UMI counts from the h5ad (each gene assigned to its largest-overlap block).
-
-### `barcodes.tsv.gz`, `barcodes.full.tsv.gz`
-
-Per-assay cell barcodes in matrix-column order. Refer to [Barcodes](reference.md#barcodes-single-cell) for the exact formats.
-
-### `{assay_type}.h5ad`
-
-Gene x cell AnnData built from the RNA/spatial count matrix (scRNA / VISIUM). Source of the `bb.Xcount.npz` UMI counts.
-
-### `sample_ids.tsv`
-
-One row per replicate x assay, its row order matching the matrix columns. Refer to [TSV columns](reference.md#tsv-columns) for the column definitions.

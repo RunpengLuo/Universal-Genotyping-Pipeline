@@ -570,11 +570,6 @@ def parse_workflow(config):
         elif phaser in LONGREAD_PHASER:
             named = config.get("phase_dataset_ids") or []
             if named:
-                if len(named) > 1:
-                    raise ValueError(
-                        f"phase_dataset_ids takes one dataset_id; longphase reads a single "
-                        f"alignment, got {named}"
-                    )
                 chosen = select_datasets(records, named, "phase_dataset_ids")
                 short = [
                     r["dataset_id"]
@@ -588,17 +583,19 @@ def parse_workflow(config):
                     )
             else:
                 lr = [r for r in records if r["assay_type"] in LONGREAD_ASSAYS]
-                lr = sorted(lr, key=lambda r: r["sample_type"] != "normal")
                 if not lr:
                     raise ValueError(
                         f"phaser=longphase requires at least one long-read bulk assay "
                         f"({sorted(LONGREAD_ASSAYS)}) in the sample file for "
                         f"sample_id={sample_id!r}"
                     )
+                normals = [r for r in lr if r["sample_type"] == "normal"]
+                chosen = normals or lr
+                kind = "normal" if normals else "tumor (no normal)"
                 print(
-                    f"NOTE: phase_dataset_ids unset; longphase reads {lr[0]['dataset_id']!r}"
+                    f"NOTE: phase_dataset_ids unset; longphase co-phases "
+                    f"{[r['dataset_id'] for r in chosen]} ({kind})"
                 )
-                chosen = lr[:1]
             phase_files = [r["files"] for r in chosen]
         else:
             raise ValueError(f"unknown phaser: {phaser}")

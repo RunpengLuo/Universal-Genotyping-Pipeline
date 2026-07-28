@@ -74,8 +74,8 @@ if run_phasing and config["phaser"] == "longphase":
     rule phase_snps_longphase:
         input:
             snp_vcf=lambda wc: config["snp_dir"] + f"/chr{wc.chrname}.vcf.gz",
-            alignment=lambda wc: alignment_input(phase_files),
-            alignment_index=lambda wc: alignment_index_input(phase_files),
+            alignment=lambda wc: bam_stream_input(phase_files),
+            alignment_index=lambda wc: bam_stream_index_input(phase_files),
             reference=lambda wc: config["reference"],
         output:
             phased_file=config["phase_dir"] + "/chr{chrname}.vcf.gz",
@@ -95,10 +95,14 @@ if run_phasing and config["phaser"] == "longphase":
             min_mapq=config["params_longphase"]["min_mapq"],
             extra_params=config["params_longphase"]["extra_params"],
             out_prefix=config["phase_dir"] + "/chr{chrname}",
+            bam_args=lambda wc, input: " ".join(
+                [f"--bam-file={p}" for p in input.alignment]
+                + [f"--bam-file={t}" for t in bam_stream_arg(phase_files).split()]
+            ),
         shell:
             r"""
             longphase phase \
-                --bam-file={input.alignment} \
+                {params.bam_args} \
                 --reference={input.reference} \
                 --snp-file={input.snp_vcf} \
                 --mappingQuality={params.min_mapq} \

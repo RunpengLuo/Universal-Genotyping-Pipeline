@@ -46,7 +46,7 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 | `phasing_panel` | eagle/shapeit | Per-chromosome BCF reference panel directory. |
 | `gmap_path` | eagle/shapeit | Genetic map; `{chrname}` placeholder for per-chromosome maps (SHAPEIT5), literal path for a single map (Eagle2). |
 | `genotype_dataset_ids` | Optional | `dataset_id`s piled up to call germline SNPs. Empty -> auto (normal before tumor, short-read before long-read). >1 are pooled in one `mpileup` and must share an `@RG SM` tag. |
-| `phase_dataset_ids` | Optional | The one `dataset_id` `longphase` reads. Empty -> auto (long-read normal, else long-read tumor). Ignored by panel phasers. |
+| `phase_dataset_ids` | Optional | `dataset_id`(s) `longphase` co-phases, one `--bam-file` each. Empty -> auto (all long-read normals, else all long-read tumor). Ignored by panel phasers. |
 | `het_snp_vcf` | Optional; required for `copytyping_preprocess` | Pre-computed het SNP VCF. Set in any mode to skip genotyping. |
 | `het_snp_vcf_phased` | Optional | Default `true`: the VCF is taken as phased, so phasing is skipped too. `false` phases it. Read only with `het_snp_vcf`. |
 | `bb_file` | copytyping_preprocess | Pre-computed BB block annotations TSV. |

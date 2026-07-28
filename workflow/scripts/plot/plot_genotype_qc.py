@@ -27,7 +27,8 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 from io_utils import read_VCF
-from plot_utils import plot_1d_sample, plot_genotype_af_depth
+from plot_genome import plot_1d_sample
+from plot_genotype_snps import plot_genotype_af_depth
 from utils import setup_logging
 
 _HET_GTS = {"0/1", "1/0", "0|1", "1|0"}
@@ -44,22 +45,20 @@ def _parse_ad(ad_series):
     return ref, alt
 
 
-def main():
-    setup_logging(snakemake.log[0])
-    vcfs = snakemake.input.vcfs
-    genome_size = snakemake.input.genome_size
-    out_pdf = snakemake.output.qc_pdf
+setup_logging(snakemake.log[0])
+vcfs = snakemake.input.vcfs
+genome_size = snakemake.input.genome_size
+out_pdf = snakemake.output.qc_pdf
 
-    frames = [df for vcf in vcfs if (df := read_VCF(vcf, addkey=True)) is not None]
-    if not frames:
-        logging.warning("no genotyped SNPs found; writing placeholder QC PDF")
-        with PdfPages(out_pdf) as pdf:
-            fig = plt.figure(figsize=(8, 2))
-            fig.text(0.5, 0.5, "no genotyped SNPs", ha="center", va="center")
-            pdf.savefig(fig)
-            plt.close(fig)
-        return
-
+frames = [df for vcf in vcfs if (df := read_VCF(vcf, addkey=True)) is not None]
+if not frames:
+    logging.warning("no genotyped SNPs found; writing placeholder QC PDF")
+    with PdfPages(out_pdf) as pdf:
+        fig = plt.figure(figsize=(8, 2))
+        fig.text(0.5, 0.5, "no genotyped SNPs", ha="center", va="center")
+        pdf.savefig(fig)
+        plt.close(fig)
+else:
     snps = pd.concat(frames, ignore_index=True)
     if "AD" not in snps.columns:
         raise ValueError(
@@ -96,6 +95,3 @@ def main():
         )
         plot_genotype_af_depth(ref_af, total, is_het, pdf)
     logging.info(f"saved genotype SNP QC to {out_pdf}")
-
-
-main()
