@@ -1,7 +1,7 @@
 # Universal Genotyping Pipeline
 
 [![Snakemake](https://img.shields.io/badge/snakemake->=9.0-brightgreen.svg)](https://snakemake.readthedocs.io)
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](VERSION)
+[![Version](https://img.shields.io/badge/version-0.1.0b1-blue.svg)](VERSION)
 
 Universal Genotyping Pipeline is a Snakemake preprocessing pipeline for downstream allele-specific CNA inference softwares including:
 - [HATCHet](https://github.com/raphael-group/hatchet) - bulk **short-read** WGS/WES, **long-read** PacBio HiFi/ONT,
