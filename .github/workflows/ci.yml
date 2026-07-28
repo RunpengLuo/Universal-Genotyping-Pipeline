@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev, "feat/**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dryrun:
+    name: pytest + snakemake dry-run (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install snakemake + DAG-parse deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install "snakemake>=9" snakemake-storage-plugin-http snakemake-storage-plugin-fs \
+                      pandas numpy pyyaml pulp pytest
+
+      - name: pytest (DAG dry-run, all modes x JSON/TSV)
+        run: pytest tests/
+
+      - name: snakemake dry-run on a real sample sheet (HCC1395, chr16)
+        run: |
+          set -euo pipefail
+          # Stub only the references not bundled in resources/data/; a dry-run just
+          # builds the DAG, so empty files are enough.
+          R=.test-run/HCC1395/reference
+          mkdir -p "$R/target_positions" "$R/phasing_panel"
+          : > "$R/hg38.fa"
+          : > "$R/gencode.hg38.gtf.gz"
+          : > "$R/genetic_map_hg38_withX.txt.gz"
+          : > "$R/target_positions/target.chr16.pos.gz"
+          : > "$R/target_positions/target.chr16.pos.gz.tbi"
+          : > "$R/phasing_panel/chr16.genotypes.bcf"
+          : > "$R/phasing_panel/chr16.genotypes.bcf.csi"
+          snakemake -n -c1 -s workflow/Snakefile --configfile tests/data/HCC1395/config.yaml

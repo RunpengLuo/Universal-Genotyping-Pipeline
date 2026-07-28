@@ -1,6 +1,6 @@
 # Single-Cell Genotyping
 
-This documentation covers input preparation and result interpretation for single-cell and spatial genotyping using **scRNA**, **scATAC** (incl. 10x Epi Multiome), and **Visium** (`VISIUM`/`VISIUM3prime`) data to run [CalicoST](https://github.com/raphael-group/CalicoST). Germline SNPs are genotyped from a pseudobulk of the sample's own cells (cellsnp-lite), phased, then pileup-counted per cell. Refer to [Pipeline](pipeline.md) for Snakemake pipeline installation and execution instructions.
+This documentation covers input preparation and result interpretation for single-cell and spatial genotyping using **scRNA**, **scATAC** (incl. 10x Epi Multiome), and **Visium** (`VISIUM`/`VISIUM3prime`) data to run [CalicoST](https://github.com/raphael-group/CalicoST). Germline SNPs are genotyped from a pseudobulk of the sample's own cells (cellsnp-lite), phased, then pileup-counted per cell. Refer to the [README](../README.md) for Snakemake pipeline installation and execution instructions.
 
 ## Table of Contents
 1. [Overview](#overview) <br>

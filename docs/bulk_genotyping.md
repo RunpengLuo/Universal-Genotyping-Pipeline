@@ -1,6 +1,6 @@
 # Bulk Genotyping
 
-This documentation covers input preparation and result intepretation for preprocessing **short-read** WGS/WES and/or **long-read** (e.g., PacBio HiFi, Oxford Nanopore) sequencing data to run [HATCHet](https://github.com/raphael-group/hatchet). Refer to [Pipeline](pipeline.md) for Snakemake pipeline installation and execution instructions.
+This documentation covers input preparation and result intepretation for preprocessing **short-read** WGS/WES and/or **long-read** (e.g., PacBio HiFi, Oxford Nanopore) sequencing data to run [HATCHet](https://github.com/raphael-group/hatchet). Refer to the [README](../README.md) for Snakemake pipeline installation and execution instructions.
 
 ## Table of Contents
 1. [Overview](#overview) <br>

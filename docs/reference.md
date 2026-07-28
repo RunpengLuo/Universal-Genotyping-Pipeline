@@ -1,6 +1,7 @@
 # Reference
 
 ## Table of Contents
+- [Dependencies](#dependencies)
 - [Sample File](#sample-file)
 - [Configuration](#configuration)
   - [Input Data](#input-data)
@@ -12,6 +13,25 @@
   - [TSV columns](#tsv-columns)
   - [Barcodes (single-cell)](#barcodes-single-cell)
   - [QC](#qc-qc_dir)
+
+---
+
+## Dependencies
+
+Pipeline dependencies live under `workflow/envs/`:
+
+| Environment | Purpose |
+|-------------|---------|
+| `base.yaml` | Python scientific stack (used by every mode). |
+| `bcftools.yaml` | bcftools/tabix: bulk genotyping + het-SNP pileup. |
+| `eagle.yaml` | Eagle2 phasing. |
+| `shapeit.yaml` | SHAPEIT5 phasing. |
+| `longphase.yaml` | LongPhase (long-read) phasing. |
+| `cellsnp.yaml` | cellsnp-lite: single-cell genotyping + pileup. |
+| `mosdepth.yaml` | mosdepth read-depth counting (bulk). |
+| `ucsc.yaml` | UCSC tools (`bigWigToBedGraph`, `liftOver`) for the Repli-seq track. |
+
+---
 
 ## Sample File
 Refer to spec **[sample_sheet.md](sample_sheet.md)** and [templates](../resources/templates/).
@@ -187,7 +207,7 @@ Used by all multi-thread rules.
 
 ## Outputs
 
-Directories (`snp_dir`, `phase_dir`, `pileup_dir`, `allele_dir`, `bb_dir`, `qc_dir`, `log_dir`, `aux_dir`, `bench_dir`) are set in `config.yaml`, relative to `snakemake --directory`. Which rule writes what, per mode: [workflow.md](workflow.md). Each rule logs to `log_dir/{rule}/...` and writes a Snakemake `benchmark:` TSV (wall time, `max_rss`, `max_vms`, `cpu_time`, ...) to `bench_dir/{rule}/...`.
+Directories (`snp_dir`, `phase_dir`, `pileup_dir`, `allele_dir`, `bb_dir`, `qc_dir`, `log_dir`, `aux_dir`, `bench_dir`) are set in `config.yaml`, relative to `snakemake --directory`. Each rule logs to `log_dir/{rule}/...` and writes a Snakemake `benchmark:` TSV (wall time, `max_rss`, `max_vms`, `cpu_time`, ...) to `bench_dir/{rule}/...`.
 
 `.npz` are matrices: rows = SNPs or bins, columns = samples or cells; dense for bulk, scipy sparse CSR for single-cell. BAF is never stored — derive it from `Ballele` / `Tallele`.
 
