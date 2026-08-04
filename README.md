@@ -79,6 +79,7 @@ snakemake --profile profile/ \
 > - For the first run, use CMD argument `--dry-run` (`-n`). It lists the jobs Snakemake would run without actual executions, so you can confirm the plan and catch potential configuration errors.
 > - If a run failed at intermediate jobs or user changed downstream parameters, use CMD argument 
 > `--rerun-incomplete` to resume execution.
+> - Add CMD arguments `--report /path/to/report.html --report-after-run` to create a QC report.
 
 ---
 
