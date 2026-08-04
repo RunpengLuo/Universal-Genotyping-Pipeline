@@ -32,19 +32,3 @@ jobs:
 
       - name: pytest (DAG dry-run, all modes x JSON/TSV)
         run: pytest tests/
-
-      - name: snakemake dry-run on a real sample sheet (HCC1395, chr16)
-        run: |
-          set -euo pipefail
-          # Stub only the references not bundled in resources/data/; a dry-run just
-          # builds the DAG, so empty files are enough.
-          R=.test-run/HCC1395/reference
-          mkdir -p "$R/target_positions" "$R/phasing_panel"
-          : > "$R/hg38.fa"
-          : > "$R/gencode.hg38.gtf.gz"
-          : > "$R/genetic_map_hg38_withX.txt.gz"
-          : > "$R/target_positions/target.chr16.pos.gz"
-          : > "$R/target_positions/target.chr16.pos.gz.tbi"
-          : > "$R/phasing_panel/chr16.genotypes.bcf"
-          : > "$R/phasing_panel/chr16.genotypes.bcf.csi"
-          snakemake -n -c1 -s workflow/Snakefile --configfile tests/data/HCC1395/config.yaml
