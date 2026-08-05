@@ -22,6 +22,9 @@ Notes/References:
   successful run, so it is only usable once real fixtures exist: docs/TODO.md.
 """
 
+import json
+import os
+
 import pytest
 
 from conftest import dryrun, job_counts
@@ -257,6 +260,19 @@ def test_visium_spatial_files_are_tracked(workspace):
         "tissue_lowres_image.png",
     ):
         assert name in proc.stdout, f"{name} is not a tracked input"
+
+
+def test_record_without_reference_version_fails(workspace):
+    """reference_version is required on every record, not optional provenance."""
+    sheet = os.path.join(workspace["root"], "no_refver.json")
+    doc = json.loads(open(workspace["bulk_json"]).read())
+    del doc["samples"][1]["reference_version"]
+    with open(sheet, "w") as fh:
+        json.dump(doc, fh)
+    proc = dryrun(workspace, sheet, "T1", "bulk_genotyping", ["bulkWGS"])
+    assert proc.returncode != 0
+    out = proc.stdout + proc.stderr
+    assert "missing required key(s)" in out and "reference_version" in out
 
 
 def test_unknown_sample_id_fails(workspace):

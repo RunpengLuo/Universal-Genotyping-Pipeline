@@ -7,9 +7,22 @@ import os
 WORKFLOW_MODES = ("bulk_genotyping", "single_cell_genotyping", "copytyping_preprocess")
 
 # sample-file schema
-REQUIRED_RECORD_KEYS = ("sample_id", "dataset_id", "assay_type", "sample_type", "files")
+REQUIRED_RECORD_KEYS = (
+    "sample_id",
+    "dataset_id",
+    "assay_type",
+    "sample_type",
+    "reference_version",
+    "files",
+)
 OPTIONAL_RECORD_KEYS = ("rdr_base_dataset_id",)
-PROVENANCE_KEYS = ("passage_id", "platform", "reference_version", "cancer_type")
+PROVENANCE_KEYS = ("passage_id", "platform", "cancer_type")
+# record keys read as strings; "files" is a map, handled separately
+SCALAR_RECORD_KEYS = (
+    tuple(k for k in REQUIRED_RECORD_KEYS if k != "files")
+    + OPTIONAL_RECORD_KEYS
+    + PROVENANCE_KEYS
+)
 # LEGACY TSV sheet style
 TSV_REQUIRED_COLUMNS = ("SAMPLE", "REP_ID", "assay_type", "sample_type", "PATH_to_bam")
 

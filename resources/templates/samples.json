@@ -84,6 +84,7 @@
       "dataset_id": "N1",
       "assay_type": "bulkWGS",
       "sample_type": "normal",
+      "reference_version": "GRCh38",
       "files": {
         "alignment": "/path/to/HT003/normal.bam",
         "alignment_index": "/path/to/HT003/normal.bam.bai"
@@ -95,6 +96,7 @@
       "rdr_base_dataset_id": "N1",
       "assay_type": "bulkWES",
       "sample_type": "tumor",
+      "reference_version": "GRCh38",
       "files": {
         "alignment": "/path/to/HT003/tumor.cram",
         "alignment_index": "/path/to/HT003/tumor.cram.crai"

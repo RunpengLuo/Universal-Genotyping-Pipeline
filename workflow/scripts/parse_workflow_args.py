@@ -39,16 +39,15 @@ from const import (
     LONGREAD_PHASER,
     NONBULK_ASSAYS,
     OPTIONAL_FILES,
-    OPTIONAL_RECORD_KEYS,
     PANEL_PHASER,
     REPLISEQ_REFVERS,
-    PROVENANCE_KEYS,
     RANGER_LAYOUT,
     RANGER_SPATIAL_DIR,
     RDR_NORMALIZATIONS,
     REFVERS,
     REQUIRED_FILES,
     REQUIRED_RECORD_KEYS,
+    SCALAR_RECORD_KEYS,
     SINGLE_CELL_TARGETS,
     TSV_REQUIRED_COLUMNS,
     WORKFLOW_MODES,
@@ -88,7 +87,7 @@ def parse_sample_file_json(path):
         if not isinstance(rec, dict):
             raise ValueError(f"{path}: record {idx} is not an object")
         norm = dict(rec)
-        for key in ("sample_id", "dataset_id", *OPTIONAL_RECORD_KEYS, *PROVENANCE_KEYS):
+        for key in SCALAR_RECORD_KEYS:
             if key in norm and norm[key] is not None:
                 norm[key] = str(norm[key])
         files = norm.get("files")
@@ -168,6 +167,7 @@ def parse_sample_file_tsv(path):
             "dataset_id": row["REP_ID"],
             "assay_type": assay_type,
             "sample_type": row["sample_type"],
+            "reference_version": _get(row, "reference_version"),
             "files": files,
         }
         base = _get(row, "RDR_BASE_REP_ID")
