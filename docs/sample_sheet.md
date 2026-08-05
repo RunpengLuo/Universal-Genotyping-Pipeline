@@ -17,8 +17,8 @@ Sample file is a JSON-format configuration file contains dataset records over mu
       "assay_type":            "bulkWGS" | "bulkWGS-lr" | "bulkWES" |
                                "scRNA" | "scATAC" | "VISIUM" | "VISIUM3prime",
       "sample_type":           "normal" | "tumor",
+      "reference_version":     <str>,
       "platform"?:             <str>,
-      "reference_version"?:    <str>,
       "cancer_type"?:          <str>,
       "files": {
         "alignment":         <path|url>,
@@ -46,11 +46,11 @@ Sample file is a JSON-format configuration file contains dataset records over mu
 | `dataset_id` | Yes | Dataset ID, unique with each patient |
 | `assay_type` | Yes | `bulkWGS` \| `bulkWGS-lr` \| `bulkWES` \| `scRNA` \| `scATAC` \| `VISIUM` \| `VISIUM3prime`. |
 | `sample_type` | Yes | `normal` \| `tumor`. |
+| `reference_version` | Yes | reference version, e.g. `GRCh38`; see [Reference version](#reference-version). |
 | `files` | Yes | Input files; see [Files](#files). |
 | `rdr_base_dataset_id` | No | matched-normal sample `dataset_id`; see [RDR normalization](reference.md#params_combine_counts). |
 | `passage_id` | No | e.g. `p23`. |
 | `platform` | No | e.g. `Illumina PCR-free`. |
-| `reference_version` | No | e.g. `GRCh38-GIABv3`; see [reference.md](reference.md#input-data). |
 | `cancer_type` | No | e.g. `PDAC`. |
 
 ## Files
@@ -72,6 +72,20 @@ Sample file is a JSON-format configuration file contains dataset records over mu
 ### Support multiome dataset
 A 10x Epi Multiome dataset is two records sharing one (`sample_id`, `dataset_id`), with `assay_type` set to `scRNA` and `scATAC`, respectively.
 
+### Reference version
+`reference_version` names the reference genome build the given dataset was aligned to, and matches config's `reference`. The workflow only selects the datasets whose `reference_version` exactly matches the config's [`reference_version`](./reference.md#input-data) under aliasing:
+
+| Canonical | Also accepted (case-insensitive) |
+|-----------|----------------------------------|
+| `hg19` | `GRCh37`, `b37`, `hs37`, `hs37d5` |
+| `hg38` | `GRCh38`, `hs38`, `hs38DH`, `GRCh38.p13`, `GRCh38_no_alt` |
+| `chm13v2` | `CHM13v2.0`, `CHM13`, `T2T`, `T2T-CHM13v2`, `T2T-CHM13v2.0` |
+| `mm10` | `GRCm38`, `MGSCv38` |
+
+> [!IMPORTANT]
+> If CRAM format is used, `reference_version` and config's `reference` must match exactly
+> to the input CRAM, otherwise CRAM's MD5 checksum will fail.
+
 ### Support remote files
 A input file could be a local disk path or an `http(s)` URL to a FTP server, see [`remote_mode`](./reference.md#input-data) for more details. Here is an example for the GIAB HG008 tumor/normal cell line (bulkWGS) served from the NCBI GIAB FTP:
 ```json
@@ -83,6 +97,7 @@ A input file could be a local disk path or an `http(s)` URL to a FTP server, see
       "dataset_id": "N",
       "assay_type": "bulkWGS",
       "sample_type": "normal",
+      "reference_version": "GRCh38",
       "files": {
         "alignment": "https://ftp.ncbi.nlm.nih.gov/ReferenceSamples/giab/data_somatic/HG008/HG008-N.bam",
         "alignment_index": "https://ftp.ncbi.nlm.nih.gov/ReferenceSamples/giab/data_somatic/HG008/HG008-N.bam.bai"
@@ -94,6 +109,7 @@ A input file could be a local disk path or an `http(s)` URL to a FTP server, see
       "rdr_base_dataset_id": "N",
       "assay_type": "bulkWGS",
       "sample_type": "tumor",
+      "reference_version": "GRCh38",
       "files": {
         "alignment": "https://ftp.ncbi.nlm.nih.gov/ReferenceSamples/giab/data_somatic/HG008/HG008-T.bam",
         "alignment_index": "https://ftp.ncbi.nlm.nih.gov/ReferenceSamples/giab/data_somatic/HG008/HG008-T.bam.bai"
@@ -105,13 +121,12 @@ A input file could be a local disk path or an `http(s)` URL to a FTP server, see
 > [!IMPORTANT]
 > In `stream` mode, `alignment_index` must also be reachable via URL.
 
-### Validate sample file
-Use `resources/scripts/validate_sample_file.py <sample_file>` to valid the sample file's format.
+## Supporting TSV-formatted sample sheet
 
-## Legacy TSV
-Still accepted; `parse_sample_file()` dispatches on the extension and maps the columns onto the schema above. Columns: `SAMPLE`, `REP_ID`, `assay_type`, `sample_type`, `PATH_to_bam` (required), plus `RDR_BASE_REP_ID`, `passage`, `PATH_to_barcodes`, `PATH_to_10x_ranger`.
+User may also use TSV-formatted sample sheet with same schema as JSON file but strongly unrecommended. All files column must have prefix `files.`. Here is an example:
 
-TSV has no index column, so `alignment_index` is derived as `PATH_to_bam` + `.bai` / `.crai`. Single-cell files have no columns either and are re-derived from `PATH_to_10x_ranger` using Cell/Space Ranger's default layout (names live in `config/const.py` as `RANGER_*`, so a Ranger rename is a one-file change). Consequences:
-
-- `PATH_to_10x_ranger` must be a **local** directory — a directory cannot be fetched, so single-cell TSV sheets cannot use remote inputs. `PATH_to_bam` may still be a URL.
-- A non-default filename inside `outs/` cannot be expressed.
+```
+sample_id  dataset_id  assay_type  sample_type  reference_version  files.alignment  files.alignment_index
+T1         N1          bulkWGS     normal       hg38               /d/normal.bam    /d/normal.bam.bai
+T1         D1          bulkWGS     tumor        hg38               /d/tumor.bam     /d/tumor.bam.bai
+```
