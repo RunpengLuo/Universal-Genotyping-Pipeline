@@ -66,9 +66,47 @@ ASSAY_TYPE2MODALITY = {
 }
 
 ##################################################
-# Supported reference genome versions
+# Native supported reference genome versions
 REFVERS = ["hg19", "hg38", "chm13v2", "mm10"]
 CHR_STYLE_REFVERS = ("hg19", "hg38", "chm13v2", "mm10")
+
+REFVERS_ALIAS = {
+    "hg19": ["GRCh37", "b37", "hs37", "hs37d5"],
+    "hg38": ["GRCh38", "hs38", "hs38DH", "GRCh38.p13", "GRCh38_no_alt"],
+    "chm13v2": ["CHM13v2.0", "CHM13", "T2T", "T2T-CHM13v2", "T2T-CHM13v2.0"],
+    "mm10": ["GRCm38", "MGSCv38"],
+}
+
+_ALIAS2REFVER = {
+    alias.lower(): canon
+    for canon, aliases in REFVERS_ALIAS.items()
+    for alias in (canon, *aliases)
+}
+
+
+def canonical_refver(value):
+    """Fold a reference_version spelling to its canonical form.
+
+    Used on both sides of the sample-file match: the config value and each record's
+    ``reference_version``. An unrecognized value folds to its own lowercased form
+    rather than raising, so a reference the pipeline has no built-in support for can
+    still select records; ``is_known_refver`` distinguishes the two cases.
+
+    Args:
+        value: A reference_version spelling, e.g. "GRCh38".
+
+    Returns:
+        The canonical REFVERS token ("hg38"), or the stripped lowercase input when no
+        alias matches.
+    """
+    key = str(value).strip().lower()
+    return _ALIAS2REFVER.get(key, key)
+
+
+def is_known_refver(value):
+    """True when ``value`` names a reference version the pipeline natively supports."""
+    return canonical_refver(value) in REFVERS
+
 
 # Sex chromosome naming
 REFVER2SEXCHROM = {
