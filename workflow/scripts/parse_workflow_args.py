@@ -51,6 +51,7 @@ from const import (
     SPECIES,
     WORKFLOW_MODES,
     canonical_refver,
+    select_contigs,
     get_genetic_map_path,
     is_known_refver,
     get_phasing_panel_path,
@@ -393,10 +394,24 @@ def parse_workflow(config):
     # every record is complete before anything reads one by key
     require_record_keys(records, path)
 
+    # === chromosomes: every one must name a contig of the genome-size file ===
+    genome_size = config.get("genome_size")
+    if not genome_size:
+        raise ValueError("genome_size is required (two-column chrom<TAB>size file)")
+    chrom_contigs, absent_chroms = select_contigs(genome_size, config["chromosomes"])
+    if absent_chroms:
+        raise ValueError(
+            f"chromosomes {absent_chroms} have no contig in {genome_size}; "
+            "every configured chromosome must be present, with or without a 'chr' "
+            "prefix. Fix `chromosomes`, or point genome_size at the matching build."
+        )
+
     # === species: sex-chromosome numbering, independent of the reference version ===
-    species = config.get("species") or "human"
+    species = config.get("species")
     if species not in SPECIES:
-        raise ValueError(f"species must be one of {list(SPECIES)}, got {species!r}")
+        print(
+            f"WARNING: species={species!r} is not natively supported ({list(SPECIES)})."
+        )
 
     # === reference version: canonicalize, then keep only records of that build ===
     raw_refver = config.get("reference_version")
@@ -409,8 +424,7 @@ def parse_workflow(config):
     if not is_known_refver(raw_refver):
         print(
             f"WARNING: reference_version={raw_refver!r} is not natively supported "
-            f"({REFVERS}); using it verbatim to select records. Repli-seq RT "
-            "correction is unavailable for it."
+            f"({REFVERS})."
         )
     # matching records grouped by the spelling they use, so an alias is visible
     matched = {}
@@ -685,6 +699,7 @@ def parse_workflow(config):
         "remote_stream": remote_stream,
         "reference_version": reference_version,
         "species": species,
+        "chrom_contigs": chrom_contigs,
         "assay_types": assay_types,
         "modalities": list(dict.fromkeys(r["modality"] for r in records)),
         "msr_list": msr_list,

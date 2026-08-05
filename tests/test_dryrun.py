@@ -320,6 +320,21 @@ def _sheet_with_refvers(workspace, name, refvers):
     return sheet
 
 
+def test_chromosome_absent_from_genome_size_fails(workspace):
+    """Config chromosomes are checked against the genome once, at DAG build."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_json"],
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=["chromosomes=[22,99]"],
+    )
+    assert proc.returncode != 0
+    out = proc.stdout + proc.stderr
+    assert "have no contig in" in out and "'99'" in out
+
+
 def test_species_defaults_and_reaches_parse_genetic_map(workspace):
     """species is human by default and is what parse_genetic_map is given."""
     proc = dryrun(
@@ -338,8 +353,8 @@ def test_species_defaults_and_reaches_parse_genetic_map(workspace):
     assert mouse.returncode == 0, mouse.stderr[-1500:]
 
 
-def test_invalid_species_fails(workspace):
-    """An unknown species errors; sex-chrom numbering has no sensible default for it."""
+def test_unsupported_species_warns(workspace):
+    """An unknown species warns but runs; it only matters if a gmap needs relabeling."""
     proc = dryrun(
         workspace,
         workspace["bulk_json"],
@@ -348,8 +363,8 @@ def test_invalid_species_fails(workspace):
         ["bulkWGS"],
         extra=["species=zebrafish"],
     )
-    assert proc.returncode != 0
-    assert "species must be one of" in proc.stdout + proc.stderr
+    assert proc.returncode == 0, proc.stderr[-1500:]
+    assert "species='zebrafish' is not natively supported" in proc.stdout
 
 
 def test_config_reference_version_required(workspace):

@@ -28,15 +28,6 @@ def get_chr_sizes(sz_file: str):
     return chr_sizes
 
 
-def get_standard_chroms(reference_version, genome_size_file):
-    """Standard chromosomes (autosomes + X/Y) present in the genome-size file."""
-    all_chroms = set(get_chr_sizes(genome_size_file).keys())
-    candidates = {f"chr{c}" for c in list(range(1, 23)) + ["X", "Y"]}
-    if reference_version not in CHR_STYLE_REFVERS:
-        candidates |= {str(c) for c in list(range(1, 23)) + ["X", "Y"]}
-    return candidates & all_chroms
-
-
 def read_VCF(
     vcf_file: str,
     addchr=True,

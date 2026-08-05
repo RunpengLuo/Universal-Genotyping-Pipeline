@@ -76,6 +76,12 @@ def workspace(tmp_path_factory):
     for name in REF_FILES:
         _touch(str(ref / name))
 
+    # parse_workflow resolves config chromosomes against this at DAG build, so it
+    # needs real contigs (the other reference assets stay empty stubs)
+    (ref / "genome_size.txt").write_text(
+        "".join(f"chr{c}\t50818468\n" for c in list(range(1, 23)) + ["X", "Y"])
+    )
+
     rows = "".join(
         f"chr22\t{pos}\t.\tA\tG\t60\tPASS\t.\tGT\t0|1\n" for pos in (1000, 2000, 3000)
     )

@@ -27,7 +27,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
-from io_utils import get_standard_chroms, read_BED
+from io_utils import read_BED
 from plot_utils import _hist_with_stats
 from utils import is_canonical_chrom, maybe_path, setup_logging, sort_df_chr
 
@@ -53,7 +53,7 @@ def _tile_region(chrom, start, end, window_size):
     return rows
 
 
-def generate_wgs_windows(window_size, standard_chroms, region_bed):
+def generate_wgs_windows(window_size, chroms, region_bed):
     """Tile fixed-size windows within the segment BED (already blacklist-subtracted)."""
     reg_df = pd.read_csv(
         region_bed,
@@ -63,24 +63,22 @@ def generate_wgs_windows(window_size, standard_chroms, region_bed):
         names=["Chromosome", "Start", "End"],
         dtype={"Chromosome": str},
     )
-    reg_df = reg_df[reg_df["Chromosome"].isin(standard_chroms)].reset_index(drop=True)
+    reg_df = reg_df[reg_df["Chromosome"].isin(chroms)].reset_index(drop=True)
     rows = []
     for _, r in reg_df.iterrows():
         rows.extend(_tile_region(r["Chromosome"], r["Start"], r["End"], window_size))
     return pd.DataFrame(rows, columns=["#CHR", "START", "END"])
 
 
-standard = get_standard_chroms(p["reference_version"], inp["genome_size"])
-wanted = {str(c) for c in p["chromosomes"]}
-standard = {s for s in standard if (s[3:] if s.startswith("chr") else s) in wanted}
 region_bed = inp["region_bed"]
 genome_size = inp["genome_size"]
-logging.info(
-    f"build_window_bed: window_size={p['window_size']}, {len(standard)} standard chroms"
-)
+
+# contigs to tile, in config order; parse_workflow already checked they all exist
+chroms = list(p["contigs"])
+logging.info(f"build_window_bed: window_size={p['window_size']}, {len(chroms)} contigs")
 
 # tile the segment BED (one grid for every bulk assay: WGS/WGS-lr/WES)
-windows = generate_wgs_windows(int(p["window_size"]), standard, region_bed)
+windows = generate_wgs_windows(int(p["window_size"]), chroms, region_bed)
 n_tiled = len(windows)
 logging.info(f"tiled {n_tiled} windows")
 
@@ -173,7 +171,7 @@ if bedgraphs:
                 "signal": np.float64,
             },
         )
-        bg = bg[bg["chrom"].isin(standard)].reset_index(drop=True)
+        bg = bg[bg["chrom"].isin(chroms)].reset_index(drop=True)
         for chrom, grp in bg.groupby("chrom", sort=False):
             win_idx = np.where((windows["#CHR"] == chrom).to_numpy())[0]
             if len(win_idx) == 0:

@@ -172,8 +172,7 @@ if workflow_mode == "bulk_genotyping":
             conda:
                 "../envs/base.yaml"
             params:
-                reference_version=reference_version,
-                chromosomes=config["chromosomes"],
+                contigs=chrom_contigs,
                 window_size=window_size,
             script:
                 "../scripts/build_window_bed.py"
