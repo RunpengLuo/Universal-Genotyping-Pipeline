@@ -121,12 +121,12 @@ def is_known_refver(value):
     return canonical_refver(value) in REFVERS
 
 
-# Sex chromosome naming
-REFVER2SEXCHROM = {
-    "hg19": {"X": 23, "Y": 24},
-    "hg38": {"X": 23, "Y": 24},
-    "chm13v2": {"X": 23, "Y": 24},
-    "mm10": {"X": 20, "Y": 21},
+##################################################
+# Supported species.
+SPECIES = ("human", "mouse")
+SPECIES2SEXCHROM = {
+    "human": {"X": 23, "Y": 24},
+    "mouse": {"X": 20, "Y": 21},
 }
 
 ##################################################

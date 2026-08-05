@@ -30,6 +30,7 @@ bb_file: null
 
 ##################################################
 # Reference
+species: human
 reference_version: "hg38"
 reference: /path/to/reference.fa
 gtf_file: /path/to/genes.gtf.gz

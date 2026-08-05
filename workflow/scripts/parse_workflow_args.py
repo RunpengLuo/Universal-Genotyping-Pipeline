@@ -48,6 +48,7 @@ from const import (
     REQUIRED_RECORD_KEYS,
     SCALAR_RECORD_KEYS,
     SINGLE_CELL_TARGETS,
+    SPECIES,
     WORKFLOW_MODES,
     canonical_refver,
     get_genetic_map_path,
@@ -324,7 +325,8 @@ def parse_workflow(config):
 
     Returns:
         Dict of the names workflow/Snakefile unpacks and the rules then read:
-          workflow_mode, sample_id, remote_stream, assay_types, modalities, msr_list, phaser,
+          workflow_mode, sample_id, remote_stream, reference_version, species,
+          assay_types, modalities, msr_list, phaser,
           run_genotyping, run_phasing, het_snp_vcf, phased_snp_vcf,
           require_genetic_map, final_targets, get_data, modality2files,
           assay2dataset_ids, assay2sample_types, assay2base_reps, genotype_files,
@@ -390,6 +392,11 @@ def parse_workflow(config):
 
     # every record is complete before anything reads one by key
     require_record_keys(records, path)
+
+    # === species: sex-chromosome numbering, independent of the reference version ===
+    species = config.get("species") or "human"
+    if species not in SPECIES:
+        raise ValueError(f"species must be one of {list(SPECIES)}, got {species!r}")
 
     # === reference version: canonicalize, then keep only records of that build ===
     raw_refver = config.get("reference_version")
@@ -677,6 +684,7 @@ def parse_workflow(config):
         "sample_id": sample_id,
         "remote_stream": remote_stream,
         "reference_version": reference_version,
+        "species": species,
         "assay_types": assay_types,
         "modalities": list(dict.fromkeys(r["modality"] for r in records)),
         "msr_list": msr_list,

@@ -320,6 +320,38 @@ def _sheet_with_refvers(workspace, name, refvers):
     return sheet
 
 
+def test_species_defaults_and_reaches_parse_genetic_map(workspace):
+    """species is human by default and is what parse_genetic_map is given."""
+    proc = dryrun(
+        workspace, workspace["bulk_json"], "T1", "bulk_genotyping", ["bulkWGS"]
+    )
+    assert proc.returncode == 0, proc.stderr[-1500:]
+    assert "parse_genetic_map" in job_counts(proc.stdout)
+    mouse = dryrun(
+        workspace,
+        workspace["bulk_json"],
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=["species=mouse"],
+    )
+    assert mouse.returncode == 0, mouse.stderr[-1500:]
+
+
+def test_invalid_species_fails(workspace):
+    """An unknown species errors; sex-chrom numbering has no sensible default for it."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_json"],
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=["species=zebrafish"],
+    )
+    assert proc.returncode != 0
+    assert "species must be one of" in proc.stdout + proc.stderr
+
+
 def test_config_reference_version_required(workspace):
     """An unset config reference_version is an error, not a silent no-filter."""
     proc = dryrun(

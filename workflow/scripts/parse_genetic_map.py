@@ -12,7 +12,7 @@ os.environ["NUMEXPR_NUM_THREADS"] = str(t)
 
 import pandas as pd
 
-from utils import sort_df_chr, REFVER2SEXCHROM
+from utils import sort_df_chr, SPECIES2SEXCHROM
 
 ##################################################
 """
@@ -33,14 +33,12 @@ gmap_files = list(snakemake_handle.input["gmap_files"])
 # parameters
 chrnames = list(snakemake_handle.params["chrnames"])
 phaser = snakemake_handle.params["phaser"]
-reference_version = snakemake_handle.params["reference_version"]
+species = snakemake_handle.params["species"]
 
 # outputs
 gmap_tsv = snakemake_handle.output["gmap_tsv"]
 
-logging.info(
-    f"parse genetic map files, phaser={phaser}, reference_version={reference_version}"
-)
+logging.info(f"parse genetic map files, phaser={phaser}, species={species}")
 
 required_columns = ["#CHR", "POS", "cM"]
 if phaser == "eagle":
@@ -72,47 +70,36 @@ if phaser == "eagle":
     genetic_map["#CHR"] = (
         genetic_map["#CHR"].astype(str).str.replace(r"^chr", "", regex=True)
     )
-    # Relabel numeric sex chroms to letters: via REFVER2SEXCHROM for a known
-    # reference, else the "largest non-autosome int is X" heuristic. Labels are
-    # strings, so compare by int (key=int).
+    # A map that already labels every requested chromosome needs no relabeling; only
+    # then does the sex-chromosome numbering matter. Eagle maps number X/Y, so map
+    # those numbers to letters for this species (labels are strings: index by str).
     labels = set(genetic_map["#CHR"])
-    sexmap = REFVER2SEXCHROM.get(reference_version)
-    if sexmap is not None:
+    if not wanted <= labels:
+        sexmap = SPECIES2SEXCHROM.get(species)
+        if sexmap is None:
+            raise ValueError(
+                f"eagle gmap lacks requested chromosome(s) {sorted(wanted - labels)} "
+                f"and species={species!r} has no sex-chromosome numbering to relabel "
+                f"by; known species: {sorted(SPECIES2SEXCHROM)}"
+            )
         for sex_name, sex_num in sexmap.items():
             if sex_name not in wanted or sex_name in labels:
                 continue
             if str(sex_num) in labels:
                 genetic_map.loc[genetic_map["#CHR"] == str(sex_num), "#CHR"] = sex_name
+                labels = set(genetic_map["#CHR"])
                 logging.info(
                     f"eagle: relabeled chromosome {sex_num} as {sex_name} "
-                    f"(reference_version={reference_version})"
+                    f"(species={species})"
                 )
-            else:
-                logging.warning(
-                    f"eagle: {sex_name} requested but chromosome {sex_num} absent "
-                    f"in gmap (reference_version={reference_version})"
-                )
-    elif "X" in wanted and "X" not in labels:
-        autosomes = {c for c in wanted if c.isdigit()}
-        cand = [c for c in labels if c.isdigit() and c not in autosomes]
-        if cand:
-            x_label = max(cand, key=int)
-            genetic_map.loc[genetic_map["#CHR"] == x_label, "#CHR"] = "X"
-            logging.info(
-                f"eagle: relabeled largest int chromosome '{x_label}' as 'X' "
-                f"(heuristic; reference_version={reference_version!r})"
+        missing_chroms = sorted(wanted - labels)
+        if missing_chroms:
+            raise ValueError(
+                f"eagle gmap has no rows for requested chromosome(s) {missing_chroms}; "
+                f"map labels are {sorted(labels)} (species={species}). Supply a genetic "
+                "map that covers them, or relabel it to match."
             )
-        else:
-            logging.warning(
-                f"eagle: X requested but no X-like chromosome found in gmap "
-                f"(reference_version={reference_version!r})"
-            )
-
     genetic_map = genetic_map[genetic_map["#CHR"].isin(wanted)].reset_index(drop=True)
-    assert len(genetic_map) > 0, (
-        f"no eagle gmap rows match requested chromosomes {sorted(wanted)}; "
-        f"map chromosome labels were {sorted(labels)}"
-    )
     genetic_map["#CHR"] = "chr" + genetic_map["#CHR"]
     genetic_map = sort_df_chr(genetic_map, ch="#CHR", pos="POS")
     logging.info(

@@ -49,6 +49,7 @@ if _has_config:
     sample_id = _wf["sample_id"]
     remote_stream = _wf["remote_stream"]
     reference_version = _wf["reference_version"]
+    species = _wf["species"]
     assay_types = _wf["assay_types"]
     modalities = _wf["modalities"]
     msr_list = _wf["msr_list"]
