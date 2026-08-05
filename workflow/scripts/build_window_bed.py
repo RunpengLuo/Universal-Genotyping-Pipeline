@@ -29,7 +29,14 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 from io_utils import read_BED
 from plot_utils import _hist_with_stats
-from utils import is_canonical_chrom, maybe_path, setup_logging, sort_df_chr
+from utils import (
+    is_canonical_chrom,
+    maybe_path,
+    setup_logging,
+    require_matching_chr_style,
+    sort_df_chr,
+    strip_chr_prefix,
+)
 
 setup_logging(snakemake_handle.log[0])
 
@@ -53,39 +60,31 @@ def _tile_region(chrom, start, end, window_size):
     return rows
 
 
-def generate_wgs_windows(window_size, chroms, region_bed):
+def generate_wgs_windows(window_size, chroms, regions):
     """Tile fixed-size windows within the segment BED (already blacklist-subtracted)."""
-    reg_df = pd.read_csv(
-        region_bed,
-        sep="\t",
-        header=None,
-        usecols=[0, 1, 2],
-        names=["Chromosome", "Start", "End"],
-        dtype={"Chromosome": str},
-    )
-    reg_df = reg_df[reg_df["Chromosome"].isin(chroms)].reset_index(drop=True)
+    reg_df = regions[regions["#CHR"].isin(chroms)].reset_index(drop=True)
     rows = []
     for _, r in reg_df.iterrows():
-        rows.extend(_tile_region(r["Chromosome"], r["Start"], r["End"], window_size))
+        rows.extend(_tile_region(r["#CHR"], r["START"], r["END"], window_size))
     return pd.DataFrame(rows, columns=["#CHR", "START", "END"])
 
 
 region_bed = inp["region_bed"]
 genome_size = inp["genome_size"]
+chroms = list(p["chroms"])
+input_nochr = p["input_nochr"]
+logging.info(f"build_window_bed: window_size={p['window_size']}, {len(chroms)} chroms")
 
-# contigs to tile, in config order; parse_workflow already checked they all exist
-chroms = list(p["contigs"])
-logging.info(f"build_window_bed: window_size={p['window_size']}, {len(chroms)} contigs")
+regions = read_BED(region_bed)
+regions["#CHR"] = regions["#CHR"].astype(str)
+regions[["START", "END"]] = regions[["START", "END"]].astype(np.int64)
 
 # tile the segment BED (one grid for every bulk assay: WGS/WGS-lr/WES)
-windows = generate_wgs_windows(int(p["window_size"]), chroms, region_bed)
+windows = generate_wgs_windows(int(p["window_size"]), chroms, regions)
 n_tiled = len(windows)
 logging.info(f"tiled {n_tiled} windows")
 
 # region_id (arm) + seg_id (chunk) per window by midpoint; drop windows off-segment
-regions = read_BED(region_bed)
-regions["#CHR"] = regions["#CHR"].astype(str)
-regions[["START", "END"]] = regions[["START", "END"]].astype(np.int64)
 mids = (windows["START"] + windows["END"]) // 2
 region_out = pd.Series(pd.NA, index=windows.index, dtype="object")
 seg_out = pd.Series(pd.NA, index=windows.index, dtype="object")
@@ -120,8 +119,14 @@ logging.info(
     f"(dropped {n_pre - len(windows)} non-canonical)"
 )
 
+# bedtools resolves contigs against the reference FASTA and genome_size, so the
+# intervals it receives carry the genome's naming; results map back by row order/_idx
+bed_windows = windows[["#CHR", "START", "END"]].copy()
+if input_nochr:
+    bed_windows["#CHR"] = bed_windows["#CHR"].map(strip_chr_prefix)
+
 # GC (always): per-window GC fraction via pybedtools nucleotide_content
-bt = BedTool.from_dataframe(windows[["#CHR", "START", "END"]])
+bt = BedTool.from_dataframe(bed_windows)
 nuc = bt.nucleotide_content(fi=inp["reference"]).to_dataframe(disable_auto_names=True)
 windows["GC"] = nuc["5_pct_gc"].values
 logging.info("annotated GC")
@@ -130,7 +135,8 @@ logging.info("annotated GC")
 mappability_bed = maybe_path(inp["mappability_bed"])
 if mappability_bed:
     n_windows = len(windows)
-    win_bed = windows[["#CHR", "START", "END"]].copy()
+    require_matching_chr_style(mappability_bed, input_nochr, "mappability_bed")
+    win_bed = bed_windows.copy()
     win_bed["_idx"] = np.arange(n_windows)
     wb = BedTool.from_dataframe(win_bed).sort(g=genome_size)
     map_bt = BedTool(mappability_bed).sort(g=genome_size)

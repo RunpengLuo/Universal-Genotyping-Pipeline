@@ -17,13 +17,11 @@ REQUIRED_RECORD_KEYS = (
 )
 OPTIONAL_RECORD_KEYS = ("rdr_base_dataset_id",)
 PROVENANCE_KEYS = ("passage_id", "platform", "cancer_type")
-# record keys read as strings; "files" is a map, handled separately
 SCALAR_RECORD_KEYS = (
     tuple(k for k in REQUIRED_RECORD_KEYS if k != "files")
     + OPTIONAL_RECORD_KEYS
     + PROVENANCE_KEYS
 )
-# TSV sheet: a flat encoding of the same schema, one files.<key> column per input
 FILES_COLUMN_PREFIX = "files."
 
 # Inputs
@@ -81,7 +79,6 @@ ASSAY_TYPE2MODALITY = {
 ##################################################
 # Native supported reference genome versions
 REFVERS = ["hg19", "hg38", "chm13v2", "mm10"]
-CHR_STYLE_REFVERS = ("hg19", "hg38", "chm13v2", "mm10")
 
 REFVERS_ALIAS = {
     "hg19": ["GRCh37", "b37", "hs37", "hs37d5"],
@@ -119,40 +116,6 @@ def canonical_refver(value):
 def is_known_refver(value):
     """True when ``value`` names a reference version the pipeline natively supports."""
     return canonical_refver(value) in REFVERS
-
-
-def select_contigs(genome_size_file, chromosomes):
-    """Requested chromosomes, named as the genome-size file names them.
-
-    The size file is the source of truth for which contigs exist, so nothing about
-    the species or the ``chr`` naming style is assumed. A request is matched to a
-    contig by its name with any ``chr`` prefix removed, so ``22`` finds ``chr22`` or
-    ``22``. The first contig matching a given core name wins.
-
-    ``parse_workflow`` calls this once and rejects any absent chromosome, so every
-    later step may take ``config["chromosomes"]`` as validated against the genome.
-
-    Args:
-        genome_size_file: Two-column ``chrom<TAB>size`` file.
-        chromosomes: Requested chromosomes, bare (e.g. ``[1, 2, "X"]``).
-
-    Returns:
-        (found, absent): contig names in the requested order, and the requested
-        chromosomes with no contig in the size file.
-    """
-    by_core = {}
-    with open(genome_size_file) as fh:
-        for line in fh:
-            if not line.strip():
-                continue
-            name = line.split()[0]
-            core = name[3:] if name.lower().startswith("chr") else name
-            by_core.setdefault(core, name)
-    wanted = [str(c) for c in chromosomes]
-    return (
-        [by_core[c] for c in wanted if c in by_core],
-        [c for c in wanted if c not in by_core],
-    )
 
 
 ##################################################

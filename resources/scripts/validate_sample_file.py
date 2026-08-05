@@ -19,8 +19,8 @@ Only keys the record's assay type consumes are checked: validation drops the res
 (e.g. record-only fastq_r1), so they are never stat'ed or fetched.
 
 Dependencies:
-  Python 3 standard library; config/const.py and workflow/scripts/parse_workflow_args.py
-  of this repo (located relative to this script).
+  pandas (via workflow/scripts/script_utils); config/const.py and
+  workflow/scripts/parse_workflow_args.py of this repo, located relative to this script.
 
 Usage:
   python resources/scripts/validate_sample_file.py samples.json
@@ -54,6 +54,7 @@ import urllib.request
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "config"))
 sys.path.insert(0, os.path.join(REPO, "workflow", "scripts"))
+sys.path.insert(0, os.path.join(REPO, "workflow", "scripts", "script_utils"))
 
 from const import BULK_ASSAYS, NONBULK_ASSAYS, canonical_refver, is_url  # noqa: E402
 from parse_workflow_args import (  # noqa: E402
@@ -160,7 +161,6 @@ def main():
     print(f"  {len(records)} records, {len(sample_ids)} sample_id(s)")
     print(f"  assays: {dict(assays)}")
 
-    # a run is one build, so validate each build in the file on its own
     refvers = sorted({canonical_refver(r["reference_version"]) for r in records})
     if args.reference_version:
         refvers = [canonical_refver(args.reference_version)]

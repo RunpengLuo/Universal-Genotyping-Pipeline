@@ -172,7 +172,8 @@ if workflow_mode == "bulk_genotyping":
             conda:
                 "../envs/base.yaml"
             params:
-                contigs=chrom_contigs,
+                chroms=chroms,
+                input_nochr=input_nochr,
                 window_size=window_size,
             script:
                 "../scripts/build_window_bed.py"
@@ -188,6 +189,8 @@ rule window_bed_to_3bed:
         config["log_dir"] + f"/window_bed_to_3bed/window_bed_to_3bed.{_run_id}.log",
     benchmark:
         config["bench_dir"] + f"/window_bed_to_3bed/window_bed_to_3bed.{_run_id}.tsv"
+    params:
+        strip_chr_prefix="sed 's/^chr//' | " if input_nochr else "",
     shell:
-        "gzip -dc {input.window_bed} | tail -n +2 | cut -f1-3 | gzip -c "
-        "> {output.mosdepth_bed} 2> {log}"
+        "gzip -dc {input.window_bed} | tail -n +2 | cut -f1-3 | {params.strip_chr_prefix}"
+        "gzip -c > {output.mosdepth_bed} 2> {log}"

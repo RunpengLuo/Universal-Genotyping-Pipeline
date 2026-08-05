@@ -10,8 +10,8 @@ module-level helpers are shared: ``parse_sample_file_json`` / ``parse_sample_fil
 ``validate_records`` (reused by resources/scripts/validate_sample_file.py).
 
 Dependencies:
-  const.py (config/, placed on sys.path by the Snakefile); stdlib only. The sample-file
-  schema and the 10x layout live in const.py; this module holds only the logic.
+  const.py (sample-file schema, 10x layout) and script_utils (get_chr_sizes,
+  strip_chr_prefix), both placed on sys.path by the Snakefile.
 
 Inputs
   config: the Snakemake config dict (keys: docs/reference.md)
@@ -51,12 +51,13 @@ from const import (
     SPECIES,
     WORKFLOW_MODES,
     canonical_refver,
-    select_contigs,
     get_genetic_map_path,
     is_known_refver,
     get_phasing_panel_path,
     is_url,
 )
+from io_utils import get_chr_sizes
+from utils import strip_chr_prefix
 
 
 def parse_sample_file_json(path):
@@ -391,29 +392,37 @@ def parse_workflow(config):
     else:
         raise ValueError(f"{path}: sample file must be .json or .tsv, got {ext!r}")
 
-    # every record is complete before anything reads one by key
     require_record_keys(records, path)
 
-    # === chromosomes: every one must name a contig of the genome-size file ===
+    # === chromosomes: must exist in genome_size ===
     genome_size = config.get("genome_size")
     if not genome_size:
         raise ValueError("genome_size is required (two-column chrom<TAB>size file)")
-    chrom_contigs, absent_chroms = select_contigs(genome_size, config["chromosomes"])
+    by_core = {}
+    for name in get_chr_sizes(genome_size):
+        by_core.setdefault(strip_chr_prefix(name), name)
+    wanted = [strip_chr_prefix(c) for c in config["chromosomes"]]
+    absent_chroms = [c for c in wanted if c not in by_core]
     if absent_chroms:
         raise ValueError(
             f"chromosomes {absent_chroms} have no contig in {genome_size}; "
             "every configured chromosome must be present, with or without a 'chr' "
             "prefix. Fix `chromosomes`, or point genome_size at the matching build."
         )
+    if not wanted:
+        raise ValueError("chromosomes is empty")
+    chroms = [f"chr{c}" for c in wanted]
+    input_nochr = not by_core[wanted[0]].lower().startswith("chr")
+    print(f"chromosomes: {chroms[:3]}... input_nochr={input_nochr}")
 
-    # === species: sex-chromosome numbering, independent of the reference version ===
+    # === species: sex-chromosome numbering ===
     species = config.get("species")
     if species not in SPECIES:
         print(
             f"WARNING: species={species!r} is not natively supported ({list(SPECIES)})."
         )
 
-    # === reference version: canonicalize, then keep only records of that build ===
+    # === reference version: canonicalize, then filter ===
     raw_refver = config.get("reference_version")
     if not raw_refver:
         raise ValueError(
@@ -426,7 +435,6 @@ def parse_workflow(config):
             f"WARNING: reference_version={raw_refver!r} is not natively supported "
             f"({REFVERS})."
         )
-    # matching records grouped by the spelling they use, so an alias is visible
     matched = {}
     for rec in records:
         if canonical_refver(rec["reference_version"]) != reference_version:
@@ -699,7 +707,8 @@ def parse_workflow(config):
         "remote_stream": remote_stream,
         "reference_version": reference_version,
         "species": species,
-        "chrom_contigs": chrom_contigs,
+        "chroms": chroms,
+        "input_nochr": input_nochr,
         "assay_types": assay_types,
         "modalities": list(dict.fromkeys(r["modality"] for r in records)),
         "msr_list": msr_list,

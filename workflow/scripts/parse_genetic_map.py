@@ -31,7 +31,7 @@ logging.basicConfig(
 gmap_files = list(snakemake_handle.input["gmap_files"])
 
 # parameters
-chrnames = list(snakemake_handle.params["chrnames"])
+chroms = list(snakemake_handle.params["chroms"])
 phaser = snakemake_handle.params["phaser"]
 species = snakemake_handle.params["species"]
 
@@ -66,13 +66,10 @@ if phaser == "eagle":
     )
 
     # Strip any 'chr' prefix, filter to requested chroms (as bare strings), re-add.
-    wanted = {str(c) for c in chrnames}
+    wanted = {str(c) for c in chroms}
     genetic_map["#CHR"] = (
         genetic_map["#CHR"].astype(str).str.replace(r"^chr", "", regex=True)
     )
-    # A map that already labels every requested chromosome needs no relabeling; only
-    # then does the sex-chromosome numbering matter. Eagle maps number X/Y, so map
-    # those numbers to letters for this species (labels are strings: index by str).
     labels = set(genetic_map["#CHR"])
     if not wanted <= labels:
         sexmap = SPECIES2SEXCHROM.get(species)
@@ -111,7 +108,7 @@ if phaser == "eagle":
 
 if phaser == "shapeit":
     genetic_maps = []
-    for chrname, gmap_file in zip(chrnames, gmap_files):
+    for chrom, gmap_file in zip(chroms, gmap_files):
         genetic_map = pd.read_csv(
             gmap_file,
             sep="\t",
@@ -120,7 +117,7 @@ if phaser == "shapeit":
         assert "pos" in genetic_map.columns and "cM" in genetic_map.columns, (
             "gmap.gz file is invalid"
         )
-        genetic_map["#CHR"] = f"chr{chrname}"
+        genetic_map["#CHR"] = f"chr{chrom}"
         genetic_map["POS"] = genetic_map["pos"]
 
         genetic_maps.append(genetic_map[["#CHR", "POS", "cM"]].reset_index(drop=True))

@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through it.
 - `validate_sample_file.py --reference-version`; without it, every genome build in the file
   is validated on its own.
+- `species` config key (`human` | `mouse`, default `human`). Sex-chromosome numbering is a
+  property of the species, not of the reference version.
+- Support for references that name contigs without a `chr` prefix (Ensembl, b37). The style
+  is read from `genome_size`; region strings, `windows.3col.bed.gz`, the pybedtools
+  intervals, and the pseudobulk VCFs follow it, while everything internal stays
+  chr-prefixed.
 
 ### Changed
 - **Breaking**: `reference_version` is required on every sample-file record, and a run keeps
@@ -24,12 +30,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keys and each input is its own `files.<key>` column, replacing `SAMPLE` / `REP_ID` /
   `PATH_to_bam` / `PATH_to_barcodes` / `PATH_to_10x_ranger`. TSV sheets can now carry remote
   URLs and name single-cell files explicitly.
+- **Breaking**: `chromosomes` is validated against `genome_size` at DAG build; a chromosome
+  the genome lacks is an error, not a silent drop. Every later step takes the list as
+  validated.
+- **Breaking**: `pseudobulk_snp_statistics.tsv` is no longer written, and its `report()`
+  entry is gone from the single-cell DAG. `compute_snp_statistics` moved to
+  `script_utils/annotate_snp_utils.py` and is marked legacy.
+- The window build derives its contigs from `genome_size` instead of a hardcoded
+  `chr1..chr22 + X/Y`, so a genome with more than 22 autosomes is no longer truncated.
+- `parse_genetic_map` no longer guesses which numeric contig is X. A requested chromosome
+  still missing after relabeling is an error naming it, where it was a warning; the
+  numbering is consulted only when the map does not already label every chromosome.
+- `do_repliseq` reads the canonical reference version, so an alias such as
+  `reference_version: GRCh38` now enables Repli-seq RT correction; previously the alias was
+  unrecognized and it stayed off.
 
 ### Fixed
+- Contigs were renamed on disk for any reference without a `chr` prefix: `read_BED` and
+  `read_VCF` normalize on ingest, and several scripts wrote the rewritten name back out.
+  The prefix is now converted only where an external tool matches our output against the
+  alignment or the reference.
+- `build_window_bed` read the segment BED twice in two different naming styles, so on a
+  bare-contig genome every window was dropped as off-segment.
+- `rd_correct` (prebuilt `window_bed`, mosdepth output) and `atac_fragments_to_bb`
+  (10x fragment files) now normalize contig names on read.
+- `mappability_bed` is checked against `genome_size`; bedtools resolves both against it, so
+  a mismatch failed silently or with an opaque error.
 - A `files` entry set to `null` in a JSON sample file became the literal path `"None"` and
   failed DAG building; the key is now dropped, matching an empty TSV cell.
 - A record missing a required key raised a bare `KeyError` from
   `validate_sample_file.py`, which subsetted by build before validating.
+
+### Removed
+- `CHR_STYLE_REFVERS`, `REFVER2SEXCHROM`, `get_standard_chroms`, `TSV_REQUIRED_COLUMNS`,
+  and the TSV `PATH_to_10x_ranger` expansion.
+- A duplicate `adaptive_dot_size` in `script_utils/utils.py`; every caller already used
+  `cnplot`'s, which has the same signature.
+- Three `chrom=` rule params that no shell referenced.
 
 ## [0.1.0b1] - 2026-07-26
 

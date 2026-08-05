@@ -19,7 +19,7 @@ if run_phasing and config["phaser"] == "shapeit":
             "../envs/shapeit.yaml"
         threads: config["threads"]["phase"]
         params:
-            chrom="chr{chrname}",
+            chrom=lambda wc: raw_chrom(wc.chrname),
         shell:
             r"""
             SHAPEIT5_phase_common \
@@ -54,7 +54,6 @@ if run_phasing and config["phaser"] == "eagle":
             "../envs/eagle.yaml"
         threads: config["threads"]["phase"]
         params:
-            chrom="chr{chrname}",
             out_prefix=config["phase_dir"] + "/chr{chrname}",
         shell:
             r"""
@@ -91,7 +90,6 @@ if run_phasing and config["phaser"] == "longphase":
         resources:
             downloads=download_slots(phase_files),
         params:
-            chrom="chr{chrname}",
             min_mapq=config["params_longphase"]["min_mapq"],
             extra_params=config["params_longphase"]["extra_params"],
             out_prefix=config["phase_dir"] + "/chr{chrname}",
@@ -173,7 +171,7 @@ if run_phasing:
             "../envs/base.yaml"
         threads: 1
         params:
-            chrnames=config["chromosomes"],
+            chroms=config["chromosomes"],
             phaser=config["phaser"],
             species=species,
         script:

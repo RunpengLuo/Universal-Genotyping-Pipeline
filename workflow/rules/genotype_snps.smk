@@ -31,7 +31,6 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
         resources:
             downloads=download_slots(genotype_files),
         params:
-            chrom="chr{chrname}",
             min_mapq=config["params_bcftools"]["min_mapq"],
             min_baseq=config["params_bcftools"]["min_baseq"],
             min_dp=config["params_bcftools"]["min_dp"],
@@ -39,7 +38,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
             min_qual=config["params_bcftools"]["min_qual"],
             extra_params=config["params_bcftools"]["extra_params"],
             bam_arg=bam_stream_arg(genotype_files),
-            region_arg=lambda wc: f"-r chr{wc.chrname}" if remote_stream else "",
+            region_arg=lambda wc: f"-r {raw_chrom(wc.chrname)}" if remote_stream else "",
         shell:
             r"""
             ALN="{input.alignment}"; [ -z "$ALN" ] && ALN="{params.bam_arg}"
@@ -143,12 +142,6 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
                 config["snp_dir"] + "/chr{chrname}.vcf.gz.tbi",
                 chrname=config["chromosomes"],
             ),
-            snp_stats=report(
-                config["snp_dir"] + "/pseudobulk_snp_statistics.tsv",
-                category="QC stats",
-                subcategory="genotyping",
-                labels={"table": "pseudobulk SNP statistics"},
-            ),
         log:
             config["log_dir"]
             + f"/annotate_snps_pseudobulk/annotate_snps_pseudobulk.{_run_id}.log",
@@ -159,6 +152,8 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
             "../envs/base.yaml"
         threads: 1
         params:
+            chroms=chroms,
+            input_nochr=input_nochr,
             modalities=modalities,
             min_het_reads=config["params_annotate_snps"]["min_het_reads"],
             min_hom_dp=config["params_annotate_snps"]["min_hom_dp"],
@@ -188,7 +183,7 @@ if not run_genotyping and run_phasing:
             "../envs/bcftools.yaml"
         threads: 1
         params:
-            chrom="chr{chrname}",
+            chrom=lambda wc: raw_chrom(wc.chrname),
         shell:
             r"""
             if [ ! -f "{input.het_snp_vcf}.tbi" ] && [ ! -f "{input.het_snp_vcf}.csi" ]; then

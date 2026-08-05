@@ -23,7 +23,7 @@ os.environ["NUMEXPR_NUM_THREADS"] = str(t)
 import numpy as np
 import pandas as pd
 
-from utils import setup_logging, maybe_path, sort_df_chr
+from utils import add_chr_prefix, setup_logging, maybe_path, sort_df_chr
 from io_utils import compute_depth_statistics
 from count_reads_utils import compute_gc_rd_stats
 from rd_correct_utils import (
@@ -51,7 +51,7 @@ assay_type = str(snakemake_handle.params["assay_type"])
 dataset_ids = [str(r) for r in snakemake_handle.params["dataset_ids"]]
 sample_ids = [str(s) for s in snakemake_handle.params["sample_ids"]]
 mosdepth_dir = snakemake_handle.params["mosdepth_dir"]
-chromosomes = snakemake_handle.params["chromosomes"]
+chroms = snakemake_handle.params["chroms"]
 samplesize = int(snakemake_handle.params["samplesize"])
 routlier = float(snakemake_handle.params["routlier"])
 doutlier = float(snakemake_handle.params["doutlier"])
@@ -69,16 +69,17 @@ window_df = snakemake_handle.output["window_df"]
 run_id = getattr(snakemake_handle.params, "run_id", "")
 
 nsamples = len(dataset_ids)
-target_chroms = {f"chr{c}" for c in chromosomes}
+target_chroms = set(chroms)
 join_keys = ["#CHR", "START", "END"]
 
 logging.info(f"rd_correct: {nsamples} samples, {len(target_chroms)} chroms")
 
 logging.info("load window BED and mosdepth depth")
-win_df = pd.read_table(window_bed_file, sep="\t")
+win_df = pd.read_table(window_bed_file, sep="\t", dtype={"#CHR": str})
 assert "#CHR" in win_df.columns and "GC" in win_df.columns, (
     f"window_bed must have #CHR, START, END, GC columns; got {win_df.columns.tolist()}"
 )
+win_df["#CHR"] = add_chr_prefix(win_df["#CHR"])
 
 win_df = win_df[win_df["#CHR"].isin(target_chroms)].reset_index(drop=True)
 
@@ -86,8 +87,13 @@ mos_dfs = []
 for dataset_id in dataset_ids:
     mos_file = os.path.join(mosdepth_dir, f"{dataset_id}.regions.bed.gz")
     mos_df = pd.read_table(
-        mos_file, sep="\t", header=None, names=["#CHR", "START", "END", "DEPTH"]
+        mos_file,
+        sep="\t",
+        header=None,
+        names=["#CHR", "START", "END", "DEPTH"],
+        dtype={"#CHR": str},
     )
+    mos_df["#CHR"] = add_chr_prefix(mos_df["#CHR"])
     mos_df = mos_df[mos_df["#CHR"].isin(target_chroms)].reset_index(drop=True)
     mos_dfs.append(mos_df)
 

@@ -274,7 +274,6 @@ def test_null_files_value_is_dropped(workspace):
     base = dryrun(
         workspace, workspace["bulk_json"], "T1", "bulk_genotyping", ["bulkWGS"]
     )
-    # str(None) would make "None" a breakpoint_bedpe input, and the DAG would fail
     assert proc.returncode == 0, proc.stderr[-2000:]
     assert job_counts(proc.stdout) == job_counts(base.stdout)
 
@@ -420,7 +419,6 @@ def test_unrecognized_reference_version_still_selects(workspace):
     )
     assert proc.returncode == 0, proc.stderr[-1500:]
     assert "is not natively supported" in proc.stdout
-    # a sub-flavor must not fold into hg38, or the two FASTAs would mix
     assert "grch38-giabv3" in proc.stdout
 
 

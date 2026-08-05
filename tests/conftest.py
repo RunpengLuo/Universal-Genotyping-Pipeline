@@ -76,8 +76,6 @@ def workspace(tmp_path_factory):
     for name in REF_FILES:
         _touch(str(ref / name))
 
-    # parse_workflow resolves config chromosomes against this at DAG build, so it
-    # needs real contigs (the other reference assets stay empty stubs)
     (ref / "genome_size.txt").write_text(
         "".join(f"chr{c}\t50818468\n" for c in list(range(1, 23)) + ["X", "Y"])
     )
@@ -250,8 +248,6 @@ def workspace(tmp_path_factory):
         ],
     }
 
-    # the TSV sheets encode the same records as the JSON above, one files.<key> column
-    # per input; the DAGs must come out identical (test_json_and_tsv_agree)
     bulk_tsv = [
         "sample_id\tdataset_id\trdr_base_dataset_id\tassay_type\tsample_type"
         "\treference_version\tfiles.alignment\tfiles.alignment_index",
@@ -322,8 +318,6 @@ def dryrun(workspace, sample_file, sample_id, workflow_mode, assay_types, extra=
         f"workflow_mode={workflow_mode}",
         f"assay_types={json.dumps(assay_types)}",
         "chromosomes=[22]",
-        # chm13v2 is outside REPLISEQ_REFVERS, so do_repliseq stays off and no rule
-        # takes a URL input: the DAG builds offline. Must match the fixture records.
         "reference_version=chm13v2",
         f"reference={ref}/genome.fa",
         f"genome_size={ref}/genome_size.txt",

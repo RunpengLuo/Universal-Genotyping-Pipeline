@@ -84,7 +84,7 @@ else:
         params:
             out_prefix=config["pileup_dir"]
             + "/{assay_type}/out_mosdepth/{dataset_id}.chr{chrname}",
-            chrom="chr{chrname}",
+            chrom=lambda wc: raw_chrom(wc.chrname),
             read_quality=config["params_mosdepth"]["read_quality"],
             extra_params=config["params_mosdepth"]["extra_params"],
             bam_arg=lambda wc: bam_stream_arg(get_data[(wc.assay_type, wc.dataset_id)]),
@@ -164,7 +164,7 @@ rule rd_correct:
             for dataset_id in assay2dataset_ids[wc.assay_type]
         ],
         mosdepth_dir=lambda wc: config["pileup_dir"] + f"/{wc.assay_type}/out_mosdepth",
-        chromosomes=config["chromosomes"],
+        chroms=chroms,
         samplesize=_rdr_cfg["samplesize"],
         routlier=_rdr_cfg["routlier"],
         doutlier=_rdr_cfg["doutlier"],

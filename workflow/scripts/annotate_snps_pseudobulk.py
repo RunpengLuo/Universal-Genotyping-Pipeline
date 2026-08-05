@@ -14,7 +14,8 @@ os.environ["NUMEXPR_NUM_THREADS"] = str(t)
 import numpy as np
 import pandas as pd
 
-from io_utils import read_VCF, get_chr_sizes, compute_snp_statistics
+from io_utils import read_VCF, get_chr_sizes
+from utils import strip_chr_prefix
 
 ##################################################
 """
@@ -33,7 +34,8 @@ raw_snp_vcfs = list(snakemake_handle.input["raw_snp_vcfs"])
 genome_size = snakemake_handle.input["genome_size"]
 
 # parameters
-chroms = snakemake_handle.config["chromosomes"]
+chroms = snakemake_handle.params["chroms"]
+input_nochr = snakemake_handle.params["input_nochr"]
 filter_nz_OTH = snakemake_handle.params["filter_nz_OTH"]
 filter_hom_ALT = snakemake_handle.params["filter_hom_ALT"]
 min_het_reads = int(snakemake_handle.params["min_het_reads"])
@@ -42,7 +44,6 @@ min_vaf_thres = float(snakemake_handle.params["min_vaf_thres"])
 modalities = list(snakemake_handle.params["modalities"])
 
 # outputs
-snp_stats_out = snakemake_handle.output["snp_stats"]
 snp_vcfs = list(snakemake_handle.output["snp_vcfs"])
 
 logging.info(
@@ -84,9 +85,7 @@ for idx, modality in enumerate(modalities):
     for cnt in CNT:
         raw_snps[f"{cnt}{idx}"] = raw_snps[cnt].astype(np.int64)
 
-    raw_snps = raw_snps[
-        raw_snps["#CHROM"].astype(str).isin([f"chr{chrname}" for chrname in chroms])
-    ]
+    raw_snps = raw_snps[raw_snps["#CHROM"].astype(str).isin(chroms)]
 
     n_dup_rows = raw_snps.duplicated(subset="KEY", keep=False).sum()
     if n_dup_rows > 0:
@@ -150,16 +149,9 @@ base_snps["is_hom_ref"] = (base_snps["AD"] == 0) & (base_snps["DP"] >= min_hom_d
 
 base_snps["SAMPLE"] = base_snps.apply(get_genotype, axis=1)
 
-chrom_sizes = get_chr_sizes(genome_size)
-snp_stats = compute_snp_statistics(
-    raw_snps_list,
-    modalities,
-    base_snps,
-    chrom_sizes,
-    chroms,
-)
-snp_stats.to_csv(snp_stats_out, sep="\t", index=False)
-logging.info(f"wrote SNP statistics to {snp_stats_out}")
+chrom_sizes = {
+    f"chr{strip_chr_prefix(k)}": v for k, v in get_chr_sizes(genome_size).items()
+}
 
 keep_gts = ["0/1"]
 if not filter_hom_ALT:
@@ -208,14 +200,14 @@ cols = [
 final_snps = final_snps[cols]
 
 final_snps_chs = final_snps.groupby("#CHROM", sort=False)
-for chrname, out_snp_vcf in zip(chroms, snp_vcfs):
-    chrom = f"chr{chrname}"
+for chrom, out_snp_vcf in zip(chroms, snp_vcfs):
+    contig = strip_chr_prefix(chrom) if input_nochr else chrom
     chrom_length = chrom_sizes[chrom]
     with open(out_snp_vcf[:-3], "w") as fd:
         fd.writelines(
             [
                 "##fileformat=VCFv4.2\n",
-                f"##contig=<ID={chrom},length={chrom_length}>\n",
+                f"##contig=<ID={contig},length={chrom_length}>\n",
                 '##FORMAT=<ID=GT,Number=1,Type=String,Description="Pseudobulk genotype">\n',
                 '##INFO=<ID=DP,Number=1,Type=Integer,Description="Total Depth, REF+ALT">\n',
                 '##INFO=<ID=AD,Number=1,Type=Integer,Description="Allele Depth for ALT allele">\n',
@@ -224,9 +216,9 @@ for chrname, out_snp_vcf in zip(chroms, snp_vcfs):
         )
         fd.write("\t".join(cols) + "\n")
         if chrom in final_snps_chs.groups:
-            final_snps_chs.get_group(chrom)[cols].to_csv(
-                fd, sep="\t", index=False, header=False
-            )
+            out = final_snps_chs.get_group(chrom)[cols].copy()
+            out["#CHROM"] = contig
+            out.to_csv(fd, sep="\t", index=False, header=False)
 
     # out_snp_vcf[:-3] will be removed by bgzip.
     subprocess.run(["bgzip", "-f", out_snp_vcf[:-3]], check=True)

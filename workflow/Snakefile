@@ -50,7 +50,13 @@ if _has_config:
     remote_stream = _wf["remote_stream"]
     reference_version = _wf["reference_version"]
     species = _wf["species"]
-    chrom_contigs = _wf["chrom_contigs"]
+    chroms = _wf["chroms"]
+    input_nochr = _wf["input_nochr"]
+
+    def raw_chrom(chrname):
+        """Region string for a tool that reads the alignment."""
+        return str(chrname) if input_nochr else f"chr{chrname}"
+
     assay_types = _wf["assay_types"]
     modalities = _wf["modalities"]
     msr_list = _wf["msr_list"]

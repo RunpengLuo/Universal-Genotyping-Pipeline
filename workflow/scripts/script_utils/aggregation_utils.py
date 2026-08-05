@@ -972,6 +972,7 @@ def atac_fragments_to_bb(
             if not m.any():
                 continue
             sub = chunk.loc[m]
+            sub = sub.assign(**{"#CHR": add_chr_prefix(sub["#CHR"])})
             mid = (sub["start"].to_numpy() + sub["end"].to_numpy()) // 2
             frag = pd.DataFrame({"#CHR": sub["#CHR"].to_numpy(), "POS0": mid})
             frag = assign_pos_to_range(frag, bb_df, ref_id="bb_id", pos_col="POS0")

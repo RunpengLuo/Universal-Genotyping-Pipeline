@@ -1,9 +1,9 @@
+import gzip
 import os
 import sys
 import logging
 
 import pandas as pd
-import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../config"))
 from const import *  # noqa: F401,F403
@@ -36,6 +36,43 @@ def maybe_path(x):
     return x
 
 
+def strip_chr_prefix(name):
+    """Drop a leading ``chr`` from a chromosome name."""
+    name = str(name)
+    return name[3:] if name.lower().startswith("chr") else name
+
+
+def add_chr_prefix(series):
+    """Prepend ``chr`` to a chromosome Series that lacks it."""
+    series = series.astype(str)
+    if len(series) and series.iloc[0].lower().startswith("chr"):
+        return series
+    return "chr" + series
+
+
+def require_matching_chr_style(bed_file, input_nochr, key):
+    """Raise unless a BED names contigs the way genome_size does."""
+    opener = gzip.open if str(bed_file).endswith(".gz") else open
+    with opener(bed_file, "rt") as fh:
+        first = next(
+            (
+                ln
+                for ln in fh
+                if ln.strip() and not ln.startswith(("#", "track", "browser"))
+            ),
+            "",
+        )
+    if not first:
+        return
+    bed_nochr = not first.split()[0].lower().startswith("chr")
+    if bed_nochr != input_nochr:
+        raise ValueError(
+            f"{key} names contigs {'without' if bed_nochr else 'with'} a chr prefix "
+            f"({first.split()[0]!r}), but genome_size uses the other style; "
+            "bedtools resolves both against genome_size, so they must agree"
+        )
+
+
 def chrom_sort_key(chrom):
     """Genomic sort key: autosomes numerically (any count), then X, Y, M, then unknowns.
 
@@ -52,10 +89,10 @@ def chrom_sort_key(chrom):
     return (2, 0, core)
 
 
-def sort_chroms(chromosomes: list):
+def sort_chroms(chroms: list):
     """Sort chromosome names in genomic order. See :func:`chrom_sort_key`."""
-    assert len(chromosomes) != 0
-    return sorted((str(c) for c in chromosomes), key=chrom_sort_key)
+    assert len(chroms) != 0
+    return sorted((str(c) for c in chroms), key=chrom_sort_key)
 
 
 def is_canonical_chrom(chrom):
@@ -64,17 +101,6 @@ def is_canonical_chrom(chrom):
     if core.lower().startswith("chr"):
         core = core[3:]
     return core.isdigit() or core.upper() in ("X", "Y")
-
-
-def adaptive_dot_size(n_points, s_base=4, s_min=0.5, s_max=10, n_ref=5000):
-    """Scale dot size inversely with point count.
-
-    At *n_ref* points the size equals *s_base*; fewer points -> bigger dots,
-    more points -> smaller dots, clamped to [s_min, s_max].
-    """
-    if n_points <= 0:
-        return s_base
-    return float(np.clip(s_base * n_ref / n_points, s_min, s_max))
 
 
 def sort_df_chr(df: pd.DataFrame, ch="#CHR", pos="POS"):
