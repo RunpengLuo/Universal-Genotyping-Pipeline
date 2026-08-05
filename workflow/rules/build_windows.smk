@@ -80,7 +80,7 @@ if workflow_mode == "bulk_genotyping":
             _repli_cache = config["aux_dir"] + "/repliseq"
             _repli_names = [f[: -len(".bigWig")] for f in REPLISEQ_BIGWIG_FILES]
             # Repli-seq bigWigs are hg19; lift to hg38 only when the run is hg38.
-            _repli_target = config["reference_version"]
+            _repli_target = reference_version
             _repli_lift = _repli_target != "hg19"
 
             rule repliseq_bigwig_to_bedgraph:
@@ -172,7 +172,7 @@ if workflow_mode == "bulk_genotyping":
             conda:
                 "../envs/base.yaml"
             params:
-                reference_version=config["reference_version"],
+                reference_version=reference_version,
                 chromosomes=config["chromosomes"],
                 window_size=window_size,
             script:

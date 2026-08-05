@@ -51,7 +51,9 @@ from const import (
     SINGLE_CELL_TARGETS,
     TSV_REQUIRED_COLUMNS,
     WORKFLOW_MODES,
+    canonical_refver,
     get_genetic_map_path,
+    is_known_refver,
     get_phasing_panel_path,
     is_url,
 )
@@ -180,7 +182,62 @@ def parse_sample_file_tsv(path):
     return records
 
 
-def validate_records(records, path, workflow_mode, sample_id, configured_assay_types):
+def select_records(records, sample_id, configured_assay_types, reference_version):
+    """This run's records: one sample_id, the configured assays, one genome build.
+
+    The single definition of "selected", used by both ``validate_records`` (whose
+    replicate rules must see exactly the run's records) and ``parse_workflow``.
+
+    Args:
+        records: Records from parse_sample_file_{json,tsv}.
+        sample_id: The sample_id being processed.
+        configured_assay_types: Assay types enabled for this run.
+        reference_version: Canonical build to keep; records of any other are dropped.
+
+    Returns:
+        The matching records, in file order.
+    """
+    return [
+        r
+        for r in records
+        if r["sample_id"] == sample_id
+        and r["assay_type"] in configured_assay_types
+        and canonical_refver(r["reference_version"]) == reference_version
+    ]
+
+
+def _anchor(path, idx, rec):
+    """Error prefix naming the offending record."""
+    return (
+        f"{path}: record {idx} (sample_id={rec.get('sample_id')!r}, "
+        f"dataset_id={rec.get('dataset_id')!r}, assay_type={rec.get('assay_type')!r})"
+    )
+
+
+def require_record_keys(records, path):
+    """Every record carries every REQUIRED_RECORD_KEYS entry.
+
+    Runs before anything reads a record by key, so a malformed sample file raises a
+    ValueError naming the record rather than a bare KeyError from a later subset.
+
+    Args:
+        records: Records from parse_sample_file_{json,tsv}.
+        path: Sample file path, for error messages.
+
+    Raises:
+        ValueError: A record is missing a required key or leaves it empty.
+    """
+    for idx, rec in enumerate(records):
+        missing = [k for k in REQUIRED_RECORD_KEYS if rec.get(k) in (None, "")]
+        if missing:
+            raise ValueError(
+                f"{_anchor(path, idx, rec)}: missing required key(s) {missing}"
+            )
+
+
+def validate_records(
+    records, path, workflow_mode, sample_id, configured_assay_types, reference_version
+):
     """Validate records against the spec, then the subset selected for this run.
 
     Mutates each record's ``files`` map in place to keep only the keys the assay
@@ -193,28 +250,17 @@ def validate_records(records, path, workflow_mode, sample_id, configured_assay_t
         workflow_mode: bulk_genotyping | single_cell_genotyping | copytyping_preprocess.
         sample_id: The sample_id being processed.
         configured_assay_types: Assay types enabled for this run.
+        reference_version: Canonical build to keep; records of any other are dropped.
 
     Raises:
         ValueError: Any record violates the spec, or the selected records violate a
             mode/replicate rule.
     """
-
-    def _anchor(idx, rec):
-        """Error prefix naming the offending record."""
-        return (
-            f"{path}: record {idx} (sample_id={rec.get('sample_id')!r}, "
-            f"dataset_id={rec.get('dataset_id')!r}, assay_type={rec.get('assay_type')!r})"
-        )
-
+    require_record_keys(records, path)
     single_cell = workflow_mode in ("single_cell_genotyping", "copytyping_preprocess")
 
     for idx, rec in enumerate(records):
-        at = _anchor(idx, rec)
-
-        req_missing = [k for k in REQUIRED_RECORD_KEYS if rec.get(k) in (None, "")]
-        if req_missing:
-            raise ValueError(f"{at}: missing required key(s) {req_missing}")
-
+        at = _anchor(path, idx, rec)
         assay_type = rec["assay_type"]
         if assay_type not in ALLOWED_ASSAY_TYPES:
             raise ValueError(
@@ -249,15 +295,21 @@ def validate_records(records, path, workflow_mode, sample_id, configured_assay_t
                     f"{at}: files.{key} is required for {assay_type}; got {sorted(files)}"
                 )
 
-    selected = [
-        r
-        for r in records
-        if r["sample_id"] == sample_id and r["assay_type"] in configured_assay_types
-    ]
+    selected = select_records(
+        records, sample_id, configured_assay_types, reference_version
+    )
     if not selected:
+        present = {}
+        for rec in records:
+            if rec["sample_id"] == sample_id:
+                refver = canonical_refver(rec["reference_version"])
+                present[refver] = present.get(refver, 0) + 1
+        found = ", ".join(f"{rv} ({n})" for rv, n in sorted(present.items()))
         raise ValueError(
             f"{path}: no records for sample_id={sample_id!r} with assay_type in "
-            f"{sorted(configured_assay_types)}"
+            f"{sorted(configured_assay_types)} and "
+            f"reference_version={reference_version!r}; sample_id={sample_id!r} has: "
+            f"{found or 'no records'}"
         )
 
     seen = {}
@@ -265,7 +317,7 @@ def validate_records(records, path, workflow_mode, sample_id, configured_assay_t
         key = (rec["dataset_id"], rec["assay_type"])
         if key in seen:
             raise ValueError(
-                f"{_anchor(idx, rec)}: duplicate (dataset_id, assay_type) {key}"
+                f"{_anchor(path, idx, rec)}: duplicate (dataset_id, assay_type) {key}"
             )
         seen[key] = idx
 
@@ -291,7 +343,7 @@ def validate_records(records, path, workflow_mode, sample_id, configured_assay_t
         base = rec.get("rdr_base_dataset_id")
         if not base:
             continue
-        at = _anchor(idx, rec)
+        at = _anchor(path, idx, rec)
         if rec["sample_type"] != "tumor":
             raise ValueError(f"{at}: rdr_base_dataset_id is set on a non-tumor record")
         if base == rec["dataset_id"]:
@@ -379,14 +431,44 @@ def parse_workflow(config):
     else:
         raise ValueError(f"{path}: sample file must be .json or .tsv, got {ext!r}")
 
+    # every record is complete before anything reads one by key
+    require_record_keys(records, path)
+
+    # === reference version: canonicalize, then keep only records of that build ===
+    raw_refver = config.get("reference_version")
+    if not raw_refver:
+        raise ValueError(
+            f"reference_version is required in the config; one of {REFVERS} "
+            "(aliases are accepted, see docs/sample_sheet.md)"
+        )
+    reference_version = canonical_refver(raw_refver)
+    if not is_known_refver(raw_refver):
+        print(
+            f"WARNING: reference_version={raw_refver!r} is not natively supported "
+            f"({REFVERS}); using it verbatim to select records. Repli-seq RT "
+            "correction is unavailable for it."
+        )
+    # matching records grouped by the spelling they use, so an alias is visible
+    matched = {}
+    for rec in records:
+        if canonical_refver(rec["reference_version"]) != reference_version:
+            continue
+        spelling = rec["reference_version"]
+        n, ids = matched.get(spelling, (0, set()))
+        matched[spelling] = (n + 1, ids | {rec["sample_id"]})
+    print(f"reference_version: config={raw_refver!r} -> {reference_version}")
+    for spelling, (n_rec, ids) in sorted(matched.items()):
+        print(f"  {spelling:<20} {n_rec:5d} record(s) {len(ids):4d} sample_id(s)")
+
     # === validate against the spec + selection rules (mutates files in place) ===
-    validate_records(records, path, workflow_mode, sample_id, configured)
+    validate_records(
+        records, path, workflow_mode, sample_id, configured, reference_version
+    )
 
     # === select this run's records + add modality ===
     records = [
         {**rec, "modality": ASSAY_TYPE2MODALITY[rec["assay_type"]]}
-        for rec in records
-        if rec["sample_id"] == sample_id and rec["assay_type"] in configured
+        for rec in select_records(records, sample_id, configured, reference_version)
     ]
 
     # === RDR normalization policy: drop/keep each bulk tumor's rdr_base ===
@@ -442,14 +524,6 @@ def parse_workflow(config):
             "bb_file is required for copytyping_preprocess"
         )
 
-    # === reference_version sanity ===
-    refvers = config.get("reference_version")
-    if refvers not in REFVERS:
-        print(
-            f"WARNING: reference_version={refvers!r} is not natively supported: "
-            f"{REFVERS}."
-        )
-
     # === gtf_file is a required reference input (gene/exon annotation) ===
     if not config.get("gtf_file"):
         raise ValueError(
@@ -470,7 +544,7 @@ def parse_workflow(config):
     )
     has_breakpoints = len(bedpe_files) > 0
     is_bulk = workflow_mode == "bulk_genotyping"
-    do_repliseq = config.get("reference_version") in REPLISEQ_REFVERS
+    do_repliseq = reference_version in REPLISEQ_REFVERS
     pp = config.get("params_build_windows") or {}
     window_size = int(pp.get("window_size") or 1000)
 
@@ -645,6 +719,7 @@ def parse_workflow(config):
         "workflow_mode": workflow_mode,
         "sample_id": sample_id,
         "remote_stream": remote_stream,
+        "reference_version": reference_version,
         "assay_types": assay_types,
         "modalities": list(dict.fromkeys(r["modality"] for r in records)),
         "msr_list": msr_list,

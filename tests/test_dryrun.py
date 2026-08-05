@@ -220,9 +220,10 @@ def test_prebuilt_windows_skip_repliseq(workspace):
     are gated inside `if not use_prebuilt_windows`, so nothing queries a remote host.
     """
     ref = workspace["ref"]
+    sheet = _sheet_with_refvers(workspace, "repliseq.json", ["hg38", "hg38"])
     proc = dryrun(
         workspace,
-        workspace["bulk_json"],
+        sheet,
         "T1",
         "bulk_genotyping",
         ["bulkWGS"],
@@ -273,6 +274,74 @@ def test_record_without_reference_version_fails(workspace):
     assert proc.returncode != 0
     out = proc.stdout + proc.stderr
     assert "missing required key(s)" in out and "reference_version" in out
+
+
+def _sheet_with_refvers(workspace, name, refvers):
+    """Copy bulk_json, setting each record's reference_version from *refvers*."""
+    sheet = os.path.join(workspace["root"], name)
+    doc = json.loads(open(workspace["bulk_json"]).read())
+    for rec, refver in zip(doc["samples"], refvers):
+        rec["reference_version"] = refver
+    with open(sheet, "w") as fh:
+        json.dump(doc, fh)
+    return sheet
+
+
+def test_config_reference_version_required(workspace):
+    """An unset config reference_version is an error, not a silent no-filter."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_json"],
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=["reference_version="],
+    )
+    assert proc.returncode != 0
+    assert "reference_version is required" in proc.stdout + proc.stderr
+
+
+def test_record_reference_version_alias_matches(workspace):
+    """Config and records may spell the build differently; both are canonicalized."""
+    sheet = _sheet_with_refvers(workspace, "alias.json", ["T2T-CHM13v2.0", "chm13v2.0"])
+    proc = dryrun(
+        workspace,
+        sheet,
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=["reference_version=CHM13"],
+    )
+    assert proc.returncode == 0, proc.stderr[-1500:]
+
+
+def test_records_of_another_build_are_dropped(workspace):
+    """A record on a different build is not selected, and the error names the builds."""
+    sheet = _sheet_with_refvers(workspace, "otherbuild.json", ["hg19", "hg19"])
+    proc = dryrun(workspace, sheet, "T1", "bulk_genotyping", ["bulkWGS"])
+    assert proc.returncode != 0
+    out = proc.stdout + proc.stderr
+    assert "reference_version='chm13v2'" in out
+    assert "hg19 (2)" in out
+
+
+def test_unrecognized_reference_version_still_selects(workspace):
+    """An unsupported build warns but still runs, so long as records match it."""
+    sheet = _sheet_with_refvers(
+        workspace, "giabv3.json", ["GRCh38-GIABv3", "GRCh38-GIABv3"]
+    )
+    proc = dryrun(
+        workspace,
+        sheet,
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=["reference_version=GRCh38-GIABv3"],
+    )
+    assert proc.returncode == 0, proc.stderr[-1500:]
+    assert "is not natively supported" in proc.stdout
+    # a sub-flavor must not fold into hg38, or the two FASTAs would mix
+    assert "grch38-giabv3" in proc.stdout
 
 
 def test_unknown_sample_id_fails(workspace):

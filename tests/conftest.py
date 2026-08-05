@@ -106,7 +106,7 @@ def workspace(tmp_path_factory):
                 "dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "normal",
-                "reference_version": "hg38",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(ref / "normal.bam"),
                     "alignment_index": str(ref / "normal.bam.bai"),
@@ -118,7 +118,7 @@ def workspace(tmp_path_factory):
                 "rdr_base_dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "tumor",
-                "reference_version": "hg38",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(ref / "tumor.bam"),
                     "alignment_index": str(ref / "tumor.bam.bai"),
@@ -135,7 +135,7 @@ def workspace(tmp_path_factory):
                 "dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "normal",
-                "reference_version": "hg38",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(ref / "normal.bam"),
                     "alignment_index": str(ref / "normal.bam.bai"),
@@ -146,7 +146,7 @@ def workspace(tmp_path_factory):
                 "dataset_id": "D1",
                 "assay_type": "bulkWGS",
                 "sample_type": "tumor",
-                "reference_version": "hg38",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(ref / "tumor.bam"),
                     "alignment_index": str(ref / "tumor.bam.bai"),
@@ -164,7 +164,7 @@ def workspace(tmp_path_factory):
                 "dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "normal",
-                "reference_version": "hg38",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(ref / "normal.bam"),
                     "alignment_index": str(ref / "normal.bam.bai"),
@@ -176,7 +176,7 @@ def workspace(tmp_path_factory):
                 "rdr_base_dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "tumor",
-                "reference_version": "hg38",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(ref / "tumor.bam"),
                     "alignment_index": str(ref / "tumor.bam.bai"),
@@ -187,7 +187,7 @@ def workspace(tmp_path_factory):
                 "dataset_id": "E1",
                 "assay_type": "bulkWES",
                 "sample_type": "tumor",
-                "reference_version": "hg38",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(ref / "tumor.bam"),
                     "alignment_index": str(ref / "tumor.bam.bai"),
@@ -203,7 +203,7 @@ def workspace(tmp_path_factory):
                 "dataset_id": "U1",
                 "assay_type": "scRNA",
                 "sample_type": "tumor",
-                "reference_version": "hg38",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(outs / "gex_possorted_bam.bam"),
                     "alignment_index": str(outs / "gex_possorted_bam.bam.bai"),
@@ -216,7 +216,7 @@ def workspace(tmp_path_factory):
                 "dataset_id": "U1",
                 "assay_type": "scATAC",
                 "sample_type": "tumor",
-                "reference_version": "hg38",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(outs / "atac_possorted_bam.bam"),
                     "alignment_index": str(outs / "atac_possorted_bam.bam.bai"),
@@ -229,7 +229,7 @@ def workspace(tmp_path_factory):
                 "dataset_id": "W1",
                 "assay_type": "VISIUM",
                 "sample_type": "tumor",
-                "reference_version": "hg38",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(outs / "possorted_genome_bam.bam"),
                     "alignment_index": str(outs / "possorted_genome_bam.bam.bai"),
@@ -247,14 +247,14 @@ def workspace(tmp_path_factory):
     # legacy TSV of the same datasets; single-cell files come from PATH_to_10x_ranger
     bulk_tsv = [
         "SAMPLE\tREP_ID\tRDR_BASE_REP_ID\tassay_type\tsample_type\treference_version\tPATH_to_bam",
-        f"T1\tN1\t\tbulkWGS\tnormal\thg38\t{ref / 'normal.bam'}",
-        f"T1\tD1\tN1\tbulkWGS\ttumor\thg38\t{ref / 'tumor.bam'}",
+        f"T1\tN1\t\tbulkWGS\tnormal\tchm13v2\t{ref / 'normal.bam'}",
+        f"T1\tD1\tN1\tbulkWGS\ttumor\tchm13v2\t{ref / 'tumor.bam'}",
     ]
     sc_tsv = [
         "SAMPLE\tREP_ID\tassay_type\tsample_type\treference_version\tPATH_to_bam\tPATH_to_barcodes\tPATH_to_10x_ranger",
-        f"S1\tU1\tscRNA\ttumor\thg38\t{outs / 'gex_possorted_bam.bam'}\t{barcodes}\t{outs}",
-        f"S1\tU1\tscATAC\ttumor\thg38\t{outs / 'atac_possorted_bam.bam'}\t{barcodes}\t{outs}",
-        f"V1\tW1\tVISIUM\ttumor\thg38\t{outs / 'possorted_genome_bam.bam'}\t{barcodes}\t{outs}",
+        f"S1\tU1\tscRNA\ttumor\tchm13v2\t{outs / 'gex_possorted_bam.bam'}\t{barcodes}\t{outs}",
+        f"S1\tU1\tscATAC\ttumor\tchm13v2\t{outs / 'atac_possorted_bam.bam'}\t{barcodes}\t{outs}",
+        f"V1\tW1\tVISIUM\ttumor\tchm13v2\t{outs / 'possorted_genome_bam.bam'}\t{barcodes}\t{outs}",
     ]
 
     paths = {}
@@ -301,6 +301,9 @@ def dryrun(workspace, sample_file, sample_id, workflow_mode, assay_types, extra=
         f"workflow_mode={workflow_mode}",
         f"assay_types={json.dumps(assay_types)}",
         "chromosomes=[22]",
+        # chm13v2 is outside REPLISEQ_REFVERS, so do_repliseq stays off and no rule
+        # takes a URL input: the DAG builds offline. Must match the fixture records.
+        "reference_version=chm13v2",
         f"reference={ref}/genome.fa",
         f"genome_size={ref}/genome_size.txt",
         f"region_bed={ref}/region.bed",

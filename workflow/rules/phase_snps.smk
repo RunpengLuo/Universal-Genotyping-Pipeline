@@ -175,6 +175,6 @@ if run_phasing:
         params:
             chrnames=config["chromosomes"],
             phaser=config["phaser"],
-            reference_version=config["reference_version"],
+            reference_version=reference_version,
         script:
             "../scripts/parse_genetic_map.py"

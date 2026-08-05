@@ -60,7 +60,7 @@ def _remote_sheet(path, alignment, index):
                 "dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "normal",
-                "reference_version": "hg38",
+                "reference_version": "chm13v2",
                 "files": {"alignment": alignment, "alignment_index": index},
             }
         ],
@@ -95,7 +95,7 @@ def test_local_and_remote_mix(workspace, http_server):
                 "dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "normal",
-                "reference_version": "hg38",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": f"{http_server}/remote.bam",
                     "alignment_index": f"{http_server}/remote.bam.bai",
@@ -107,7 +107,7 @@ def test_local_and_remote_mix(workspace, http_server):
                 "rdr_base_dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "tumor",
-                "reference_version": "hg38",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": f"{ref}/tumor.bam",
                     "alignment_index": f"{ref}/tumor.bam.bai",

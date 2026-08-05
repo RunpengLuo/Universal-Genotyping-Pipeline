@@ -5,8 +5,10 @@ Runpeng Luo (2026-07-12)
 
 Runs the same parser and the same checks the Snakefile runs at DAG build, so a
 malformed sample file is caught in a second rather than mid-run. Every sample_id
-is validated in each workflow mode its assay types belong to, unless --sample-id
-or --workflow-mode narrows it. Without --check-files, only the schema is checked.
+is validated in each workflow mode its assay types belong to and in each genome
+build it holds records for, since one run is one build; --sample-id,
+--workflow-mode, and --reference-version narrow that. Without --check-files, only
+the schema is checked.
 
 --check-files resolves every input a rule would read: a local path is stat'ed, a
 remote URL gets a 2-byte ranged GET (the same request Snakemake's HTTP storage
@@ -27,6 +29,7 @@ Usage:
       sample_file       # .json sample file, or a legacy .tsv sheet
       --sample-id       # only this sample_id (default: every one in the file)
       --workflow-mode   # only this mode (default: every mode the assays allow)
+      --reference-version # keep only records of this build (default: every build)
       --check-files     # resolve every path: stat local files, range-GET remote URLs
       --skip-remote     # with --check-files, do not touch the network
       --jobs            # concurrent URL checks (default 8)
@@ -52,10 +55,11 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(REPO, "config"))
 sys.path.insert(0, os.path.join(REPO, "workflow", "scripts"))
 
-from const import BULK_ASSAYS, NONBULK_ASSAYS, is_url  # noqa: E402
+from const import BULK_ASSAYS, NONBULK_ASSAYS, canonical_refver, is_url  # noqa: E402
 from parse_workflow_args import (  # noqa: E402
     parse_sample_file_json,
     parse_sample_file_tsv,
+    require_record_keys,
     validate_records,
 )
 
@@ -128,6 +132,7 @@ def main():
     ap.add_argument("sample_file")
     ap.add_argument("--sample-id", default=None)
     ap.add_argument("--workflow-mode", default=None, choices=sorted(MODE_ASSAYS))
+    ap.add_argument("--reference-version", default=None)
     ap.add_argument("--check-files", action="store_true")
     ap.add_argument("--skip-remote", action="store_true")
     ap.add_argument("--jobs", type=int, default=8)
@@ -144,6 +149,7 @@ def main():
             raise ValueError(
                 f"{args.sample_file}: sample file must be .json or .tsv, got {ext!r}"
             )
+        require_record_keys(records, args.sample_file)
     except (ValueError, OSError) as e:
         print(f"FAIL parse: {e}")
         return 1
@@ -153,6 +159,12 @@ def main():
     print(f"{args.sample_file}")
     print(f"  {len(records)} records, {len(sample_ids)} sample_id(s)")
     print(f"  assays: {dict(assays)}")
+
+    # a run is one build, so validate each build in the file on its own
+    refvers = sorted({canonical_refver(r["reference_version"]) for r in records})
+    if args.reference_version:
+        refvers = [canonical_refver(args.reference_version)]
+    print(f"  reference_version: {refvers}")
 
     if args.sample_id:
         if args.sample_id not in sample_ids:
@@ -164,22 +176,26 @@ def main():
     ok = failed = 0
     for sample_id in sample_ids:
         for mode in modes:
-            present = sorted(
-                {
-                    r["assay_type"]
-                    for r in records
-                    if r["sample_id"] == sample_id
-                    and r["assay_type"] in MODE_ASSAYS[mode]
-                }
-            )
-            if not present:
-                continue
-            try:
-                validate_records(records, args.sample_file, mode, sample_id, present)
-                ok += 1
-            except ValueError as e:
-                failed += 1
-                print(f"  FAIL {sample_id} [{mode}]: {e}")
+            for refver in refvers:
+                present = sorted(
+                    {
+                        r["assay_type"]
+                        for r in records
+                        if r["sample_id"] == sample_id
+                        and r["assay_type"] in MODE_ASSAYS[mode]
+                        and canonical_refver(r["reference_version"]) == refver
+                    }
+                )
+                if not present:
+                    continue
+                try:
+                    validate_records(
+                        records, args.sample_file, mode, sample_id, present, refver
+                    )
+                    ok += 1
+                except ValueError as e:
+                    failed += 1
+                    print(f"  FAIL {sample_id} [{mode}, {refver}]: {e}")
 
     print(f"\nvalidated: {ok} (sample_id, mode) combo(s) OK, {failed} failed")
 

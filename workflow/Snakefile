@@ -48,6 +48,7 @@ if _has_config:
     workflow_mode = _wf["workflow_mode"]
     sample_id = _wf["sample_id"]
     remote_stream = _wf["remote_stream"]
+    reference_version = _wf["reference_version"]
     assay_types = _wf["assay_types"]
     modalities = _wf["modalities"]
     msr_list = _wf["msr_list"]
