@@ -15,7 +15,7 @@ Dependencies:
 
 Inputs
   config: the Snakemake config dict (keys: docs/reference.md)
-  sample file: JSON, or a legacy TSV sheet (docs/sample_sheet.md)
+  sample file: JSON or TSV encoding (docs/sample_sheet.md)
 Outputs:
   parse_workflow -> dict of workflow globals (keys listed in its docstring)
 Notes/References:
@@ -35,21 +35,19 @@ from const import (
     BULK_ASSAYS,
     BULK_TARGETS,
     COPYTYPING_TARGETS,
+    FILES_COLUMN_PREFIX,
     LONGREAD_ASSAYS,
     LONGREAD_PHASER,
     NONBULK_ASSAYS,
     OPTIONAL_FILES,
     PANEL_PHASER,
     REPLISEQ_REFVERS,
-    RANGER_LAYOUT,
-    RANGER_SPATIAL_DIR,
     RDR_NORMALIZATIONS,
     REFVERS,
     REQUIRED_FILES,
     REQUIRED_RECORD_KEYS,
     SCALAR_RECORD_KEYS,
     SINGLE_CELL_TARGETS,
-    TSV_REQUIRED_COLUMNS,
     WORKFLOW_MODES,
     canonical_refver,
     get_genetic_map_path,
@@ -94,18 +92,17 @@ def parse_sample_file_json(path):
                 norm[key] = str(norm[key])
         files = norm.get("files")
         if isinstance(files, dict):
-            norm["files"] = {k: str(v) for k, v in files.items()}
+            norm["files"] = {k: str(v) for k, v in files.items() if v is not None}
         out.append(norm)
     return out
 
 
 def parse_sample_file_tsv(path):
-    """LEGACY: read a TSV sample sheet and return records in the JSON schema.
+    """Read a TSV sample sheet and return records in the JSON schema.
 
-    Columns and their limits: docs/sample_sheet.md, "Legacy TSV". Single-cell files
-    are derived from a local PATH_to_10x_ranger directory via the nested
-    ``expand_ranger_dir`` (alternate Ranger spellings, const.py RANGER_*, probed on
-    disk; keys already named win).
+    The TSV is a flat encoding of the same schema, not a reduced one: columns are
+    the record keys, and each input is its own ``files.<key>`` column. An empty cell
+    omits the key. Spec: docs/sample_sheet.md, "TSV".
 
     Args:
         path: Path to the TSV sample sheet.
@@ -114,70 +111,35 @@ def parse_sample_file_tsv(path):
         List of record dicts in the same schema as parse_sample_file_json.
 
     Raises:
-        ValueError: A required column is missing, or a PATH_to_10x_ranger is a URL.
+        ValueError: The file has no rows, or a required column is missing.
     """
-
-    def expand_ranger_dir(assay_type, ranger_dir, files):
-        if is_url(ranger_dir):
-            raise ValueError(
-                f"PATH_to_10x_ranger must be a local directory, got a URL: {ranger_dir}. "
-                "Name each file explicitly in a JSON sample file to use remote inputs."
-            )
-
-        def _probe(names, in_spatial):
-            prefix = RANGER_SPATIAL_DIR if in_spatial else ""
-            paths = [os.path.join(ranger_dir, prefix, name) for name in names]
-            return next((p for p in paths if os.path.exists(p)), paths[0])
-
-        # keys the assay consumes, minus those the TSV names or derives itself
-        derived = {
-            key: _probe(*RANGER_LAYOUT[key])
-            for key in REQUIRED_FILES[assay_type] - ALIGNMENT_FILES - {"barcodes"}
-        }
-        return {**derived, **files}
-
-    def _get(row, col):
-        val = (row.get(col) or "").strip()
-        return val or None
-
     with open(path, newline="") as fh:
         rows = list(csv.DictReader(fh, delimiter="\t"))
     if not rows:
         raise ValueError(f"{path}: no rows")
-    missing = [c for c in TSV_REQUIRED_COLUMNS if c not in rows[0]]
+
+    required_columns = [k for k in REQUIRED_RECORD_KEYS if k != "files"]
+    missing = [c for c in required_columns if c not in rows[0]]
     if missing:
         raise ValueError(f"{path}: missing required column(s) {missing}")
+    if not any(c.startswith(FILES_COLUMN_PREFIX) for c in rows[0]):
+        raise ValueError(
+            f"{path}: no {FILES_COLUMN_PREFIX}* column; every assay needs at least "
+            f"{FILES_COLUMN_PREFIX}alignment and {FILES_COLUMN_PREFIX}alignment_index"
+        )
 
     records = []
     for row in rows:
-        assay_type = row["assay_type"]
-        alignment = row["PATH_to_bam"]
-        files = {
-            "alignment": alignment,
-            "alignment_index": alignment
-            + (".crai" if alignment.endswith(".cram") else ".bai"),
-        }
-        barcodes = _get(row, "PATH_to_barcodes")
-        if barcodes:
-            files["barcodes"] = barcodes
-        ranger_dir = _get(row, "PATH_to_10x_ranger")
-        if ranger_dir and assay_type in NONBULK_ASSAYS:
-            files = expand_ranger_dir(assay_type, ranger_dir, files)
-
-        rec = {
-            "sample_id": row["SAMPLE"],
-            "dataset_id": row["REP_ID"],
-            "assay_type": assay_type,
-            "sample_type": row["sample_type"],
-            "reference_version": _get(row, "reference_version"),
-            "files": files,
-        }
-        base = _get(row, "RDR_BASE_REP_ID")
-        if base:
-            rec["rdr_base_dataset_id"] = base
-        passage = _get(row, "passage")
-        if passage:
-            rec["passage_id"] = passage
+        rec, files = {}, {}
+        for col, val in row.items():
+            val = (val or "").strip()
+            if not val or col is None:
+                continue
+            if col.startswith(FILES_COLUMN_PREFIX):
+                files[col[len(FILES_COLUMN_PREFIX) :]] = val
+            else:
+                rec[col] = val
+        rec["files"] = files
         records.append(rec)
     return records
 
@@ -422,11 +384,6 @@ def parse_workflow(config):
     if ext == ".json":
         records = parse_sample_file_json(path)
     elif ext in (".tsv", ".txt"):
-        print(
-            f"NOTE: {path} is a LEGACY TSV sheet; single-cell files are derived from "
-            "PATH_to_10x_ranger and must be local. See docs/sample_sheet.md.",
-            file=sys.stderr,
-        )
         records = parse_sample_file_tsv(path)
     else:
         raise ValueError(f"{path}: sample file must be .json or .tsv, got {ext!r}")

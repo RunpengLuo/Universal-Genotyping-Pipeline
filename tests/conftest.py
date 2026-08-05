@@ -4,7 +4,7 @@ Runpeng Luo (2026-07-12)
 
 Dry-run tests only build the DAG, so every reference asset and input file can be
 an empty stub; nothing is read. Sample files are written in both formats from one
-description, so the JSON and legacy TSV paths are compared on identical data.
+description, so the JSON and TSV paths are compared on identical data.
 
 Dependencies:
   pytest; snakemake on PATH.
@@ -244,17 +244,32 @@ def workspace(tmp_path_factory):
         ],
     }
 
-    # legacy TSV of the same datasets; single-cell files come from PATH_to_10x_ranger
+    # the TSV sheets encode the same records as the JSON above, one files.<key> column
+    # per input; the DAGs must come out identical (test_json_and_tsv_agree)
     bulk_tsv = [
-        "SAMPLE\tREP_ID\tRDR_BASE_REP_ID\tassay_type\tsample_type\treference_version\tPATH_to_bam",
-        f"T1\tN1\t\tbulkWGS\tnormal\tchm13v2\t{ref / 'normal.bam'}",
-        f"T1\tD1\tN1\tbulkWGS\ttumor\tchm13v2\t{ref / 'tumor.bam'}",
+        "sample_id\tdataset_id\trdr_base_dataset_id\tassay_type\tsample_type"
+        "\treference_version\tfiles.alignment\tfiles.alignment_index",
+        f"T1\tN1\t\tbulkWGS\tnormal\tchm13v2\t{ref / 'normal.bam'}\t{ref / 'normal.bam.bai'}",
+        f"T1\tD1\tN1\tbulkWGS\ttumor\tchm13v2\t{ref / 'tumor.bam'}\t{ref / 'tumor.bam.bai'}",
     ]
     sc_tsv = [
-        "SAMPLE\tREP_ID\tassay_type\tsample_type\treference_version\tPATH_to_bam\tPATH_to_barcodes\tPATH_to_10x_ranger",
-        f"S1\tU1\tscRNA\ttumor\tchm13v2\t{outs / 'gex_possorted_bam.bam'}\t{barcodes}\t{outs}",
-        f"S1\tU1\tscATAC\ttumor\tchm13v2\t{outs / 'atac_possorted_bam.bam'}\t{barcodes}\t{outs}",
-        f"V1\tW1\tVISIUM\ttumor\tchm13v2\t{outs / 'possorted_genome_bam.bam'}\t{barcodes}\t{outs}",
+        "sample_id\tdataset_id\tassay_type\tsample_type\treference_version"
+        "\tfiles.alignment\tfiles.alignment_index\tfiles.barcodes\tfiles.fragments"
+        "\tfiles.matrix_h5\tfiles.tissue_positions\tfiles.scalefactors"
+        "\tfiles.image_hires\tfiles.image_lowres",
+        f"S1\tU1\tscRNA\ttumor\tchm13v2\t{outs / 'gex_possorted_bam.bam'}"
+        f"\t{outs / 'gex_possorted_bam.bam.bai'}\t{barcodes}\t"
+        f"\t{outs / 'filtered_feature_bc_matrix.h5'}\t\t\t\t",
+        f"S1\tU1\tscATAC\ttumor\tchm13v2\t{outs / 'atac_possorted_bam.bam'}"
+        f"\t{outs / 'atac_possorted_bam.bam.bai'}\t{barcodes}"
+        f"\t{outs / 'atac_fragments.tsv.gz'}\t\t\t\t\t",
+        f"V1\tW1\tVISIUM\ttumor\tchm13v2\t{outs / 'possorted_genome_bam.bam'}"
+        f"\t{outs / 'possorted_genome_bam.bam.bai'}\t{barcodes}\t"
+        f"\t{outs / 'filtered_feature_bc_matrix.h5'}"
+        f"\t{outs / 'spatial' / 'tissue_positions.csv'}"
+        f"\t{outs / 'spatial' / 'scalefactors_json.json'}"
+        f"\t{outs / 'spatial' / 'tissue_hires_image.png'}"
+        f"\t{outs / 'spatial' / 'tissue_lowres_image.png'}",
     ]
 
     paths = {}

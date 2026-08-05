@@ -124,6 +124,21 @@ def test_local_and_remote_mix(workspace, http_server):
     assert f"{ref}/tumor.bam" in proc.stdout
 
 
+def test_tsv_sheet_accepts_urls(workspace, http_server):
+    """The TSV encoding names every input, so it can carry remote URLs like the JSON."""
+    sheet = os.path.join(workspace["root"], "remote.tsv")
+    with open(sheet, "w") as fh:
+        fh.write(
+            "sample_id\tdataset_id\tassay_type\tsample_type\treference_version"
+            "\tfiles.alignment\tfiles.alignment_index\n"
+            f"T1\tN1\tbulkWGS\tnormal\tchm13v2"
+            f"\t{http_server}/remote.bam\t{http_server}/remote.bam.bai\n"
+        )
+    proc = dryrun(workspace, sheet, "T1", "bulk_genotyping", ["bulkWGS"])
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert proc.stdout.count("retrieve from storage") >= 2
+
+
 @pytest.mark.network
 def test_giab_url_resolves(workspace):
     """A real GIAB alignment URL plans a storage retrieval (no download in -n)."""

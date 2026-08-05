@@ -23,8 +23,8 @@ SCALAR_RECORD_KEYS = (
     + OPTIONAL_RECORD_KEYS
     + PROVENANCE_KEYS
 )
-# LEGACY TSV sheet style
-TSV_REQUIRED_COLUMNS = ("SAMPLE", "REP_ID", "assay_type", "sample_type", "PATH_to_bam")
+# TSV sheet: a flat encoding of the same schema, one files.<key> column per input
+FILES_COLUMN_PREFIX = "files."
 
 # Inputs
 ALIGNMENT_FILES = {"alignment", "alignment_index"}

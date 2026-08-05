@@ -6,7 +6,7 @@ Runpeng Luo (2026-07-12)
 These tests build the DAG only (`snakemake -n`); no rule is executed and no real
 data is needed. They cover sample-file parsing and validation, rule wiring, the
 storage() wrapping of remote inputs, and the final targets of each mode. A JSON
-sample file and the equivalent legacy TSV must yield the same DAG.
+sample file and the equivalent TSV must yield the same DAG.
 
 Executing the rules on real data is not covered; see docs/TODO.md.
 
@@ -62,7 +62,7 @@ def test_dag_builds(workspace, fmt, case_id, sheet, sample_id, mode, assays):
     ids=[c[0] for c in ALL_CASES],
 )
 def test_json_and_tsv_agree(workspace, case_id, sheet, sample_id, mode, assays):
-    """A legacy TSV sheet plans exactly the same jobs as the equivalent JSON."""
+    """A TSV sheet plans exactly the same jobs as the equivalent JSON."""
     a = dryrun(workspace, workspace[f"{sheet}_json"], sample_id, mode, assays)
     b = dryrun(workspace, workspace[f"{sheet}_tsv"], sample_id, mode, assays)
     assert a.returncode == 0 and b.returncode == 0
@@ -261,6 +261,39 @@ def test_visium_spatial_files_are_tracked(workspace):
         "tissue_lowres_image.png",
     ):
         assert name in proc.stdout, f"{name} is not a tracked input"
+
+
+def test_null_files_value_is_dropped(workspace):
+    """A null optional input is absent, not the literal path "None"."""
+    sheet = os.path.join(workspace["root"], "null_file.json")
+    doc = json.loads(open(workspace["bulk_json"]).read())
+    doc["samples"][1]["files"]["breakpoint_bedpe"] = None
+    with open(sheet, "w") as fh:
+        json.dump(doc, fh)
+    proc = dryrun(workspace, sheet, "T1", "bulk_genotyping", ["bulkWGS"])
+    base = dryrun(
+        workspace, workspace["bulk_json"], "T1", "bulk_genotyping", ["bulkWGS"]
+    )
+    # str(None) would make "None" a breakpoint_bedpe input, and the DAG would fail
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert job_counts(proc.stdout) == job_counts(base.stdout)
+
+
+def test_tsv_missing_required_column_fails(workspace):
+    """TSV columns are the record keys; a missing one is named, not silently empty."""
+    sheet = os.path.join(workspace["root"], "no_col.tsv")
+    lines = open(workspace["bulk_tsv"]).read().splitlines()
+    header = lines[0].split("\t")
+    drop = header.index("reference_version")
+    rows = [
+        "\t".join(c for i, c in enumerate(ln.split("\t")) if i != drop) for ln in lines
+    ]
+    with open(sheet, "w") as fh:
+        fh.write("\n".join(rows) + "\n")
+    proc = dryrun(workspace, sheet, "T1", "bulk_genotyping", ["bulkWGS"])
+    assert proc.returncode != 0
+    out = proc.stdout + proc.stderr
+    assert "missing required column(s)" in out and "reference_version" in out
 
 
 def test_record_without_reference_version_fails(workspace):

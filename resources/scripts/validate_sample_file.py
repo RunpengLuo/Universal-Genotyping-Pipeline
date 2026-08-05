@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a JSON (or legacy TSV) sample file without running the workflow.
+"""Validate a JSON (or TSV) sample file without running the workflow.
 
 Runpeng Luo (2026-07-12)
 
@@ -26,7 +26,7 @@ Usage:
   python resources/scripts/validate_sample_file.py samples.json
   python resources/scripts/validate_sample_file.py samples.tsv --check-files
   python resources/scripts/validate_sample_file.py samples.json --sample-id HG008
-      sample_file       # .json sample file, or a legacy .tsv sheet
+      sample_file       # .json sample file, or the equivalent .tsv sheet
       --sample-id       # only this sample_id (default: every one in the file)
       --workflow-mode   # only this mode (default: every mode the assays allow)
       --reference-version # keep only records of this build (default: every build)
