@@ -64,25 +64,22 @@ def parse_sample_file_json(path):
         List of record dicts, with scalar fields coerced to str.
 
     Raises:
-        ValueError: The file is not a records object/list, or a record is not an
-            object.
+        AssertionError: The file is not a records object/list, or a record is not
+            an object.
     """
     with open(path) as fh:
         doc = json.load(fh)
 
     if isinstance(doc, dict):
-        if "samples" not in doc:
-            raise ValueError(f"{path}: object must hold a 'samples' list")
+        assert "samples" in doc, f"{path}: object must hold a 'samples' list"
         records = doc["samples"]
     else:
         records = doc
-    if not isinstance(records, list):
-        raise ValueError(f"{path}: 'samples' must be a list of records")
+    assert isinstance(records, list), f"{path}: 'samples' must be a list"
 
     out = []
     for idx, rec in enumerate(records):
-        if not isinstance(rec, dict):
-            raise ValueError(f"{path}: record {idx} is not an object")
+        assert isinstance(rec, dict), f"{path}: record {idx} is not an object"
         norm = dict(rec)
         for key in SCALAR_RECORD_KEYS:
             if key in norm and norm[key] is not None:
@@ -108,22 +105,18 @@ def parse_sample_file_tsv(path):
         List of record dicts in the same schema as parse_sample_file_json.
 
     Raises:
-        ValueError: The file has no rows, or a required column is missing.
+        AssertionError: The file has no rows, or a required column is missing.
     """
     with open(path, newline="") as fh:
         rows = list(csv.DictReader(fh, delimiter="\t"))
-    if not rows:
-        raise ValueError(f"{path}: no rows")
+    assert rows, f"{path}: no rows"
 
     required_columns = [k for k in REQUIRED_RECORD_KEYS if k != "files"]
     missing = [c for c in required_columns if c not in rows[0]]
-    if missing:
-        raise ValueError(f"{path}: missing required column(s) {missing}")
-    if not any(c.startswith(FILES_COLUMN_PREFIX) for c in rows[0]):
-        raise ValueError(
-            f"{path}: no {FILES_COLUMN_PREFIX}* column; every assay needs at least "
-            f"{FILES_COLUMN_PREFIX}alignment and {FILES_COLUMN_PREFIX}alignment_index"
-        )
+    assert not missing, f"{path}: missing required column(s) {missing}"
+    assert any(c.startswith(FILES_COLUMN_PREFIX) for c in rows[0]), (
+        f"{path}: no {FILES_COLUMN_PREFIX}* column"
+    )
 
     records = []
     for row in rows:
@@ -173,25 +166,34 @@ def _anchor(path, idx, rec):
     )
 
 
+def _refver_counts(records, sample_id):
+    """`refver (n)` summary of one sample_id's records, for error messages."""
+    present = {}
+    for rec in records:
+        if rec["sample_id"] == sample_id:
+            refver = canonical_refver(rec["reference_version"])
+            present[refver] = present.get(refver, 0) + 1
+    return ", ".join(f"{rv} ({n})" for rv, n in sorted(present.items())) or "no records"
+
+
 def require_record_keys(records, path):
     """Every record carries every REQUIRED_RECORD_KEYS entry.
 
-    Runs before anything reads a record by key, so a malformed sample file raises a
-    ValueError naming the record rather than a bare KeyError from a later subset.
+    Runs before anything reads a record by key, so a malformed sample file fails
+    naming the record rather than with a bare KeyError from a later subset.
 
     Args:
         records: Records from parse_sample_file_{json,tsv}.
         path: Sample file path, for error messages.
 
     Raises:
-        ValueError: A record is missing a required key or leaves it empty.
+        AssertionError: A record is missing a required key or leaves it empty.
     """
     for idx, rec in enumerate(records):
         missing = [k for k in REQUIRED_RECORD_KEYS if rec.get(k) in (None, "")]
-        if missing:
-            raise ValueError(
-                f"{_anchor(path, idx, rec)}: missing required key(s) {missing}"
-            )
+        assert not missing, (
+            f"{_anchor(path, idx, rec)}: missing required key(s) {missing}"
+        )
 
 
 def validate_records(
@@ -212,8 +214,8 @@ def validate_records(
         reference_version: Canonical build to keep; records of any other are dropped.
 
     Raises:
-        ValueError: Any record violates the spec, or the selected records violate a
-            mode/replicate rule.
+        AssertionError: Any record violates the spec, or the selected records violate
+            a mode/replicate rule.
     """
     require_record_keys(records, path)
     single_cell = workflow_mode in ("single_cell_genotyping", "copytyping_preprocess")
@@ -221,20 +223,17 @@ def validate_records(
     for idx, rec in enumerate(records):
         at = _anchor(path, idx, rec)
         assay_type = rec["assay_type"]
-        if assay_type not in ALLOWED_ASSAY_TYPES:
-            raise ValueError(
-                f"{at}: assay_type must be one of {sorted(ALLOWED_ASSAY_TYPES)}"
-            )
-        if rec["sample_type"] not in ("normal", "tumor"):
-            raise ValueError(f"{at}: sample_type must be 'normal' or 'tumor'")
+        assert assay_type in ALLOWED_ASSAY_TYPES, (
+            f"{at}: assay_type must be one of {sorted(ALLOWED_ASSAY_TYPES)}"
+        )
+        assert rec["sample_type"] in ("normal", "tumor"), (
+            f"{at}: sample_type must be 'normal' or 'tumor'"
+        )
         did = rec["dataset_id"]
-        if not did or not all(c.isalnum() or c in "_-" for c in did):
-            raise ValueError(
-                f"{at}: dataset_id must be non-empty and match [A-Za-z0-9_-] "
-                f"(no dots or slashes; used verbatim in output paths), got {did!r}"
-            )
-        if not isinstance(rec["files"], dict):
-            raise ValueError(f"{at}: files must be an object")
+        assert did and all(c.isalnum() or c in "_-" for c in did), (
+            f"{at}: dataset_id must match [A-Za-z0-9_-], got {did!r}"
+        )
+        assert isinstance(rec["files"], dict), f"{at}: files must be an object"
 
         readable = REQUIRED_FILES[assay_type] | OPTIONAL_FILES.get(assay_type, set())
         files = {k: v for k, v in rec["files"].items() if k in readable}
@@ -248,36 +247,24 @@ def validate_records(
 
         required_files = REQUIRED_FILES[assay_type] if single_cell else ALIGNMENT_FILES
         for key in sorted(required_files):
-            if not files.get(key):
-                raise ValueError(
-                    f"{at}: files.{key} is required for {assay_type}; got {sorted(files)}"
-                )
+            assert files.get(key), f"{at}: files.{key} is required for {assay_type}"
 
     selected = select_records(
         records, sample_id, configured_assay_types, reference_version
     )
-    if not selected:
-        present = {}
-        for rec in records:
-            if rec["sample_id"] == sample_id:
-                refver = canonical_refver(rec["reference_version"])
-                present[refver] = present.get(refver, 0) + 1
-        found = ", ".join(f"{rv} ({n})" for rv, n in sorted(present.items()))
-        raise ValueError(
-            f"{path}: no records for sample_id={sample_id!r} with assay_type in "
-            f"{sorted(configured_assay_types)} and "
-            f"reference_version={reference_version!r}; sample_id={sample_id!r} has: "
-            f"{found or 'no records'}"
-        )
+    assert selected, (
+        f"{path}: no records for sample_id={sample_id!r} with assay_type in "
+        f"{sorted(configured_assay_types)} and reference_version={reference_version!r}; "
+        f"sample_id has: {_refver_counts(records, sample_id)}"
+    )
 
-    seen = {}
+    seen = set()
     for idx, rec in enumerate(selected):
         key = (rec["dataset_id"], rec["assay_type"])
-        if key in seen:
-            raise ValueError(
-                f"{_anchor(path, idx, rec)}: duplicate (dataset_id, assay_type) {key}"
-            )
-        seen[key] = idx
+        assert key not in seen, (
+            f"{_anchor(path, idx, rec)}: duplicate (dataset_id, assay_type) {key}"
+        )
+        seen.add(key)
 
     dataset2assays = {}
     for rec in selected:
@@ -285,16 +272,13 @@ def validate_records(
     for dataset_id, assays in dataset2assays.items():
         if len(assays) == 1:
             continue
-        if any(a in BULK_ASSAYS for a in assays):
-            raise ValueError(
-                f"{path}: dataset_id={dataset_id!r} is reused across bulk assays {assays}; "
-                "bulk dataset_ids must be unique"
-            )
-        if len(assays) > 2 or set(assays) != {"scRNA", "scATAC"}:
-            raise ValueError(
-                f"{path}: dataset_id={dataset_id!r} has assays {assays}; a shared dataset_id is "
-                "only allowed for an scRNA + scATAC multiome pair"
-            )
+        assert not any(a in BULK_ASSAYS for a in assays), (
+            f"{path}: dataset_id={dataset_id!r} is reused across bulk assays {assays}"
+        )
+        assert len(assays) == 2 and set(assays) == {"scRNA", "scATAC"}, (
+            f"{path}: dataset_id={dataset_id!r} has assays {assays}; only an "
+            "scRNA + scATAC pair may share one"
+        )
 
     dataset_ids = {r["dataset_id"] for r in selected}
     for idx, rec in enumerate(selected):
@@ -302,14 +286,15 @@ def validate_records(
         if not base:
             continue
         at = _anchor(path, idx, rec)
-        if rec["sample_type"] != "tumor":
-            raise ValueError(f"{at}: rdr_base_dataset_id is set on a non-tumor record")
-        if base == rec["dataset_id"]:
-            raise ValueError(f"{at}: rdr_base_dataset_id={base!r} is the record itself")
-        if base not in dataset_ids:
-            raise ValueError(
-                f"{at}: rdr_base_dataset_id={base!r} is not a dataset_id in sample_id={sample_id!r}"
-            )
+        assert rec["sample_type"] == "tumor", (
+            f"{at}: rdr_base_dataset_id is set on a non-tumor record"
+        )
+        assert base != rec["dataset_id"], (
+            f"{at}: rdr_base_dataset_id={base!r} is the record itself"
+        )
+        assert base in dataset_ids, (
+            f"{at}: rdr_base_dataset_id={base!r} is not a dataset_id of {sample_id!r}"
+        )
 
 
 def parse_workflow(config):
@@ -320,7 +305,7 @@ def parse_workflow(config):
 
     Returns:
         Dict of the names workflow/Snakefile unpacks and the rules then read:
-          workflow_mode, sample_id, remote_stream, reference_version, species,
+          workflow_mode, sample_id, remote_mode, reference_version, species,
           assay_types, modalities, msr_list, phaser,
           run_genotyping, run_phasing, het_snp_vcf, phased_snp_vcf,
           require_genetic_map, final_targets, get_data, modality2files,
@@ -329,91 +314,80 @@ def parse_workflow(config):
           has_breakpoints, use_prebuilt_windows, do_repliseq, window_size.
 
     Raises:
-        ValueError: The mode, assay types, sample file, or phaser is invalid.
+        AssertionError: The mode, assay types, sample file, or phaser is invalid.
     """
 
     def select_datasets(records, dataset_ids, config_key):
         """Records named by a config dataset_id list, in that order."""
-        if len(set(dataset_ids)) != len(dataset_ids):
-            raise ValueError(f"{config_key} has duplicate dataset_ids: {dataset_ids}")
+        assert len(set(dataset_ids)) == len(dataset_ids), (
+            f"{config_key} has duplicate dataset_ids: {dataset_ids}"
+        )
         by_id = {r["dataset_id"]: r for r in records}
         missing = [d for d in dataset_ids if d not in by_id]
-        if missing:
-            raise ValueError(
-                f"{config_key}={missing} not a dataset_id of sample_id={sample_id!r}; "
-                f"available: {sorted(by_id)}"
-            )
+        assert not missing, (
+            f"{config_key}={missing} not a dataset_id of sample_id={sample_id!r}; "
+            f"available: {sorted(by_id)}"
+        )
         return [by_id[d] for d in dataset_ids]
 
     # === workflow mode + sample_id ===
     sample_file = config["sample_file"]
     workflow_mode = config["workflow_mode"]
-    if workflow_mode not in WORKFLOW_MODES:
-        raise ValueError(f"workflow_mode must be one of {list(WORKFLOW_MODES)}")
+    assert workflow_mode in WORKFLOW_MODES, (
+        f"workflow_mode must be one of {list(WORKFLOW_MODES)}"
+    )
     sample_id = config["sample_id"]
 
     # === remote input mode: whole-file storage() download vs direct URL streaming ===
     remote_mode = config["remote_mode"]
-    if remote_mode not in ("storage", "stream"):
-        raise ValueError(
-            f"remote_mode must be 'storage' or 'stream', got {remote_mode!r}"
-        )
-    if remote_mode == "stream" and workflow_mode != "bulk_genotyping":
-        raise ValueError(
-            "remote_mode='stream' is only supported for bulk_genotyping; single-cell "
-            "and copytyping use cellsnp-lite, which cannot read remote URLs. Use "
-            "remote_mode='storage'."
-        )
-    remote_stream = remote_mode == "stream"
+    assert remote_mode in ("storage", "stream"), (
+        f"remote_mode must be 'storage' or 'stream', got {remote_mode!r}"
+    )
+    assert remote_mode == "storage" or workflow_mode == "bulk_genotyping", (
+        "remote_mode='stream' is only supported for bulk_genotyping"
+    )
 
-    # === assay_types: validate against the schema, keep those this mode runs ===
-    configured = config["assay_types"]
-    invalid = [a for a in configured if a not in ALLOWED_ASSAY_TYPES]
-    if invalid:
-        raise ValueError(
-            f"invalid assay_types={invalid}; allowed: {sorted(ALLOWED_ASSAY_TYPES)}"
-        )
+    # === assay_types requested: validate against the schema, keep this mode's ===
+    config_assay_types = config["assay_types"]
+    invalid = [a for a in config_assay_types if a not in ALLOWED_ASSAY_TYPES]
+    assert not invalid, (
+        f"invalid assay_types={invalid}; allowed: {sorted(ALLOWED_ASSAY_TYPES)}"
+    )
     allowed = BULK_ASSAYS if workflow_mode == "bulk_genotyping" else NONBULK_ASSAYS
-    configured = [a for a in configured if a in allowed]
+    config_assay_types = [a for a in config_assay_types if a in allowed]
 
     # === load the sample file (json or legacy tsv) ===
     ext = os.path.splitext(sample_file)[1].lower()
-    if ext == ".json":
-        records = parse_sample_file_json(sample_file)
-    elif ext in (".tsv", ".txt"):
-        records = parse_sample_file_tsv(sample_file)
-    else:
-        raise ValueError(
-            f"{sample_file}: sample file must be .json or .tsv, got {ext!r}"
-        )
+    assert ext in (".json", ".tsv", ".txt"), (
+        f"{sample_file}: sample file must be .json or .tsv, got {ext!r}"
+    )
+    records = (
+        parse_sample_file_json(sample_file)
+        if ext == ".json"
+        else parse_sample_file_tsv(sample_file)
+    )
 
     require_record_keys(records, sample_file)
 
     # === chromosomes: must exist in genome_size ===
     genome_size = config["genome_size"]
-    if not genome_size:
-        raise ValueError("genome_size is required (two-column chrom<TAB>size file)")
+    assert genome_size, "genome_size is required (two-column chrom<TAB>size file)"
     by_core = {}
     for name in get_chr_sizes(genome_size):
         by_core.setdefault(strip_chr_prefix(name), name)
     wanted = [strip_chr_prefix(c) for c in config["chromosomes"]]
+    assert wanted, "chromosomes is empty"
     absent_chroms = [c for c in wanted if c not in by_core]
-    if absent_chroms:
-        raise ValueError(
-            f"chromosomes {absent_chroms} have no contig in {genome_size}; "
-            "every configured chromosome must be present, with or without a 'chr' "
-            "prefix. Fix `chromosomes`, or point genome_size at the matching build."
-        )
-    if not wanted:
-        raise ValueError("chromosomes is empty")
+    assert not absent_chroms, (
+        f"chromosomes {absent_chroms} have no contig in {genome_size}"
+    )
     chroms = [f"chr{c}" for c in wanted]
     input_nochr = not by_core[wanted[0]].lower().startswith("chr")
     logging_snakemake(f"chromosomes: {chroms[:3]}... input_nochr={input_nochr}")
 
     # === species ===
     species = config["species"]
-    if not species:
-        raise ValueError(f"species is required in the config; one of {list(SPECIES)}")
+    assert species, f"species is required in the config; one of {list(SPECIES)}"
     if species not in SPECIES:
         logging_snakemake(
             f"WARNING: species={species!r} is not natively supported ({list(SPECIES)})."
@@ -421,11 +395,9 @@ def parse_workflow(config):
 
     # === reference version: canonicalize, then filter ===
     raw_refver = config["reference_version"]
-    if not raw_refver:
-        raise ValueError(
-            f"reference_version is required in the config; one of {REFVERS} "
-            "(aliases are accepted, see docs/sample_sheet.md)"
-        )
+    assert raw_refver, (
+        f"reference_version is required in the config; one of {REFVERS} (or an alias)"
+    )
     reference_version = canonical_refver(raw_refver)
     if not is_known_refver(raw_refver):
         logging_snakemake(
@@ -447,24 +419,47 @@ def parse_workflow(config):
             f"  {spelling:<20} {n_rec:5d} record(s) {len(ids):4d} sample_id(s)"
         )
 
+    # === assay_types supplied: this sample_id's records on this build ===
+    sample_sheet_assay_types = list(
+        dict.fromkeys(
+            r["assay_type"]
+            for r in records
+            if r["sample_id"] == sample_id
+            and canonical_refver(r["reference_version"]) == reference_version
+        )
+    )
+
     # === validate against the spec + selection rules (mutates files in place) ===
     validate_records(
-        records, sample_file, workflow_mode, sample_id, configured, reference_version
+        records,
+        sample_file,
+        workflow_mode,
+        sample_id,
+        config_assay_types,
+        reference_version,
     )
 
     # === select this run's records + add modality ===
     records = [
         {**rec, "modality": ASSAY_TYPE2MODALITY[rec["assay_type"]]}
-        for rec in select_records(records, sample_id, configured, reference_version)
+        for rec in select_records(
+            records, sample_id, config_assay_types, reference_version
+        )
     ]
+
+    # === assay_types this run processes: requested and supplied ===
+    assay_types = list(dict.fromkeys(r["assay_type"] for r in records))
+    logging_snakemake(
+        f"assay_types: config={config_assay_types} "
+        f"sample_sheet={sample_sheet_assay_types} -> run={assay_types}"
+    )
 
     # === RDR normalization policy: drop/keep each bulk tumor's rdr_base ===
     rdr_normalization = config["params_combine_counts"]["rdr_normalization"]
-    if rdr_normalization not in RDR_NORMALIZATIONS:
-        raise ValueError(
-            f"params_combine_counts.rdr_normalization must be one of "
-            f"{list(RDR_NORMALIZATIONS)}, got {rdr_normalization!r}"
-        )
+    assert rdr_normalization in RDR_NORMALIZATIONS, (
+        f"rdr_normalization must be one of {list(RDR_NORMALIZATIONS)}, "
+        f"got {rdr_normalization!r}"
+    )
     unbased, ignored = [], []
     for i, rec in enumerate(records):
         is_bulk_tumor = (
@@ -479,12 +474,10 @@ def parse_workflow(config):
                 }
             elif rdr_normalization != "median" and not base:
                 unbased.append(rec["dataset_id"])
-    if rdr_normalization == "normal" and unbased:
-        raise ValueError(
-            f"rdr_normalization='normal' requires rdr_base_dataset_id on every bulk "
-            f"tumor, missing on: {sorted(unbased)}. Set it in the sample file, or use "
-            "rdr_normalization='auto' to median-normalize these."
-        )
+    assert not (rdr_normalization == "normal" and unbased), (
+        f"rdr_normalization='normal' requires rdr_base_dataset_id on every bulk "
+        f"tumor, missing on: {sorted(unbased)}"
+    )
     if ignored:
         logging_snakemake(
             f"NOTE: rdr_normalization='median' -> ignoring rdr_base_dataset_id on "
@@ -495,9 +488,6 @@ def parse_workflow(config):
             f"NOTE: {len(unbased)} tumor(s) have no rdr_base_dataset_id; RDR uses "
             f"median normalization: {sorted(unbased)}"
         )
-
-    # assay types actually present in the selected records
-    assay_types = list(dict.fromkeys(r["assay_type"] for r in records))
 
     # === copytyping_preprocess requirements ===
     if workflow_mode == "copytyping_preprocess":
@@ -512,10 +502,7 @@ def parse_workflow(config):
         )
 
     # === gtf_file is a required reference input (gene/exon annotation) ===
-    if not config["gtf_file"]:
-        raise ValueError(
-            "gtf_file is required (gene/exon annotation GTF); set it in the config"
-        )
+    assert config["gtf_file"], "gtf_file is required (gene/exon annotation GTF)"
 
     # === min_snp_reads sweep (one MSR{msr}/ subdir per value) ===
     msr = config["params_combine_counts"]["min_snp_reads"]
@@ -592,8 +579,7 @@ def parse_workflow(config):
                     r["assay_type"] in LONGREAD_ASSAYS,
                 ),
             )[:1]
-            if not chosen:
-                raise ValueError(f"no records to genotype for sample_id={sample_id!r}")
+            assert chosen, f"no records to genotype for sample_id={sample_id!r}"
             r0 = chosen[0]
             logging_snakemake(
                 f"NOTE: genotype_dataset_ids unset; genotyping {r0['dataset_id']!r} "
@@ -601,6 +587,9 @@ def parse_workflow(config):
             )
         genotype_files = [r["files"] for r in chosen]
     if run_phasing:
+        assert phaser in PANEL_PHASER or phaser in LONGREAD_PHASER, (
+            f"unknown phaser: {phaser}"
+        )
         if phaser in PANEL_PHASER:
             gmap_path = config["gmap_path"]
             assert gmap_path, f"gmap_path required for {phaser}"
@@ -627,7 +616,7 @@ def parse_workflow(config):
             assert not missing_panels, (
                 f"failed to locate panel files: {missing_panels[:3]}"
             )
-        elif phaser in LONGREAD_PHASER:
+        else:
             named = config["phase_dataset_ids"]
             if named:
                 chosen = select_datasets(records, named, "phase_dataset_ids")
@@ -636,19 +625,16 @@ def parse_workflow(config):
                     for r in chosen
                     if r["assay_type"] not in LONGREAD_ASSAYS
                 ]
-                if short:
-                    raise ValueError(
-                        f"phase_dataset_ids={short} are not long-read assays "
-                        f"({sorted(LONGREAD_ASSAYS)}); longphase needs long reads"
-                    )
+                assert not short, (
+                    f"phase_dataset_ids={short} are not long-read assays "
+                    f"({sorted(LONGREAD_ASSAYS)})"
+                )
             else:
                 lr = [r for r in records if r["assay_type"] in LONGREAD_ASSAYS]
-                if not lr:
-                    raise ValueError(
-                        f"phaser=longphase requires at least one long-read bulk assay "
-                        f"({sorted(LONGREAD_ASSAYS)}) in the sample file for "
-                        f"sample_id={sample_id!r}"
-                    )
+                assert lr, (
+                    f"{phaser} requires a long-read assay "
+                    f"({sorted(LONGREAD_ASSAYS)}) for sample_id={sample_id!r}"
+                )
                 normals = [r for r in lr if r["sample_type"] == "normal"]
                 chosen = normals or lr
                 kind = "normal" if normals else "tumor (no normal)"
@@ -657,8 +643,6 @@ def parse_workflow(config):
                     f"{[r['dataset_id'] for r in chosen]} ({kind})"
                 )
             phase_files = [r["files"] for r in chosen]
-        else:
-            raise ValueError(f"unknown phaser: {phaser}")
 
     # === per-assay lookups the rules consume (bulk ordered normal-first) ===
     modality2files = {}
@@ -704,7 +688,7 @@ def parse_workflow(config):
     return {
         "workflow_mode": workflow_mode,
         "sample_id": sample_id,
-        "remote_stream": remote_stream,
+        "remote_mode": remote_mode,
         "reference_version": reference_version,
         "species": species,
         "chroms": chroms,

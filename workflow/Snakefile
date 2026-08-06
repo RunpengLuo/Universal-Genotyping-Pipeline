@@ -46,7 +46,7 @@ if _has_config:
     _wf = parse_workflow(config)
     workflow_mode = _wf["workflow_mode"]
     sample_id = _wf["sample_id"]
-    remote_stream = _wf["remote_stream"]
+    remote_mode = _wf["remote_mode"]
     reference_version = _wf["reference_version"]
     species = _wf["species"]
     chroms = _wf["chroms"]

@@ -36,7 +36,7 @@ def bam_stream_input(files):
         return [x for x in out if x != []]
     aln = files["alignment"]
     if is_url(aln):
-        return [] if remote_stream else storage(aln)
+        return [] if remote_mode == "stream" else storage(aln)
     return str(aln)
 
 
@@ -47,7 +47,7 @@ def bam_stream_index_input(files):
         return [x for x in out if x != []]
     idx = files["alignment_index"]
     if is_url(idx):
-        return [] if remote_stream else storage(idx)
+        return [] if remote_mode == "stream" else storage(idx)
     return str(idx)
 
 
@@ -60,7 +60,7 @@ def bam_stream_arg(files):
     if isinstance(files, (list, tuple)):
         return " ".join(filter(None, (bam_stream_arg(f) for f in files)))
     aln = files["alignment"]
-    if remote_stream and is_url(aln):
+    if remote_mode == "stream" and is_url(aln):
         return f"{aln}##idx##{files['alignment_index']}"
     return ""
 

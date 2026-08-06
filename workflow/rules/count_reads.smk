@@ -9,7 +9,7 @@
 _rdr_cfg = config["params_count_reads"]
 
 
-if not remote_stream:
+if remote_mode != "stream":
 
     rule run_mosdepth:
         input:

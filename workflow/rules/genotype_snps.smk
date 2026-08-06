@@ -38,7 +38,9 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
             min_qual=config["params_bcftools"]["min_qual"],
             extra_params=config["params_bcftools"]["extra_params"],
             bam_arg=bam_stream_arg(genotype_files),
-            region_arg=lambda wc: f"-r {input_chrom(wc.chrname)}" if remote_stream else "",
+            region_arg=lambda wc: (
+                f"-r {input_chrom(wc.chrname)}" if remote_mode == "stream" else ""
+            ),
         shell:
             r"""
             ALN="{input.alignment}"; [ -z "$ALN" ] && ALN="{params.bam_arg}"
