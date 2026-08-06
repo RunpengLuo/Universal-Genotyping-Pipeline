@@ -104,7 +104,7 @@ gmap_path: /path/to/Eagle_v2.4.1/tables/genetic_map_hg38_withX.txt.gz
 > [!NOTE]
 > If germline (phased) Het SNPs information already exist, user may specify the path via `het_snp_vcf` and set `het_snp_vcf_phased` to indicate if the VCF file is phased. This skips genotyping (and phasing if `het_snp_vcf_phased=true`). To reuse a bulk run's SNPs, point `het_snp_vcf` at its `phase/phased_het_snps.vcf.gz`.
 
-5. the final step performs adaptive binning jointly across all non-bulk assays of the sample on one shared bin grid, emitting phased B-allele and total-allele count matrices plus native per-bin signal (`bb.Xcount.npz`). Each value in the minimum-SNP-covering reads parameter (`min_snp_reads`) gives one segmentation result; we recommend setting a list of values and picking the smallest that gives reliable BAF signals.
+5. the final step performs adaptive binning jointly across all non-bulk assays of the sample onto one shared set of bbs, emitting phased B-allele and total-allele count matrices plus native per-bin signal (`bb.Xcount.npz`). Each value in the minimum-SNP-covering reads parameter (`min_snp_reads`) gives one binning result; we recommend setting a list of values and picking the smallest that gives reliable BAF signals.
 
 ```yaml
 params_combine_counts:
@@ -120,8 +120,8 @@ Refer to [Final bins](reference.md#final-bins) for the full specification of eac
   bb/
     {assay_type}.h5ad                          # gene x cell AnnData (scRNA/VISIUM), MSR-independent
     MSR{msr}/                                   # one subdir per min_snp_reads value
-      {assay_type}/                             # one subdir per assay; shared grid duplicated into each
-        bb.tsv.gz                              # bin annotations (grid shared by every matrix below)
+      {assay_type}/                             # one subdir per assay; the shared bbs duplicated into each
+        bb.tsv.gz                              # bb annotations (shared by every matrix below)
         bb.{Tallele,Aallele,Ballele}.npz       # phased allele counts, bins x cells
         bb.Xcount.npz                          # native counts (scATAC fragments / RNA UMIs)
         multi_snp.tsv.gz                       # multi-SNP diagnostic groups (MSR-independent)

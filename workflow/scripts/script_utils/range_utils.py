@@ -1,17 +1,16 @@
-"""Assign query positions or intervals to a reference interval set.
+"""Assign query positions or ranges to a reference range set.
+
+A range is any ``[START, END)`` pair, 0-based half-open, on either side.
 
 Two public entry points, both keyed on ``#CHR`` and both returning *qry* with a
 ``ref_id`` column added (``pd.NA`` where nothing overlaps):
 
-- ``assign_pos_to_range`` - a query POSITION lands in the interval containing it.
-- ``assign_interval_to_range`` - a query INTERVAL takes the reference interval it
-  overlaps most.
+- ``assign_pos_to_range`` - a query POSITION lands in the range containing it.
+- ``assign_range_to_range`` - a query RANGE takes the reference range it overlaps most.
 
 ``assign_all_features`` is the many-hit variant of the first: every overlapping id,
 joined. All three share ``_searchsorted_assign``; the scan fallback runs only for a
-chromosome whose reference intervals overlap each other.
-
-Reference intervals are 0-based half-open ``[START, END)``.
+chromosome whose reference ranges overlap each other.
 """
 
 import heapq
@@ -21,10 +20,10 @@ import pandas as pd
 
 
 def _searchsorted_assign(starts, ends, positions):
-    """Index of the non-overlapping, start-sorted interval containing each position.
+    """Index of the non-overlapping, start-sorted range containing each position.
 
     ``starts``/``ends`` are 0-based half-open (``START <= pos < END``), sorted by
-    ``starts`` with no overlaps. Returns ``(idx, valid)``: ``idx[k]`` is the interval
+    ``starts`` with no overlaps. Returns ``(idx, valid)``: ``idx[k]`` is the range
     index for ``positions[k]`` where ``valid[k]``, undefined otherwise.
     """
     if len(starts) == 0:
@@ -37,7 +36,7 @@ def _searchsorted_assign(starts, ends, positions):
 
 
 def _sorted_ref(ref_chrom, ref_id):
-    """One chromosome's reference intervals as start-sorted ``(starts, ends, ids)``."""
+    """One chromosome's reference ranges as start-sorted ``(starts, ends, ids)``."""
     starts = ref_chrom["START"].to_numpy()
     ends = ref_chrom["END"].to_numpy()
     ids = ref_chrom[ref_id].to_numpy()
@@ -45,48 +44,48 @@ def _sorted_ref(ref_chrom, ref_id):
     return starts[order], ends[order], ids[order]
 
 
-def _interval_tiers(starts, ends):
-    """Partition intervals into the minimum number of non-overlapping tiers.
+def _range_clusters(starts, ends):
+    """Partition ranges into the minimum number of non-overlapping clusters.
 
-    Greedy earliest-finishing assignment (sort by start, reuse the tier whose last
-    END fits before the next START, else open a new tier). Tier count equals the max
-    overlap depth. Members within a tier come out start-sorted. Returns a list of
-    index arrays into the input.
+    Greedy earliest-finishing assignment (sort by start, reuse the cluster whose last
+    END fits before the next START, else open a new cluster). Cluster count equals the
+    max overlap depth. Members within a cluster come out start-sorted. Returns a list
+    of index arrays into the input.
     """
     order = np.argsort(starts, kind="stable")
-    heap = []  # (last_end, tier_id)
-    tier_members = []
+    heap = []  # (last_end, cluster_id)
+    cluster_members = []
     for i in order:
         s, e = int(starts[i]), int(ends[i])
         if heap and heap[0][0] <= s:
-            _, t = heapq.heappop(heap)
-            tier_members[t].append(i)
-            heapq.heappush(heap, (e, t))
+            _, c = heapq.heappop(heap)
+            cluster_members[c].append(i)
+            heapq.heappush(heap, (e, c))
         else:
-            t = len(tier_members)
-            tier_members.append([i])
-            heapq.heappush(heap, (e, t))
-    return [np.array(m, dtype=np.int64) for m in tier_members]
+            c = len(cluster_members)
+            cluster_members.append([i])
+            heapq.heappush(heap, (e, c))
+    return [np.array(m, dtype=np.int64) for m in cluster_members]
 
 
 def assign_pos_to_range(qry, ref, ref_id="region_id", pos_col="POS0"):
-    """Assign each query position to the reference interval containing it.
+    """Assign each query position to the reference range containing it.
 
     Vectorized per chromosome via ``np.searchsorted``; a chromosome whose reference
-    intervals overlap each other falls back to a scan that keeps the first hit.
+    ranges overlap each other falls back to a scan that keeps the first hit.
 
     Args:
         qry: Query frame with ``#CHR`` and *pos_col*. Modified in place.
-        ref: Reference intervals with ``#CHR``, ``START``, ``END`` and *ref_id*.
+        ref: Reference ranges with ``#CHR``, ``START``, ``END`` and *ref_id*.
         ref_id: Reference identifier column, added to *qry*.
         pos_col: 0-based position column of *qry*.
 
     Returns:
-        *qry* with *ref_id* added; ``pd.NA`` where the position is in no interval.
+        *qry* with *ref_id* added; ``pd.NA`` where the position is in no range.
     """
 
     def _first_overlap_scan(starts, ends, ids, positions):
-        """First overlapping interval id per position, for a chromosome with overlaps.
+        """First overlapping range id per position, for a chromosome with overlaps.
 
         ``starts``/``ends``/``ids`` must be start-sorted. Returns an object array holding
         ``pd.NA`` where a position overlaps nothing.
@@ -118,12 +117,12 @@ def assign_pos_to_range(qry, ref, ref_id="region_id", pos_col="POS0"):
     return qry
 
 
-def assign_interval_to_range(qry, ref, ref_id):
-    """Assign each query interval to the reference interval it overlaps most.
+def assign_range_to_range(qry, ref, ref_id):
+    """Assign each query range to the reference range it overlaps most.
 
     Args:
-        qry: Query intervals with ``#CHR``, ``START``, ``END``. Copied, not modified.
-        ref: Reference intervals with ``#CHR``, ``START``, ``END`` and *ref_id*.
+        qry: Query ranges with ``#CHR``, ``START``, ``END``. Copied, not modified.
+        ref: Reference ranges with ``#CHR``, ``START``, ``END`` and *ref_id*.
         ref_id: Reference identifier column, added to the returned frame.
 
     Returns:
@@ -156,19 +155,19 @@ def assign_interval_to_range(qry, ref, ref_id):
 
 
 def overlaps_any_range(qry, ref, pos_col="POS0"):
-    """Boolean mask: does each query position fall in any reference interval?
+    """Boolean mask: does each query position fall in any reference range?
 
     The membership-only variant of ``assign_pos_to_range`` - no id is carried, so
     overlapping references need no tie-break and every chromosome takes the
-    vectorized path (one ``_searchsorted_assign`` per overlap tier).
+    vectorized path (one ``_searchsorted_assign`` per overlap cluster).
 
     Args:
         qry: Query frame with ``#CHR`` and *pos_col*. Not modified.
-        ref: Reference intervals with ``#CHR``, ``START``, ``END``.
+        ref: Reference ranges with ``#CHR``, ``START``, ``END``.
         pos_col: 0-based position column of *qry*.
 
     Returns:
-        A bool array aligned to *qry* rows.
+        A bool array aligned to the *qry* features.
     """
     hit = np.zeros(len(qry), dtype=bool)
     if len(ref) == 0:
@@ -181,8 +180,8 @@ def overlaps_any_range(qry, ref, pos_col="POS0"):
         starts = ref_c["START"].to_numpy()
         ends = ref_c["END"].to_numpy()
         found = np.zeros(len(positions), dtype=bool)
-        for tier in _interval_tiers(starts, ends):
-            _, valid = _searchsorted_assign(starts[tier], ends[tier], positions)
+        for cluster in _range_clusters(starts, ends):
+            _, valid = _searchsorted_assign(starts[cluster], ends[cluster], positions)
             found |= valid
         hit[qmask] = found
     return hit
@@ -193,9 +192,9 @@ def assign_all_features(
 ):
     """All overlapping ``ref`` ids per SNP, ``sep``-joined (``default`` when none).
 
-    Vectorized: ``ref`` intervals are split into non-overlapping tiers so each tier
-    uses the ``_searchsorted_assign`` fast path. The first (densest) tier is assigned
-    fully vectorized; only the rare SNPs that also hit a higher tier are joined.
+    Vectorized: ``ref`` ranges are split into non-overlapping clusters so each cluster
+    uses the ``_searchsorted_assign`` fast path. The first (densest) cluster is assigned
+    fully vectorized; only the rare SNPs that also hit a later cluster are joined.
     Returns a Series aligned to ``snps.index``.
     """
     result = pd.Series(default, index=snps.index, dtype=object)
@@ -210,15 +209,15 @@ def assign_all_features(
         starts = ref_c["START"].to_numpy()
         ends = ref_c["END"].to_numpy()
         ids = ref_c[id_col].to_numpy().astype(str)
-        tiers = _interval_tiers(starts, ends)
+        clusters = _range_clusters(starts, ends)
 
-        t0 = tiers[0]
-        idx0, valid0 = _searchsorted_assign(starts[t0], ends[t0], positions)
-        joined = np.where(valid0, ids[t0][idx0.clip(min=0)], "").astype(object)
-        for tier in tiers[1:]:
-            idx, valid = _searchsorted_assign(starts[tier], ends[tier], positions)
+        c0 = clusters[0]
+        idx0, valid0 = _searchsorted_assign(starts[c0], ends[c0], positions)
+        joined = np.where(valid0, ids[c0][idx0.clip(min=0)], "").astype(object)
+        for cluster in clusters[1:]:
+            idx, valid = _searchsorted_assign(starts[cluster], ends[cluster], positions)
             for k in np.nonzero(valid)[0]:
-                gid = ids[tier][idx[k]]
+                gid = ids[cluster][idx[k]]
                 joined[k] = gid if joined[k] == "" else f"{joined[k]}{sep}{gid}"
         joined = np.where(joined == "", default, joined)
         result.loc[qidx] = joined

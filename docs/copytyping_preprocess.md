@@ -1,6 +1,6 @@
 # Copytyping Preprocess
 
-This documentation covers input preparation and result interpretation for the copytyping preprocess mode, which aggregates single-cell / spatial (**scRNA**, **scATAC**, **Visium**) allele and native counts onto a **pre-computed** set of copy-number blocks to run [CalicoST](https://github.com/raphael-group/CalicoST). This mode never genotypes or phases: a pre-computed phased het-SNP VCF (`het_snp_vcf`) and the genomic bin annotations (`bb_file`) are **required** inputs from running genotyping using matched bulk samples. Refer to the [README](../README.md) for Snakemake pipeline installation and execution instructions.
+This documentation covers input preparation and result interpretation for the copytyping preprocess mode, which aggregates single-cell / spatial (**scRNA**, **scATAC**, **Visium**) allele and native counts onto a **pre-computed** set of copy-number bbs to run [CalicoST](https://github.com/raphael-group/CalicoST). This mode never genotypes or phases: a pre-computed phased het-SNP VCF (`het_snp_vcf`) and the genomic bin annotations (`bb_file`) are **required** inputs from running genotyping using matched bulk samples. Refer to the [README](../README.md) for Snakemake pipeline installation and execution instructions.
 
 ## Table of Contents
 1. [Overview](#overview) <br>
@@ -86,7 +86,7 @@ gtf_file: /path/to/gencode.v38.annotation.gtf.gz
 gene_blacklist_file: resources/data/ig_gene_list.txt
 ```
 
-3. specify the pre-computed phased het-SNP VCF (`het_snp_vcf`) and the copy-number block annotations (`bb_file`). Both are **required** in this mode: genotyping and phasing are skipped, and the counts are aggregated onto the given blocks. A natural source is a prior `bulk_genotyping` run of the same patient (its `phase/phased_het_snps.vcf.gz` and a `bb.tsv.gz`).
+3. specify the pre-computed phased het-SNP VCF (`het_snp_vcf`) and the copy-number bb annotations (`bb_file`). Both are **required** in this mode: genotyping and phasing are skipped, and the counts are aggregated onto the given bbs. A natural source is a prior `bulk_genotyping` run of the same patient (its `phase/phased_het_snps.vcf.gz` and a `bb.tsv.gz`).
 
 ```yaml
 het_snp_vcf: /path/to/phased_het_snps.vcf.gz
@@ -106,8 +106,8 @@ Refer to [Final bins](reference.md#final-bins) for the full specification of eac
   bb/
     {assay_type}.h5ad                          # gene x cell AnnData (scRNA/VISIUM)
     {assay_type}/                              # per assay, flat (no MSR{msr}/ layer)
-      cnv_segments.tsv                         # BB block annotations
-      bb.{Xcount,Tallele,Aallele,Ballele}.npz # per-block native + phased allele counts, blocks x cells
+      cnv_segments.tsv                         # bb annotations
+      bb.{Xcount,Tallele,Aallele,Ballele}.npz # per-bb native + phased allele counts, bbs x cells
       barcodes.tsv.gz                          # {BARCODE}_{REP_ID} per row
       barcodes.full.tsv.gz                     # REP_ID, BARCODE columns
       sample_ids.tsv                           # one row per replicate x assay, in matrix-column order

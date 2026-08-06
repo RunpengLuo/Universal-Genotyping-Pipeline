@@ -22,11 +22,11 @@ from scipy.sparse import save_npz
 
 from const import ASSAY_TYPE2MODALITY
 from io_utils import read_VCF
-from interval_utils import assign_pos_to_range
+from range_utils import assign_pos_to_range
 from combine_counts_utils import (
-    assign_snp_bounderies,
+    assign_snp_ranges,
     canon_mat_from_files,
-    merge_mats,
+    hstack_replicate_mats,
 )
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_alleles import plot_allele_freqs, plot_snp_depth
@@ -101,17 +101,17 @@ for idx, dataset_id in enumerate(dataset_ids):
     ad_mtx_list.append(ad_canon)
 
 all_barcodes = pd.concat(barcodes_list, axis=0, ignore_index=True)
-cell_rep_idx = np.repeat(
+cell_rep_ids = np.repeat(
     np.arange(len(dataset_ids), dtype=np.int64),
     [len(b) for b in barcodes_list],
 )
 barcodes_full = pd.DataFrame(
     {
-        "REP_ID": np.array(dataset_ids, dtype=str)[cell_rep_idx],
+        "REP_ID": np.array(dataset_ids, dtype=str)[cell_rep_ids],
         "BARCODE": all_barcodes["BARCODE"].to_numpy(),
     }
 )
-tot_mtx, ref_mtx, alt_mtx = merge_mats(tot_mtx_list, ad_mtx_list)
+tot_mtx, ref_mtx, alt_mtx = hstack_replicate_mats(tot_mtx_list, ad_mtx_list)
 a_mtx, b_mtx = apply_phase_to_mat(tot_mtx, ref_mtx, alt_mtx, snps["PHASE"].to_numpy())
 
 ##################################################
@@ -132,11 +132,14 @@ if is_rna_assay:
     feature_df = adata.var.reset_index(drop=False).rename(
         columns={"index": "feature_id"}
     )
-    feature_df["feature_idx"] = np.arange(len(feature_df))
+    feature_df["feature_df_idx"] = np.arange(len(feature_df))
     cov = assign_pos_to_range(
-        snps[["#CHR", "POS0"]].copy(), feature_df, ref_id="feature_idx", pos_col="POS0"
+        snps[["#CHR", "POS0"]].copy(),
+        feature_df,
+        ref_id="feature_df_idx",
+        pos_col="POS0",
     )
-    cov_mask = cov["feature_idx"].notna().to_numpy()
+    cov_mask = cov["feature_df_idx"].notna().to_numpy()
     snp_mask &= cov_mask
     logging.info(
         f"{assay_type} feature overlap: {np.sum(cov_mask)}/{len(snps)} "
@@ -149,7 +152,7 @@ snps = snps.loc[snp_mask, :].reset_index(drop=True)
 snps["START"] = snps["POS0"]
 snps["END"] = snps["POS"]
 
-snps = assign_snp_bounderies(snps, regions, colname="region_id")
+snps = assign_snp_ranges(snps, regions, colname="region_id")
 
 logging.info(f"#SNPs={np.sum(snp_mask)}/{num_snps_before} after filtering")
 
@@ -168,7 +171,7 @@ with PdfPages(af_pdf_path) as pdf:
         ref_mtx=ref_mtx,
         b_mtx=b_mtx,
         is_bulk=False,
-        cell_rep_idx=cell_rep_idx,
+        cell_rep_ids=cell_rep_ids,
         name_prefix="phase_and_concat",
         pdf=pdf,
         sample_id=sample_id,
@@ -182,14 +185,14 @@ with PdfPages(af_pdf_path) as pdf:
         qc_dir,
         apply_pseudobulk=True,
         allele="ref",
-        unit="SNP",
+        feature_label="SNP",
         suffix=".unphased",
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         run_id=run_id,
         sample_id=sample_id,
         pdf=pdf,
-        cell_rep_idx=cell_rep_idx,
+        cell_rep_ids=cell_rep_ids,
     )
     plot_allele_freqs(
         snps,
@@ -200,14 +203,14 @@ with PdfPages(af_pdf_path) as pdf:
         qc_dir,
         apply_pseudobulk=True,
         allele="B",
-        unit="SNP",
+        feature_label="SNP",
         suffix=".phased",
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         run_id=run_id,
         sample_id=sample_id,
         pdf=pdf,
-        cell_rep_idx=cell_rep_idx,
+        cell_rep_ids=cell_rep_ids,
     )
 
 ##################################################

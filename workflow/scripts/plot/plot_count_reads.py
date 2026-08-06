@@ -101,9 +101,9 @@ def plot_rd_2d_kde(
     gc_rmse : list of float or None
         Per-sample RMSE from the GC fit. Shown on the "Before" panel only.
     mappability : np.ndarray or None
-        Per-window mappability values. If provided, a MAP row is added.
+        Per-bin mappability values. If provided, a MAP row is added.
     repliseq : np.ndarray or None
-        Per-window replication timing values. If provided, an RT row is added.
+        Per-bin replication timing values. If provided, an RT row is added.
     title_prefix : str
         Optional prefix for page titles (e.g. ``"target — "``).
     """
@@ -163,7 +163,7 @@ def plot_rd_1d_scatter(
     labels,
     genome_size,
     pdf,
-    unit="window",
+    feature_label="bin",
     val_type="RD",
     ylim_before=None,
     ylim_after=None,
@@ -204,7 +204,7 @@ def plot_rd_1d_scatter(
             )
             ax.grid(axis="y", alpha=0.2)
         fig.suptitle(str(label), fontsize=12, y=1.0, fontweight="bold")
-        fig.supxlabel(f"Genome positions (MB) - {unit}")
+        fig.supxlabel(f"Genome positions (MB) - {feature_label}")
         fig.tight_layout()
         pdf.savefig(fig, dpi=dpi)
         plt.close(fig)

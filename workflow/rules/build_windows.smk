@@ -22,7 +22,7 @@
 #     . repliseq_liftover              [do_repliseq + hg38 target only, per {name}]
 #         in : {name}.hg19.bedGraph + chain URL (storage)
 #         out: {name}.hg38.bedGraph (cached under aux); hg19 runs skip this
-#     . build_window_bed              [one grid for every bulk assay: WGS/WGS-lr/WES]
+#     . build_window_bed              [one bin set for every bulk assay: WGS/WGS-lr/WES]
 #         in : segment_bed + reference + genome_size, and the optional
 #              mappability_bed, {reference_version} bedgraphs
 #         out: windows.bed.gz  (#CHR START END region_id seg_id GC [MAP] [REPLI])
@@ -35,7 +35,7 @@
 # use_prebuilt_windows, do_repliseq, window_size.
 ##################################################
 
-# One window BED for every bulk assay (WGS/WGS-lr/WES share the segment.bed grid).
+# One window BED for every bulk assay (WGS/WGS-lr/WES share the segment.bed tiling).
 window_bed_path = (
     config["window_bed"]
     if use_prebuilt_windows
@@ -142,7 +142,7 @@ if workflow_mode == "bulk_genotyping":
             Tiles segment_bed, assigns region_id + seg_id, then annotates GC (always),
             MAP (when mappability_bed is set), and REPLI (when Repli-seq bedGraphs are
             available). Optional inputs are empty ([]) when absent, and the script skips
-            the covariate whose input is empty. One grid for every bulk assay.
+            the covariate whose input is empty. One bin set for every bulk assay.
             """
             input:
                 region_bed=segment_bed,
@@ -180,7 +180,7 @@ if workflow_mode == "bulk_genotyping":
 
 
 rule window_bed_to_3bed:
-    """Headerless 3-column BED (#CHR/START/END) for mosdepth --by; one grid, all bulk assays."""
+    """Headerless 3-column BED (#CHR/START/END) for mosdepth --by; one bin set, all bulk assays."""
     input:
         window_bed=window_bed_path,
     output:

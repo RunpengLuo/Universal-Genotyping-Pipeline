@@ -1,4 +1,4 @@
-"""Aggregate allele/feature-level matrix into BB block-level matrix.
+"""Aggregate SNP-level and gene-level matrices onto pre-computed bbs.
 
 Input for Copy-typing.
 """
@@ -20,11 +20,11 @@ from scipy.sparse import issparse, load_npz, save_npz
 import scanpy as sc
 from const import ASSAY_TYPE2MODALITY, BULK_ASSAYS
 from io_utils import read_barcodes, read_full_barcodes
-from combine_counts_utils import cell_rep_idx_from_mapping
-from aggregation_utils import merge_feature_ids, snp_to_region
-from matrix_utils import matrix_segmentation
-from atac_utils import atac_fragments_to_bb
-from rna_utils import feature_to_blocks
+from combine_counts_utils import observation_cluster_ids
+from aggregation_utils import merge_feature_ids, assign_snps_to_bbs
+from matrix_utils import sum_features_to_bbs
+from atac_utils import count_atac_fragments_to_bbs
+from rna_utils import assign_features_to_ranges
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_alleles import plot_allele_freqs
 
@@ -77,7 +77,7 @@ dataset_ids = sample_df["REP_ID"].tolist()
 is_rna_assay = ASSAY_TYPE2MODALITY[assay_type] == "RNA"
 assert assay_type not in BULK_ASSAYS, "bulk sample CNV segmentation unsupported yet"
 
-cell_rep_idx = cell_rep_idx_from_mapping(
+cell_rep_ids = observation_cluster_ids(
     read_full_barcodes(barcodes_full_path), dataset_ids
 )
 
@@ -93,10 +93,10 @@ bb_df = pd.read_table(bb_file, sep="\t")
 bb_df = sort_df_chr(bb_df, pos="START")
 bb_df["bb_id"] = np.arange(len(bb_df))
 num_bbs = len(bb_df)
-logging.info(f"#BB blocks={num_bbs}")
+logging.info(f"#bbs={num_bbs}")
 
-snps["RAW_SNP_IDX"] = np.arange(len(snps))
-snps = snp_to_region(snps, bb_df, assay_type, region_id="bb_id")
+snps["RAW_SNP_DF_IDX"] = np.arange(len(snps))
+snps = assign_snps_to_bbs(snps, bb_df, assay_type, id_col="bb_id")
 
 if "feature_id" in snps.columns:
     bb_df["feature_id"] = (
@@ -105,10 +105,10 @@ if "feature_id" in snps.columns:
         .fillna("intergenic")
     )
 
-raw_snp_ids = snps["RAW_SNP_IDX"].to_numpy()
-tot_mtx = tot_mtx[raw_snp_ids, :]
-a_mtx = a_mtx[raw_snp_ids, :]
-b_mtx = b_mtx[raw_snp_ids, :]
+raw_snp_df_idx = snps["RAW_SNP_DF_IDX"].to_numpy()
+tot_mtx = tot_mtx[raw_snp_df_idx, :]
+a_mtx = a_mtx[raw_snp_df_idx, :]
+b_mtx = b_mtx[raw_snp_df_idx, :]
 
 logging.info(
     f"SNP-level matrices: shape={tot_mtx.shape}, "
@@ -118,13 +118,13 @@ logging.info(
 )
 
 bb_ids = snps["bb_id"].to_numpy()
-tot_mtx_bb = matrix_segmentation(tot_mtx, bb_ids, num_bbs)
-a_mtx_bb = matrix_segmentation(a_mtx, bb_ids, num_bbs)
-b_mtx_bb = matrix_segmentation(b_mtx, bb_ids, num_bbs)
+tot_mtx_bb = sum_features_to_bbs(tot_mtx, bb_ids, num_bbs)
+a_mtx_bb = sum_features_to_bbs(a_mtx, bb_ids, num_bbs)
+b_mtx_bb = sum_features_to_bbs(b_mtx, bb_ids, num_bbs)
 assert tot_mtx_bb.shape[0] == num_bbs
 
 logging.info(
-    f"BB-level matrices: shape={tot_mtx_bb.shape}, "
+    f"bb-level matrices: shape={tot_mtx_bb.shape}, "
     f"T sparsity={_sparsity(tot_mtx_bb):.4f}, "
     f"A sparsity={_sparsity(a_mtx_bb):.4f}, "
     f"B sparsity={_sparsity(b_mtx_bb):.4f}"
@@ -140,9 +140,9 @@ with PdfPages(pdf_path) as pdf:
         genome_size,
         qc_dir,
         apply_pseudobulk=True,
-        cell_rep_idx=cell_rep_idx,
+        cell_rep_ids=cell_rep_ids,
         allele="cnv-B",
-        unit="snp",
+        feature_label="snp",
         suffix=f"_{assay_type}",
         run_id=run_id,
         sample_id=sample_id,
@@ -156,9 +156,9 @@ with PdfPages(pdf_path) as pdf:
         genome_size,
         qc_dir,
         apply_pseudobulk=True,
-        cell_rep_idx=cell_rep_idx,
+        cell_rep_ids=cell_rep_ids,
         allele="cnv-B",
-        unit="bb",
+        feature_label="bb",
         suffix=f"_{assay_type}",
         run_id=run_id,
         sample_id=sample_id,
@@ -175,19 +175,19 @@ if is_rna_assay:
     )
     adata = adata[barcodes, :].copy()
 
-    adata = feature_to_blocks(
-        adata, bb_df, assay_type, block_idx="bb_id", drop_cols=False
+    adata = assign_features_to_ranges(
+        adata, bb_df, assay_type, range_id="bb_id", drop_cols=False
     )
     counts = adata.var["bb_id"].value_counts()
     bb_df["#feature"] = bb_df["bb_id"].map(counts).fillna(0).astype(int)
-    x_count = matrix_segmentation(adata.X.T, adata.var["bb_id"].to_numpy(), num_bbs)
+    x_count = sum_features_to_bbs(adata.X.T, adata.var["bb_id"].to_numpy(), num_bbs)
     logging.info(
-        f"Feature-level matrix: shape={adata.X.shape}, sparsity={_sparsity(adata.X):.4f}"
+        f"gene-level matrix: shape={adata.X.shape}, sparsity={_sparsity(adata.X):.4f}"
     )
 else:
     # scATAC: per-cell Xcount from raw 10x fragments (no tile h5ad)
     bb_grid = bb_df[["#CHR", "START", "END", "bb_id"]].copy()
-    x_count = atac_fragments_to_bb(
+    x_count = count_atac_fragments_to_bbs(
         frag_files,
         dataset_ids,
         read_full_barcodes(barcodes_full_path),
@@ -195,7 +195,7 @@ else:
         num_bbs,
     )
 logging.info(
-    f"BB-level X matrix: shape={x_count.shape}, sparsity={_sparsity(x_count):.4f}"
+    f"bb-level X matrix: shape={x_count.shape}, sparsity={_sparsity(x_count):.4f}"
 )
 
 save_npz(out_x_count, x_count.astype(COUNT_DTYPE))

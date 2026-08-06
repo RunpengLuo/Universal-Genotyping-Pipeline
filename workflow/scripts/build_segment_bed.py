@@ -101,7 +101,7 @@ logging.info(
 )
 
 # split each region piece at cuts inside it; seg index counts cuts at or before the
-# piece start, so all pieces of one arm in the same inter-cut interval share a seg_id
+# piece start, so all pieces of one arm in the same inter-cut range share a seg_id
 rows = []
 for chrom, start, end, rid in zip(
     regions["#CHR"].astype(str),

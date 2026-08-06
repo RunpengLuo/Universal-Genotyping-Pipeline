@@ -135,7 +135,7 @@ params_count_reads:
 > [!NOTE]
 > We recommend user to apply this correction and inspect the effects via `<qc_dir>/rd_correction.{assay_type}.pdf`.
 
-6. The final step of the pipeline is to perform variable-length segmentation over genomic windows jointly across all tumor samples and obtain genomic bin by sample read-depth ratio (RDR), phased B-allele counts, and total-allele count matrices. each value in minimum-SNP-covering reads parameter (`min_snp_reads`) gives one segmentation result. We recommend setting `min_snp_reads` to a list of values and inspect the QC plots for varying `min_snp_reads`, then pick the lowest value that gives reliable BAF signals.
+6. The final step of the pipeline is to perform adaptive binning over the fixed bins jointly across all tumor samples and obtain genomic bin by sample read-depth ratio (RDR), phased B-allele counts, and total-allele count matrices. each value in the minimum-SNP-covering reads parameter (`min_snp_reads`) gives one binning result. We recommend setting `min_snp_reads` to a list of values and inspect the QC plots for varying `min_snp_reads`, then pick the lowest value that gives reliable BAF signals.
 ```yaml
 params_combine_counts:
   min_snp_reads: [100, 500, 1000, 2000, 3000, 5000, 7500, 10000]
@@ -155,8 +155,8 @@ Refer to [Final bins](reference.md#final-bins) for the full specification of eac
   ...
   bb/
     MSR{msr}/                          # one subdir per min_snp_reads value
-      bulk/                            # one joint grid over all bulk assays (WGS/WGS-lr/WES)
-        bb.tsv.gz                      # bin annotations (grid shared by every matrix below)
+      bulk/                            # one joint bb set over all bulk assays (WGS/WGS-lr/WES)
+        bb.tsv.gz                      # bb annotations (shared by every matrix below)
         bb.{Tallele,Aallele,Ballele}.npz   # phased allele counts, bins x samples
         bb.{depth,rdr}.npz             # read depth (all samples) and RDR (tumor columns)
         sample_ids.tsv                 # one row per sample, in matrix-column order

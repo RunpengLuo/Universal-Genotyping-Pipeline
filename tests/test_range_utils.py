@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Unit tests for the shared interval-assignment primitives.
+"""Unit tests for the shared range-assignment primitives.
 
 Runpeng Luo (2026-08-06)
 
-``interval_utils`` replaced five near-copies of the same "which interval contains
+``range_utils`` replaced five near-copies of the same "which range contains
 this?" loop, so these tests pin the behaviours the callers rely on: the vectorized
 non-overlapping path, the scan fallback for overlapping references, the many-hit
 join, and the largest-overlap rule.
@@ -12,12 +12,12 @@ Dependencies:
   pytest, numpy, pandas.
 
 Usage:
-  pytest tests/test_interval_utils.py
+  pytest tests/test_range_utils.py
 
 Notes/References:
-  Callers: aggregation_utils (annotate_feature_type, adaptive_segmentation),
-  rna_utils (feature_to_blocks), combine_counts_utils (_windows_to_bins,
-  assign_snp_bounderies).
+  Callers: aggregation_utils (annotate_feature_type, build_adaptive_bins),
+  rna_utils (assign_features_to_ranges), combine_counts_utils (_windows_to_bins,
+  assign_snp_ranges).
 """
 
 import os
@@ -29,11 +29,11 @@ _REPO = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO, "workflow", "scripts", "script_utils"))
 np = pytest.importorskip("numpy")
 pd = pytest.importorskip("pandas")
-iv = pytest.importorskip("interval_utils")
+iv = pytest.importorskip("range_utils")
 
 
 def _ref(rows, id_col="rid"):
-    """Reference intervals from ``(chrom, start, end, id)`` tuples."""
+    """Reference ranges from ``(chrom, start, end, id)`` tuples."""
     return pd.DataFrame(rows, columns=["#CHR", "START", "END", id_col])
 
 
@@ -41,7 +41,7 @@ DISJOINT = _ref([("chr1", 0, 10, "a"), ("chr1", 10, 20, "b"), ("chr2", 0, 10, "c
 
 
 def test_pos_half_open_boundaries():
-    """START is inside the interval, END is not."""
+    """START is inside the range, END is not."""
     qry = pd.DataFrame({"#CHR": ["chr1"] * 4, "POS0": [0, 9, 10, 20]})
     got = iv.assign_pos_to_range(qry, DISJOINT, ref_id="rid")
     assert got["rid"].tolist()[:3] == ["a", "a", "b"]
@@ -66,7 +66,7 @@ def test_pos_empty_reference_chromosome():
 
 
 def test_pos_overlapping_reference_takes_first_by_start():
-    """With overlapping intervals the scan fallback keeps the earliest-starting hit."""
+    """With overlapping ranges the scan fallback keeps the earliest-starting hit."""
     ref = _ref([("chr1", 0, 100, "outer"), ("chr1", 40, 60, "inner")])
     qry = pd.DataFrame({"#CHR": ["chr1", "chr1"], "POS0": [50, 10]})
     got = iv.assign_pos_to_range(qry, ref, ref_id="rid")
@@ -74,38 +74,38 @@ def test_pos_overlapping_reference_takes_first_by_start():
 
 
 def test_pos_unsorted_reference():
-    """Reference order does not matter; intervals are start-sorted internally."""
+    """Reference order does not matter; ranges are start-sorted internally."""
     ref = _ref([("chr1", 10, 20, "b"), ("chr1", 0, 10, "a")])
     qry = pd.DataFrame({"#CHR": ["chr1", "chr1"], "POS0": [5, 15]})
     got = iv.assign_pos_to_range(qry, ref, ref_id="rid")
     assert got["rid"].tolist() == ["a", "b"]
 
 
-def test_interval_takes_largest_overlap():
-    """A query interval straddling two references picks the larger overlap."""
+def test_range_takes_largest_overlap():
+    """A query range straddling two references picks the larger overlap."""
     ref = _ref([("chr1", 0, 10, "a"), ("chr1", 10, 30, "b")])
     qry = pd.DataFrame({"#CHR": ["chr1"], "START": [8], "END": [20]})
-    got = iv.assign_interval_to_range(qry, ref, "rid")
+    got = iv.assign_range_to_range(qry, ref, "rid")
     assert got["rid"].tolist() == ["b"]
 
 
-def test_interval_touching_edge_does_not_overlap():
-    """Half-open intervals that only touch share no bases."""
+def test_range_touching_edge_does_not_overlap():
+    """Half-open ranges that only touch share no bases."""
     ref = _ref([("chr1", 10, 20, "a")])
     qry = pd.DataFrame({"#CHR": ["chr1", "chr1"], "START": [0, 20], "END": [10, 30]})
-    got = iv.assign_interval_to_range(qry, ref, "rid")
+    got = iv.assign_range_to_range(qry, ref, "rid")
     assert got["rid"].isna().all()
 
 
-def test_interval_does_not_mutate_input():
-    """assign_interval_to_range copies; assign_pos_to_range does not."""
+def test_range_does_not_mutate_input():
+    """assign_range_to_range copies; assign_pos_to_range does not."""
     qry = pd.DataFrame({"#CHR": ["chr1"], "START": [0], "END": [5]})
-    iv.assign_interval_to_range(qry, _ref([("chr1", 0, 10, "a")]), "rid")
+    iv.assign_range_to_range(qry, _ref([("chr1", 0, 10, "a")]), "rid")
     assert "rid" not in qry.columns
 
 
 def test_all_features_joins_every_overlap():
-    """Nested genes are all reported, joined in tier order; misses get the default."""
+    """Nested genes are all reported, joined in cluster order; misses get the default."""
     ref = _ref([("chr1", 0, 100, "G1"), ("chr1", 40, 60, "G2")], id_col="gene_id")
     snps = pd.DataFrame({"#CHR": ["chr1", "chr1", "chr1"], "POS0": [50, 10, 500]})
     got = iv.assign_all_features(snps, ref, id_col="gene_id")
@@ -122,7 +122,7 @@ def test_all_features_empty_reference():
 
 
 def test_overlaps_any_range_matches_assignment():
-    """The boolean variant agrees with assign_pos_to_range on nested intervals."""
+    """The boolean variant agrees with assign_pos_to_range on nested ranges."""
     ref = _ref([("chr1", 0, 100, "a"), ("chr1", 40, 60, "b"), ("chr2", 0, 10, "c")])
     qry = pd.DataFrame(
         {"#CHR": ["chr1"] * 3 + ["chr2", "chr9"], "POS0": [50, 150, 0, 5, 5]}
@@ -134,18 +134,18 @@ def test_overlaps_any_range_matches_assignment():
 
 
 def test_overlaps_any_range_empty_reference():
-    """No reference intervals means nothing overlaps."""
+    """No reference ranges means nothing overlaps."""
     qry = pd.DataFrame({"#CHR": ["chr1"], "POS0": [5]})
     assert not iv.overlaps_any_range(qry, _ref([])).any()
 
 
 @pytest.mark.parametrize("n_ref", [1, 2, 5])
-def test_interval_tiers_are_non_overlapping(n_ref):
-    """Every tier is internally disjoint, which is what the fast path assumes."""
+def test_range_clusters_are_non_overlapping(n_ref):
+    """Every cluster is internally disjoint, which is what the fast path assumes."""
     starts = np.arange(n_ref) * 5
     ends = starts + 12
-    for tier in iv._interval_tiers(starts, ends):
-        s, e = starts[tier], ends[tier]
+    for cluster in iv._range_clusters(starts, ends):
+        s, e = starts[cluster], ends[cluster]
         order = np.argsort(s)
         s, e = s[order], e[order]
         assert np.all(s[1:] >= e[:-1])

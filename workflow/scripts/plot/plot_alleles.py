@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import seaborn as sns
 
-from matrix_utils import dense_col, pseudobulk_by_groups
+from matrix_utils import dense_observation, sum_observations_to_pseudobulk
 
 from plot_genome import plot_1d_sample, plot_1d_multi_sample
 from plot_utils import _suptitle
@@ -29,24 +29,24 @@ def _af(num, den):
 
 def compute_af_per_sample(tot_mtx, b_mtx, i: int):
     """Per-SNP allele frequency for one sample column; ``NaN`` where depth is zero."""
-    return _af(dense_col(b_mtx, i), dense_col(tot_mtx, i))
+    return _af(dense_observation(b_mtx, i), dense_observation(tot_mtx, i))
 
 
-def compute_af_by_groups(tot_mtx, b_mtx, group_idx, n_groups):
-    """Per-group pseudobulk allele frequency matrix of shape (n_features, n_groups)."""
+def compute_af_by_clusters(tot_mtx, b_mtx, cluster_ids, n_clusters):
+    """Per-group pseudobulk allele frequency matrix of shape (n_features, n_clusters)."""
     return _af(
-        pseudobulk_by_groups(b_mtx, group_idx, n_groups),
-        pseudobulk_by_groups(tot_mtx, group_idx, n_groups),
+        sum_observations_to_pseudobulk(b_mtx, cluster_ids, n_clusters),
+        sum_observations_to_pseudobulk(tot_mtx, cluster_ids, n_clusters),
     )
 
 
 def compute_af_pseudobulk(tot_mtx, b_mtx):
     """Per-SNP allele frequency summed over all cells; ``NaN`` where depth is zero."""
 
-    def row_sum(mat):
+    def sum_over_observations(mat):
         return np.asarray(mat.sum(axis=1)).ravel() if issparse(mat) else mat.sum(axis=1)
 
-    return _af(row_sum(b_mtx), row_sum(tot_mtx))
+    return _af(sum_over_observations(b_mtx), sum_over_observations(tot_mtx))
 
 
 def plot_snp_depth(
@@ -57,10 +57,10 @@ def plot_snp_depth(
     ref_mtx=None,
     b_mtx=None,
     is_bulk=True,
-    cell_rep_idx=None,
+    cell_rep_ids=None,
     name_prefix="",
     pdf: PdfPages | None = None,
-    row_order=None,
+    obs_order=None,
     sample_id=None,
     max_points=50000,
 ):
@@ -86,11 +86,11 @@ def plot_snp_depth(
         Sample / replicate identifiers (violin x-order).
     is_bulk : bool
         If True, matrix columns are samples. If False, columns are cells; see
-        *cell_rep_idx*.
-    cell_rep_idx : np.ndarray or None
+        *cell_rep_ids*.
+    cell_rep_ids : np.ndarray or None
         Length-n_cells rep index per cell, consulted only when ``is_bulk=False``:
         cells are pseudobulked within each rep, else all cells collapse to one.
-    row_order : list[int] or None
+    obs_order : list[int] or None
         Dataset permutation applied before drawing (match the 1-D scatter order).
     sample_id : str or None
         Sample/patient id for the bold page super-title.
@@ -105,8 +105,8 @@ def plot_snp_depth(
             return None
         if is_bulk:
             return mat
-        if cell_rep_idx is not None:
-            return pseudobulk_by_groups(mat, cell_rep_idx, len(dataset_ids))
+        if cell_rep_ids is not None:
+            return sum_observations_to_pseudobulk(mat, cell_rep_ids, len(dataset_ids))
         return (
             np.asarray(mat.sum(axis=1))
             if issparse(mat)
@@ -116,18 +116,18 @@ def plot_snp_depth(
     depth_mat = _resolve(tot_mtx)
     ref_count_mat = _resolve(ref_mtx)
     b_count_mat = _resolve(b_mtx)
-    if is_bulk or cell_rep_idx is not None:
+    if is_bulk or cell_rep_ids is not None:
         labels = list(dataset_ids)
     else:
         labels = ["pseudobulk"]
 
-    if row_order is not None and len(row_order) == len(labels):
-        labels = [labels[i] for i in row_order]
-        depth_mat = depth_mat[:, row_order]
+    if obs_order is not None and len(obs_order) == len(labels):
+        labels = [labels[i] for i in obs_order]
+        depth_mat = depth_mat[:, obs_order]
         if ref_count_mat is not None:
-            ref_count_mat = ref_count_mat[:, row_order]
+            ref_count_mat = ref_count_mat[:, obs_order]
         if b_count_mat is not None:
-            b_count_mat = b_count_mat[:, row_order]
+            b_count_mat = b_count_mat[:, obs_order]
 
     rng = np.random.default_rng(0)
 
@@ -141,14 +141,14 @@ def plot_snp_depth(
         return pd.concat(rows, ignore_index=True)
 
     def _depth(ci):
-        total = dense_col(depth_mat, ci).astype(np.float64)
+        total = dense_observation(depth_mat, ci).astype(np.float64)
         return total[total > 0]
 
     def _frac(count_mat):
         def fn(ci):
-            total = dense_col(depth_mat, ci).astype(np.float64)
+            total = dense_observation(depth_mat, ci).astype(np.float64)
             cov = total > 0
-            return dense_col(count_mat, ci).astype(np.float64)[cov] / total[cov]
+            return dense_observation(count_mat, ci).astype(np.float64)[cov] / total[cov]
 
         return fn
 
@@ -201,28 +201,28 @@ def plot_allele_freqs(
     plot_dir,
     apply_pseudobulk=False,
     allele="ref",
-    unit="SNP",
+    feature_label="SNP",
     suffix="",
     snp_mask=None,
     region_bed=None,
     blacklist_bed=None,
     run_id="",
     pdf: PdfPages | None = None,
-    cell_rep_idx=None,
+    cell_rep_ids=None,
     name_prefix="",
     sample_id=None,
-    row_order=None,
+    obs_order=None,
 ):
     """Generate genome-wide allele-frequency scatter plots.
 
     Output mode is chosen by the combination of ``apply_pseudobulk`` and
-    ``cell_rep_idx``:
+    ``cell_rep_ids``:
 
     - ``apply_pseudobulk=False`` — columns of the matrices are samples;
       multi-row scatter, one row per ``dataset_ids`` entry.
-    - ``apply_pseudobulk=True`` and ``cell_rep_idx`` provided — cells are
+    - ``apply_pseudobulk=True`` and ``cell_rep_ids`` provided — cells are
       pseudobulked within each rep; multi-row scatter, one row per rep.
-    - ``apply_pseudobulk=True`` and ``cell_rep_idx`` is ``None`` — all cells
+    - ``apply_pseudobulk=True`` and ``cell_rep_ids`` is ``None`` — all cells
       collapse into a single pseudobulk page.
 
     Parameters
@@ -233,7 +233,7 @@ def plot_allele_freqs(
         Replicate identifiers; used as row labels.
     tot_mtx, b_mtx : sparse or ndarray
         Total depth and B-allele count matrices.
-    cell_rep_idx : np.ndarray or None
+    cell_rep_ids : np.ndarray or None
         Length-n_cells int array mapping each cell column to a rep index in
         ``dataset_ids``. See behavior matrix above.
     genome_size : str
@@ -242,24 +242,24 @@ def plot_allele_freqs(
         Output directory for PDF plots.
     allele : str
         Allele label for filenames (e.g., ``"ref"``, ``"B"``).
-    unit : str
-        Feature unit label (e.g., ``"SNP"``, ``"bin"``).
+    feature_label : str
+        Feature named in the x-label (e.g. ``"SNP"``, ``"bb"``).
     suffix : str
         Optional filename suffix.
     region_bed, blacklist_bed : str or None
         Optional BED files for background shading.
     """
-    per_rep_pseudobulk = apply_pseudobulk and cell_rep_idx is not None
+    per_rep_pseudobulk = apply_pseudobulk and cell_rep_ids is not None
     # B allele is phased -> label as BAF; ref allele is unphased -> AF.
     val_type = "BAF" if allele == "B" else "AF"
     logging.info(
-        f"QC analysis - plot {allele}-{unit} allele frequency, "
+        f"QC analysis - plot {allele}-{feature_label} allele frequency, "
         f"apply_pseudobulk={apply_pseudobulk}, per_rep_pseudobulk={per_rep_pseudobulk}"
     )
 
     if apply_pseudobulk and not per_rep_pseudobulk:
         af = compute_af_pseudobulk(tot_mtx, b_mtx)
-        stem = f"af_{allele}_{unit}.pseudobulk{suffix}"
+        stem = f"af_{allele}_{feature_label}.pseudobulk{suffix}"
         stem = f"{name_prefix}.{stem}" if name_prefix else stem
         plot_file = os.path.join(plot_dir, f"{stem}.{run_id}.pdf")
         plot_1d_sample(
@@ -267,7 +267,7 @@ def plot_allele_freqs(
             af,
             genome_size,
             plot_file,
-            unit=unit,
+            feature_label=feature_label,
             val_type=val_type,
             mask=snp_mask,
             sample_id=sample_id,
@@ -278,7 +278,7 @@ def plot_allele_freqs(
         return
 
     if per_rep_pseudobulk:
-        af_mat = compute_af_by_groups(tot_mtx, b_mtx, cell_rep_idx, len(dataset_ids))
+        af_mat = compute_af_by_clusters(tot_mtx, b_mtx, cell_rep_ids, len(dataset_ids))
     else:
         _tot_mtx = tot_mtx.tocsc() if issparse(tot_mtx) else tot_mtx
         _b_mtx = b_mtx.tocsc() if issparse(b_mtx) else b_mtx
@@ -288,7 +288,7 @@ def plot_allele_freqs(
                 for i in range(len(dataset_ids))
             ]
         )
-    stem = f"af_{allele}_{unit}{suffix}"
+    stem = f"af_{allele}_{feature_label}{suffix}"
     stem = f"{name_prefix}.{stem}" if name_prefix else stem
     plot_file = os.path.join(plot_dir, f"{stem}.{run_id}.pdf")
     plot_1d_multi_sample(
@@ -297,10 +297,10 @@ def plot_allele_freqs(
         list(dataset_ids),
         genome_size,
         plot_file,
-        unit=unit,
+        feature_label=feature_label,
         val_type=val_type,
         sample_id=sample_id,
-        row_order=row_order,
+        obs_order=obs_order,
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         pdf=pdf,

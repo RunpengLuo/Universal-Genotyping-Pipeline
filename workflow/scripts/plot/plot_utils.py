@@ -69,11 +69,11 @@ def _shade(ax, axis, region_df, blacklist_df):
     unioned first so overlaps do not compound the alpha.
     """
 
-    def _merge_intervals(df):
-        """Union overlapping/touching [START, END) intervals per ``#CHR``.
+    def _merge_ranges(df):
+        """Union overlapping/touching [START, END) ranges per ``#CHR``.
 
-        Shading each raw interval separately stacks the alpha where they overlap, so
-        overlapping masked regions render darker than a single interval. Merging first
+        Shading each raw range separately stacks the alpha where they overlap, so
+        overlapping masked regions render darker than a single range. Merging first
         keeps the fill uniform.
         """
         if df is None or len(df) == 0:
@@ -95,7 +95,7 @@ def _shade(ax, axis, region_df, blacklist_df):
 
     del region_df
     if blacklist_df is not None:
-        shade_regions(ax, axis, _merge_intervals(blacklist_df), color="gray", alpha=0.2)
+        shade_regions(ax, axis, _merge_ranges(blacklist_df), color="gray", alpha=0.2)
 
 
 def _load_shading(region_bed, blacklist_bed):
@@ -112,18 +112,18 @@ def _suptitle(fig, title):
     fig.suptitle(title, fontweight="bold", y=1 - 0.12 / fig.get_figheight())
 
 
-def _finish_page(fig, title, unit, out_file=None, dpi=72, pdf=None):
+def _finish_page(fig, title, feature_label, out_file=None, dpi=72, pdf=None):
     """Label, lay out and title one genome-wide page, then write and close it.
 
     Args:
         fig: The figure to finish.
         title: Bold page super-title.
-        unit: Feature unit named in the x-label (``window``, ``SNP``, ``bb``).
+        feature_label: Feature named in the x-label (``bin``, ``SNP``, ``bb``).
         out_file: Destination when *pdf* is None.
         dpi: Raster resolution.
         pdf: Open ``PdfPages`` to append to; the caller closes it.
     """
-    fig.supxlabel(f"Genome positions (MB) - {unit}")
+    fig.supxlabel(f"Genome positions (MB) - {feature_label}")
     fig.tight_layout()
     _suptitle(fig, title)
     if pdf is not None:
@@ -142,7 +142,7 @@ def _bold_chrnames(ax):
 _ASSAY_PLOT_RANK = {"bulkWGS": 0, "bulkWGS-lr": 1, "bulkWES": 2}
 
 
-def sample_row_order(assays, sample_types, dataset_ids):
+def observation_order(assays, sample_types, dataset_ids):
     """Row order for stacked sample plots.
 
     Sorts by assay (WGS < WGS-lr < WES; other assays last), then normal before

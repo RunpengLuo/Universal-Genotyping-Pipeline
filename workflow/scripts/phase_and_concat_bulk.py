@@ -1,4 +1,4 @@
-"""Joint phase-and-concat for ALL bulk assays on one shared SNP grid.
+"""Joint phase-and-concat for ALL bulk assays on one shared SNP set.
 
 Every bulk replicate (across every bulk assay) is piled up against the same phased
 het-SNP VCF, so ``canon_mat_one_replicate`` aligns them all to ONE shared parent SNP
@@ -25,12 +25,12 @@ import pandas as pd
 
 from io_utils import read_VCF, read_bcftools_counts
 from combine_counts_utils import (
-    assign_snp_bounderies,
+    assign_snp_ranges,
     bcftools_counts_to_child_mats,
     canon_mat_one_replicate,
     get_mask_by_depth,
     get_mask_by_het_balanced,
-    merge_mats,
+    hstack_replicate_mats,
 )
 from phasing_utils import apply_phase_to_mat
 from aggregation_utils import (
@@ -40,7 +40,7 @@ from aggregation_utils import (
 )
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_alleles import plot_allele_freqs, plot_snp_depth
-from plot_utils import sample_row_order
+from plot_utils import observation_order
 
 
 def log_ref_mapping_bias(ref_counts, alt_counts, label=""):
@@ -72,10 +72,10 @@ blacklist_bed = maybe_path(snakemake_handle.input["blacklist_bed"])
 # parameters
 qc_dir = snakemake_handle.params["qc_dir"]
 sample_id = snakemake_handle.params["sample_id"]
-col_assays = list(snakemake_handle.params["col_assays"])
-col_reps = list(snakemake_handle.params["col_reps"])
-col_sample_types = list(snakemake_handle.params["col_sample_types"])
-col_base_reps = list(snakemake_handle.params["col_base_reps"])
+obs_assays = list(snakemake_handle.params["obs_assays"])
+obs_reps = list(snakemake_handle.params["obs_reps"])
+obs_sample_types = list(snakemake_handle.params["obs_sample_types"])
+obs_base_reps = list(snakemake_handle.params["obs_base_reps"])
 min_depth = int(snakemake_handle.params["min_depth"])
 gamma = float(snakemake_handle.params["gamma"])
 exon_only = snakemake_handle.params["exon_only"]
@@ -88,11 +88,11 @@ out_a_mtx_snp = snakemake_handle.output["a_mtx_snp"]
 out_b_mtx_snp = snakemake_handle.output["b_mtx_snp"]
 out_sample_file = snakemake_handle.output["sample_file"]
 
-n_samples = len(col_reps)
-normal_cols = [k for k, st in enumerate(col_sample_types) if st == "normal"]
+n_samples = len(obs_reps)
+normal_obs = [k for k, st in enumerate(obs_sample_types) if st == "normal"]
 logging.info(
-    f"sample_id={sample_id}, {n_samples} bulk samples across assays={col_assays}, "
-    f"normal columns={normal_cols}"
+    f"sample_id={sample_id}, {n_samples} bulk samples across assays={obs_assays}, "
+    f"normal columns={normal_obs}"
 )
 
 ##################################################
@@ -114,7 +114,7 @@ for idx in range(n_samples):
     tot_mtx_list.append(tot_canon)
     ad_mtx_list.append(ad_canon)
 
-tot_mtx, ref_mtx, alt_mtx = merge_mats(tot_mtx_list, ad_mtx_list)
+tot_mtx, ref_mtx, alt_mtx = hstack_replicate_mats(tot_mtx_list, ad_mtx_list)
 a_mtx, b_mtx = apply_phase_to_mat(tot_mtx, ref_mtx, alt_mtx, snps["PHASE"].to_numpy())
 
 tot_mtx = tot_mtx.toarray()
@@ -123,11 +123,11 @@ alt_mtx = alt_mtx.toarray()
 a_mtx = a_mtx.toarray()
 b_mtx = b_mtx.toarray()
 
-for nc in normal_cols:
+for nc in normal_obs:
     log_ref_mapping_bias(
         ref_mtx[:, nc].astype(float),
         alt_mtx[:, nc].astype(float),
-        label=f"Normal[{col_assays[nc]}:{col_reps[nc]}]",
+        label=f"Normal[{obs_assays[nc]}:{obs_reps[nc]}]",
     )
 
 ##################################################
@@ -140,13 +140,13 @@ snp_mask, regions = apply_region_blacklist_masks(
 snps = annotate_feature_type(snps, gtf_file)
 
 snp_mask &= get_mask_by_depth(snps, tot_mtx, min_dp=max(min_depth, 1))
-for nc in normal_cols:
+for nc in normal_obs:
     snp_mask &= get_mask_by_het_balanced(snps, ref_mtx, alt_mtx, gamma, normal_idx=nc)
 
 snp_mask = apply_exon_only_mask(snps, snp_mask, exon_only)
 
 snps = snps.loc[snp_mask, :].reset_index(drop=True)
-snps = assign_snp_bounderies(snps, regions, colname="region_id")
+snps = assign_snp_ranges(snps, regions, colname="region_id")
 
 logging.info(f"#SNPs={np.sum(snp_mask)}/{num_snps_before} after filtering")
 
@@ -156,8 +156,8 @@ a_mtx = a_mtx[snp_mask, :]
 b_mtx = b_mtx[snp_mask, :]
 
 ##################################################
-sample_labels = [f"{col_assays[k]}:{col_reps[k]}" for k in range(n_samples)]
-plot_row_order = sample_row_order(col_assays, col_sample_types, col_reps)
+sample_labels = [f"{obs_assays[k]}:{obs_reps[k]}" for k in range(n_samples)]
+obs_order = observation_order(obs_assays, obs_sample_types, obs_reps)
 
 af_pdf_path = snakemake_handle.output["qc_pdf"]
 with PdfPages(af_pdf_path) as pdf:
@@ -169,10 +169,10 @@ with PdfPages(af_pdf_path) as pdf:
         ref_mtx=ref_mtx,
         b_mtx=b_mtx,
         is_bulk=True,
-        cell_rep_idx=None,
+        cell_rep_ids=None,
         name_prefix="phase_and_concat",
         pdf=pdf,
-        row_order=plot_row_order,
+        obs_order=obs_order,
         sample_id=sample_id,
     )
     plot_allele_freqs(
@@ -184,13 +184,13 @@ with PdfPages(af_pdf_path) as pdf:
         qc_dir,
         apply_pseudobulk=False,
         allele="ref",
-        unit="SNP",
+        feature_label="SNP",
         suffix=".unphased",
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         run_id=run_id,
         sample_id=sample_id,
-        row_order=plot_row_order,
+        obs_order=obs_order,
         pdf=pdf,
     )
     plot_allele_freqs(
@@ -202,13 +202,13 @@ with PdfPages(af_pdf_path) as pdf:
         qc_dir,
         apply_pseudobulk=False,
         allele="B",
-        unit="SNP",
+        feature_label="SNP",
         suffix=".phased",
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         run_id=run_id,
         sample_id=sample_id,
-        row_order=plot_row_order,
+        obs_order=obs_order,
         pdf=pdf,
     )
 
@@ -229,12 +229,12 @@ np.savez_compressed(out_b_mtx_snp, mat=b_mtx)
 
 sample_df = pd.DataFrame(
     {
-        "SAMPLE": [f"{sample_id}_{rep}" for rep in col_reps],
+        "SAMPLE": [f"{sample_id}_{rep}" for rep in obs_reps],
         "SAMPLE_NAME": sample_id,
-        "REP_ID": col_reps,
-        "sample_type": col_sample_types,
-        "assay_type": col_assays,
-        "RDR_BASE_REP_ID": col_base_reps,
+        "REP_ID": obs_reps,
+        "sample_type": obs_sample_types,
+        "assay_type": obs_assays,
+        "RDR_BASE_REP_ID": obs_base_reps,
     }
 )
 sample_df.to_csv(out_sample_file, sep="\t", header=True, index=False)

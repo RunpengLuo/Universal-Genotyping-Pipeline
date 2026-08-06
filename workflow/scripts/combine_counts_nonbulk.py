@@ -1,12 +1,12 @@
 """Joint per-sample adaptive binning for non-bulk assays.
 
 All non-bulk assays present in the sample (e.g. scRNA + scATAC for multiome) are segmented
-on ONE shared bin grid. Each (replicate x assay) is pseudobulked into one column;
-``adaptive_segmentation`` then requires ``min_snp_reads`` in EVERY column, so bins jointly
+onto ONE shared set of bbs. Each (replicate x assay) is pseudobulked into one observation;
+``build_adaptive_bins`` then requires ``min_snp_reads`` in EVERY observation, so bbs jointly
 satisfy every (rep, assay) -- exactly the bulk multi-sample pattern (see combine_counts.py),
 but with single cells pseudobulked per replicate first.
 
-All outputs live under ``bb_dir/MSR{msr}/{assay}/``: the shared grid ``bb.tsv.gz`` and combined
+All outputs live under ``bb_dir/MSR{msr}/{assay}/``: the shared ``bb.tsv.gz`` and combined
 ``sample_ids.tsv`` (duplicated per assay) plus the per-assay (n_bins x n_cells) matrices
 (``bb.{T,A,B}allele.npz``, ``multi_snp.*``, ``barcodes*``). Input for HATCHet3 and CalicoST.
 """
@@ -28,23 +28,23 @@ from scipy.sparse import save_npz, load_npz
 
 from io_utils import read_barcodes, read_full_barcodes
 from combine_counts_utils import (
-    build_union_snp_grid,
-    cell_rep_idx_from_mapping,
+    build_union_snps,
+    observation_cluster_ids,
 )
 from phasing_utils import (
     estimate_switchprobs_PS,
     estimate_switchprobs_cM,
-    interp_cM_blocks,
-    setup_phaseset_groups,
+    interp_cM_between_bbs,
+    setup_phase_clusters,
 )
-from matrix_utils import matrix_segmentation, pseudobulk_by_groups
-from atac_utils import atac_fragments_to_bb
-from rna_utils import rna_h5ad_to_bb
+from matrix_utils import sum_features_to_bbs, sum_observations_to_pseudobulk
+from atac_utils import count_atac_fragments_to_bbs
+from rna_utils import sum_rna_counts_to_bbs
 from aggregation_utils import (
-    adaptive_segmentation,
-    gene_block_labels,
+    build_adaptive_bins,
+    gene_cluster_labels,
     merge_feature_ids,
-    snps_to_windows,
+    assign_snps_to_bins,
 )
 from plot_alleles import plot_allele_freqs
 from matplotlib.backends.backend_pdf import PdfPages
@@ -107,7 +107,7 @@ a_mtx_snp_list = [load_npz(f) for f in a_mtx_snp_files]
 b_mtx_snp_list = [load_npz(f) for f in b_mtx_snp_files]
 rep_ids_list = [s["REP_ID"].tolist() for s in sample_ids_list]
 cell_rep_idx_list = [
-    cell_rep_idx_from_mapping(read_full_barcodes(bc_full), rep_ids_list[k])
+    observation_cluster_ids(read_full_barcodes(bc_full), rep_ids_list[k])
     for k, bc_full in enumerate(barcode_full_files)
 ]
 
@@ -119,17 +119,17 @@ sample_id = (
 logging.info(f"joint non-bulk binning: sample_id={sample_id}, assays={nonbulk_assays}")
 
 ##################################################
-# 1. shared SNP grid (union across assays)
-snps, has_ps, has_feature = build_union_snp_grid(snps_list)
+# 1. shared SNP set (union across assays)
+snps, has_ps, has_feature = build_union_snps(snps_list)
 n_snps = len(snps)
 logging.info(f"shared SNP set (union): {n_snps} SNPs across {n_assays} assays")
 
-grp_cols = setup_phaseset_groups(snps)
+cluster_cols = setup_phase_clusters(snps)
 
 gene_aware_binning = gene_aware_binning_param and has_feature
 logging.info(f"gene_aware_binning={gene_aware_binning}")
 if gene_aware_binning:
-    # gene blocks over the union SNPs (genomically ordered) so a bin never splits a
+    # gene clusters over the union SNPs (genomically ordered) so a bb never splits a
     # gene; explode the ;-joined multi-gene feature_id so each gene gets its own span
     _g = snps.loc[
         snps["feature_id"].notna() & (snps["feature_id"] != "intergenic"),
@@ -140,54 +140,56 @@ if gene_aware_binning:
     _g = _g.explode("feature_id")
     _g = _g[_g["feature_id"] != "intergenic"]
     _rng = _g.groupby("feature_id")["__i"].agg(["min", "max"])
-    snps["gene_block"] = gene_block_labels(
+    snps["gene_cluster"] = gene_cluster_labels(
         len(snps), zip(_rng["min"].to_numpy(), _rng["max"].to_numpy())
     )
 
 ##################################################
-# 2. per-(replicate x assay) pseudobulk scattered onto the shared grid
+# 2. per-(replicate x assay) pseudobulk scattered onto the shared SNP set
 total_cols = sum(len(r) for r in rep_ids_list)
 tot_pb = np.zeros((n_snps, total_cols), dtype=np.float64)
 tot_pb_list = []  # per-assay (n_snps_k x n_reps_k) pseudobulk, in that assay's SNP order
-col_assay, col_repid, col_offsets = [], [], []
+obs_assay, obs_repid, obs_offsets = [], [], []
 offset = 0
 for k in range(n_assays):
     n_reps_k = len(rep_ids_list[k])
-    tot_pb_k = pseudobulk_by_groups(tot_mtx_snp_list[k], cell_rep_idx_list[k], n_reps_k)
+    tot_pb_k = sum_observations_to_pseudobulk(
+        tot_mtx_snp_list[k], cell_rep_idx_list[k], n_reps_k
+    )
     tot_pb_list.append(tot_pb_k)
-    shared_row = (
+    shared_snp_ids = (
         snps_list[k][["#CHR", "POS0"]]
-        .merge(snps[["#CHR", "POS0", "snp_row"]], on=["#CHR", "POS0"], how="left")[
-            "snp_row"
+        .merge(snps[["#CHR", "POS0", "snp_id"]], on=["#CHR", "POS0"], how="left")[
+            "snp_id"
         ]
         .to_numpy()
         .astype(np.int64)
     )
-    tot_pb[shared_row, offset : offset + tot_pb_k.shape[1]] = tot_pb_k
-    col_assay += [nonbulk_assays[k]] * n_reps_k
-    col_repid += rep_ids_list[k]
-    col_offsets.append(offset)
+    tot_pb[shared_snp_ids, offset : offset + tot_pb_k.shape[1]] = tot_pb_k
+    obs_assay += [nonbulk_assays[k]] * n_reps_k
+    obs_repid += rep_ids_list[k]
+    obs_offsets.append(offset)
     offset += n_reps_k
-logging.info(f"binning on {total_cols} (replicate x assay) pseudobulk columns")
+logging.info(f"binning on {total_cols} (replicate x assay) pseudobulk observations")
 
 ##################################################
-# 3. shared precompute (genetic map, sample sheet, windows, multi-SNP groups)
+# 3. shared precompute (genetic map, sample sheet, fixed bins, multi-SNP clusters)
 genetic_map = pd.read_table(gmap_file, sep="\t") if gmap_file is not None else None
 h5ad_of = dict(zip(h5ad_assays, h5ad_files))
-# combined sample sheet: one row per (replicate x assay) column
+# combined sample sheet: one entry per (replicate x assay) observation
 joint_sids = pd.concat(
     [sample_ids_list[k].assign(assay_type=nonbulk_assays[k]) for k in range(n_assays)],
     ignore_index=True,
 )
-# per-SNP zero-width windows for the joint segmentation
-win_cols = ["#CHR", "START", "END", "region_id", "PS"]
+# per-SNP zero-width fixed bins for the joint binning
+bin_cols = ["#CHR", "START", "END", "region_id", "PS"]
 if gene_aware_binning:
-    win_cols.append("gene_block")
-snp_windows = snps[win_cols].copy()
-snp_windows["win_idx"] = np.arange(len(snp_windows))
+    bin_cols.append("gene_cluster")
+snp_bins = snps[bin_cols].copy()
+snp_bins["bin_id"] = np.arange(len(snp_bins))
 tot_pb_cont = np.ascontiguousarray(tot_pb)
 # assigned once here; every MSR below reuses it
-snps_win = snps_to_windows(snps, snp_windows, tot_pb_cont)
+snps_binned = assign_snps_to_bins(snps, snp_bins, tot_pb_cont)
 
 # per-assay multi-SNP pre-grouping (diagnostic; every nsnp_multi SNPs)
 multi_cache = []
@@ -195,27 +197,27 @@ for k in range(n_assays):
     snps_k = snps_list[k].copy()
     if "PS" not in snps_k.columns:
         snps_k["PS"] = 1
-    win_k = snps_k[["#CHR", "START", "END", "region_id"]].copy()
-    win_k["win_idx"] = np.arange(len(win_k))
-    multi_snps, snps_multi = adaptive_segmentation(
-        win_k,
+    bins_k = snps_k[["#CHR", "START", "END", "region_id"]].copy()
+    bins_k["bin_id"] = np.arange(len(bins_k))
+    multi_snps, snps_multi = build_adaptive_bins(
+        bins_k,
         snps_k,
         np.ascontiguousarray(tot_pb_list[k]),
         0,
         nsnp_multi,
-        grp_cols=["region_id"],
+        cluster_cols=["region_id"],
         tumor_sidx=0,
         max_blocksize=0,
         gene_aware=False,
     )
-    mo = snps_multi["_orig_idx"].to_numpy()
+    mo = snps_multi["_orig_df_idx"].to_numpy()
     multi_ids = snps_multi["bb_id"].to_numpy()
-    tot_multi = matrix_segmentation(tot_mtx_snp_list[k][mo], multi_ids, len(multi_snps))
-    a_multi = matrix_segmentation(a_mtx_snp_list[k][mo], multi_ids, len(multi_snps))
-    b_multi = matrix_segmentation(b_mtx_snp_list[k][mo], multi_ids, len(multi_snps))
+    tot_multi = sum_features_to_bbs(tot_mtx_snp_list[k][mo], multi_ids, len(multi_snps))
+    a_multi = sum_features_to_bbs(a_mtx_snp_list[k][mo], multi_ids, len(multi_snps))
+    b_multi = sum_features_to_bbs(b_mtx_snp_list[k][mo], multi_ids, len(multi_snps))
     if genetic_map is not None:
-        dist_cms_multi = interp_cM_blocks(
-            multi_snps, snps_multi, genetic_map, block_id_col="bb_id"
+        dist_cms_multi = interp_cM_between_bbs(
+            multi_snps, snps_multi, genetic_map, bb_id_col="bb_id"
         )
         multi_snps["switchprobs"] = estimate_switchprobs_cM(
             dist_cms_multi, nu=nu, min_switchprob=min_switchprob
@@ -236,13 +238,13 @@ for k in range(n_assays):
 n_msr = len(msr_list)
 for j, min_snp_reads in enumerate(msr_list):
     logging.info(f"===== joint non-bulk binning MSR={min_snp_reads} =====")
-    bbs, snps_bb = adaptive_segmentation(
-        snp_windows,
-        snps_win.copy(),
+    bbs, snps_bb = build_adaptive_bins(
+        snp_bins,
+        snps_binned.copy(),
         tot_pb_cont,
         min_snp_reads,
         min_snp_per_bin,
-        grp_cols=grp_cols,
+        cluster_cols=cluster_cols,
         tumor_sidx=0,
         max_blocksize=0,
         gene_aware=gene_aware_binning,
@@ -250,7 +252,7 @@ for j, min_snp_reads in enumerate(msr_list):
     num_bbs = len(bbs)
 
     if genetic_map is not None:
-        dist_cms = interp_cM_blocks(bbs, snps_bb, genetic_map, block_id_col="bb_id")
+        dist_cms = interp_cM_between_bbs(bbs, snps_bb, genetic_map, bb_id_col="bb_id")
         bbs["switchprobs"] = estimate_switchprobs_cM(
             dist_cms, nu=nu, min_switchprob=min_switchprob
         )
@@ -267,9 +269,9 @@ for j, min_snp_reads in enumerate(msr_list):
         bb_cols.append("feature_id")
     bb_out = bbs[bb_cols]
 
-    # union SNP -> shared bb_id map + shared bb grid (fragment/gene -> bin assignment)
+    # union SNP -> shared bb_id map + the bb ranges (fragment/gene -> bb assignment)
     bb_of_snp = snps_bb[["#CHR", "POS0", "bb_id"]]
-    bb_grid = bbs[["#CHR", "START", "END", "bb_id"]].copy()
+    bb_ranges = bbs[["#CHR", "START", "END", "bb_id"]].copy()
 
     for k in range(n_assays):
         assay = nonbulk_assays[k]
@@ -278,28 +280,28 @@ for j, min_snp_reads in enumerate(msr_list):
         bb_out.to_csv(out_bb_file[idx], sep="\t", header=True, index=False)
         joint_sids.to_csv(out_sample_file[idx], sep="\t", index=False)
 
-        # map this assay's SNPs to the shared bb grid
+        # map this assay's SNPs to the shared bbs
         m = snps_list[k][["#CHR", "POS0"]].merge(
             bb_of_snp, on=["#CHR", "POS0"], how="left"
         )
         keep = m["bb_id"].notna().to_numpy()
-        rows_k = np.where(keep)[0]
+        snp_rows_k = np.where(keep)[0]
         bb_ids_k = m.loc[keep, "bb_id"].to_numpy().astype(np.int64)
 
-        tot_bb = matrix_segmentation(tot_mtx_snp_list[k][rows_k], bb_ids_k, num_bbs)
-        a_bb = matrix_segmentation(a_mtx_snp_list[k][rows_k], bb_ids_k, num_bbs)
-        b_bb = matrix_segmentation(b_mtx_snp_list[k][rows_k], bb_ids_k, num_bbs)
+        tot_bb = sum_features_to_bbs(tot_mtx_snp_list[k][snp_rows_k], bb_ids_k, num_bbs)
+        a_bb = sum_features_to_bbs(a_mtx_snp_list[k][snp_rows_k], bb_ids_k, num_bbs)
+        b_bb = sum_features_to_bbs(b_mtx_snp_list[k][snp_rows_k], bb_ids_k, num_bbs)
         save_npz(out_tot_mtx_bb[idx], tot_bb)
         save_npz(out_a_mtx_bb[idx], a_bb)
         save_npz(out_b_mtx_bb[idx], b_bb)
 
         # per-cell Xcount per bb bin: scATAC from raw fragments, RNA from the h5ad
         if assay == "scATAC":
-            x_count = atac_fragments_to_bb(
+            x_count = count_atac_fragments_to_bbs(
                 frag_files,
                 frag_reps,
                 read_full_barcodes(barcode_full_files[k]),
-                bb_grid,
+                bb_ranges,
                 num_bbs,
             )
             save_npz(out_x_count[idx], x_count)
@@ -307,8 +309,12 @@ for j, min_snp_reads in enumerate(msr_list):
                 f"{assay} MSR={min_snp_reads} Xcount (fragments): shape={x_count.shape}, nnz={x_count.nnz}"
             )
         elif assay in h5ad_of:
-            x_count = rna_h5ad_to_bb(
-                h5ad_of[assay], read_barcodes(barcode_files[k]), bb_grid, num_bbs, assay
+            x_count = sum_rna_counts_to_bbs(
+                h5ad_of[assay],
+                read_barcodes(barcode_files[k]),
+                bb_ranges,
+                num_bbs,
+                assay,
             )
             save_npz(out_x_count[idx], x_count)
             logging.info(
@@ -324,9 +330,9 @@ for j, min_snp_reads in enumerate(msr_list):
             genome_size,
             qc_dir,
             apply_pseudobulk=True,
-            cell_rep_idx=cell_rep_idx_list[k],
+            cell_rep_ids=cell_rep_idx_list[k],
             allele="B",
-            unit="bb",
+            feature_label="bb",
             run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
             name_prefix="combine_counts",
             sample_id=sample_id,
@@ -346,9 +352,9 @@ for j, min_snp_reads in enumerate(msr_list):
             genome_size,
             qc_dir,
             apply_pseudobulk=True,
-            cell_rep_idx=cell_rep_idx_list[k],
+            cell_rep_ids=cell_rep_idx_list[k],
             allele="B",
-            unit="multi-snp",
+            feature_label="multi-snp",
             run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
             name_prefix="combine_counts",
             sample_id=sample_id,

@@ -54,7 +54,7 @@ def read_VCF(
         snps = snps.iloc[:, :10].copy()
     snps.columns = colnames
     snps["POS"] = snps["POS"].astype(np.int64)
-    snps["RAW_SNP_IDX"] = np.arange(len(snps))
+    snps["RAW_SNP_DF_IDX"] = np.arange(len(snps))
     if addchr and not str(snps["#CHROM"].iloc[0]).startswith("chr"):
         snps["#CHROM"] = "chr" + snps["#CHROM"].astype(str)
 
@@ -135,7 +135,7 @@ def read_bcftools_counts(tsv_file: str):
     Returns:
         DataFrame with columns ``#CHROM``, ``POS``, ``REF``, ``ALT`` (list[str]),
         ``AD`` (list[int]), ``KEY`` (``#CHROM_POS``, matching ``read_VCF``), and
-        ``RAW_SNP_IDX`` (file row order). Empty DataFrame if the file has no records.
+        ``RAW_SNP_DF_IDX`` (file row order). Empty DataFrame if the file has no records.
     """
     df = pd.read_csv(
         tsv_file,
@@ -151,7 +151,7 @@ def read_bcftools_counts(tsv_file: str):
         df["#CHROM"] = "chr" + df["#CHROM"].astype(str)
     df["#CHROM"] = df["#CHROM"].str.replace("^chrMT$", "chrM", regex=True)
     df["KEY"] = df["#CHROM"].astype(str) + "_" + df["POS"].astype(str)
-    df["RAW_SNP_IDX"] = np.arange(len(df))
+    df["RAW_SNP_DF_IDX"] = np.arange(len(df))
     df["ALT"] = df["ALT"].str.split(",")
     df["AD"] = df["AD"].str.split(",").apply(lambda xs: [int(x) for x in xs])
     return df

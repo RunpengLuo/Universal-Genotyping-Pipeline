@@ -7,5 +7,6 @@
 | [bulk_genotyping.md](bulk_genotyping.md) | Tutorial: bulk WGS/WES + long-read, from panels to final bins. |
 | [single_cell_genotyping.md](single_cell_genotyping.md) | Tutorial: single-cell (scRNA/scATAC/VISIUM). |
 | [copytyping_preprocess.md](copytyping_preprocess.md) | Tutorial: copytyping preprocess. |
+| [DEVELOPER.md](DEVELOPER.md) | Vocabulary (genomic units, matrix axes) and function-naming rules. |
 | [TODO.md](TODO.md) | Development TODO. |
 | [../resources/README.md](../resources/README.md) | External resources |

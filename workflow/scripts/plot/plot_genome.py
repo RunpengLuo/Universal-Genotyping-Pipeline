@@ -30,7 +30,7 @@ def plot_1d_multi_sample(
     labels: list,
     genome_size: str,
     out_file: str,
-    unit="window",
+    feature_label="bin",
     val_type="RD",
     s=4,
     dpi=72,
@@ -38,7 +38,7 @@ def plot_1d_multi_sample(
     min_ylim=0.0,
     max_ylim=None,
     sample_id: str | None = None,
-    row_order: list | None = None,
+    obs_order: list | None = None,
     region_bed: str | None = None,
     blacklist_bed: str | None = None,
     pdf: PdfPages | None = None,
@@ -57,15 +57,15 @@ def plot_1d_multi_sample(
         Sample labels, length == mat.shape[1].
     sample_id : str or None
         Sample/patient id for the page super-title.
-    row_order : list[int] or None
+    obs_order : list[int] or None
         Row permutation applied to *labels* and *mat* columns before drawing.
     """
-    if row_order is not None:
-        labels = [labels[i] for i in row_order]
-        mat = mat[:, row_order]
+    if obs_order is not None:
+        labels = [labels[i] for i in obs_order]
+        mat = mat[:, obs_order]
     n_samples = len(labels)
     logging.info(
-        f"genome-wide {unit}-level {val_type} multi-sample plot "
+        f"genome-wide {feature_label}-level {val_type} multi-sample plot "
         f"({n_samples} samples), out_file={out_file}"
     )
     axis = _get_axis(genome_size, pos_df["#CHR"])
@@ -108,7 +108,7 @@ def plot_1d_multi_sample(
 
     val_name = _val_full(val_type)
     title = f"{sample_id} - {val_name}" if sample_id else val_name
-    _finish_page(fig, title, unit, out_file=out_file, dpi=dpi, pdf=pdf)
+    _finish_page(fig, title, feature_label, out_file=out_file, dpi=dpi, pdf=pdf)
 
 
 def plot_1d_sample(
@@ -116,7 +116,7 @@ def plot_1d_sample(
     val: np.ndarray,
     genome_size: str,
     out_file: str,
-    unit="SNP",
+    feature_label="SNP",
     val_type="BAF",
     s=4,
     dpi=72,
@@ -140,7 +140,9 @@ def plot_1d_sample(
     When *mask* is given, ``mask``-true points use ``mask_colors[0]``/``mask_labels[0]``
     and ``mask``-false points use ``mask_colors[1]``/``mask_labels[1]``, with a legend.
     """
-    logging.info(f"genome-wide {unit}-level {val_type} plot, out_file={out_file}")
+    logging.info(
+        f"genome-wide {feature_label}-level {val_type} plot, out_file={out_file}"
+    )
     axis = _get_axis(genome_size, pos_df["#CHR"])
     region_df, blacklist_df = _load_shading(region_bed, blacklist_bed)
 
@@ -213,5 +215,5 @@ def plot_1d_sample(
 
     val_name = _val_full(val_type)
     title = f"{sample_id} - {val_name}" if sample_id else val_name
-    _finish_page(fig, title, unit, out_file=out_file, dpi=dpi, pdf=pdf)
+    _finish_page(fig, title, feature_label, out_file=out_file, dpi=dpi, pdf=pdf)
     return

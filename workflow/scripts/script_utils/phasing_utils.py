@@ -1,9 +1,9 @@
-"""Phasing helpers: phase-set grouping, phase application, flips, switch probabilities.
+"""Phasing helpers: phase clusters, phase application, flips, switch probabilities.
 
-Everything downstream of the phaser that decides how a haplotype is carried across
-SNPs and blocks: which SNPs share a phase set, how a per-SNP phase label turns REF/ALT
-counts into A/B counts, where a phase flip splits a block, and the probability that a
-haplotype switches between consecutive blocks.
+Everything downstream of the phaser that decides how a haplotype is carried across SNPs
+and bbs: which SNPs share a phase cluster (the VCF ``PS`` tag), how a per-SNP phase
+label turns REF/ALT counts into A/B counts, where a phase flip splits a cluster, and the
+probability that a haplotype switches between consecutive bbs.
 """
 
 import logging
@@ -14,14 +14,15 @@ from scipy.sparse import issparse
 from scipy.stats import beta as beta_dist
 
 
-def setup_phaseset_groups(snps):
-    """Ensure ``seg_id``/``PS`` columns exist; return grouping ``[region_id, seg_id, PS]``.
+def setup_phase_clusters(snps):
+    """Ensure ``seg_id``/``PS`` columns exist; return ``[region_id, seg_id, PS]``.
 
-    ``seg_id`` (the breakpoint chunk from build_segment_bed) is the hard bin boundary;
-    binning groups by it and never merges across it, while ``region_id`` (the arm) is
-    carried for RDR/QC. When ``seg_id`` is absent (no global BED), it falls back to
-    ``region_id`` so grouping is identical to the pre-seg_id behavior. If ``PS`` is
-    absent, set ``PS=1``; when present every SNP must carry a non-null value.
+    These are the ``cluster_cols`` binning uses. ``seg_id`` (the breakpoint chunk from
+    build_segment_bed) is the hard bb boundary; binning clusters by it and never merges
+    across it, while ``region_id`` (the arm) is carried for RDR/QC. When ``seg_id`` is
+    absent (no global BED), it falls back to ``region_id`` so clustering is identical to
+    the pre-seg_id behavior. ``PS`` is the phase cluster (VCF ``PS`` tag); if absent, set
+    ``PS=1``, and when present every SNP must carry a non-null value.
     """
     assert "region_id" in snps.columns, "invalid SNP file"
     if "seg_id" not in snps.columns:
@@ -32,7 +33,7 @@ def setup_phaseset_groups(snps):
     else:
         assert snps["PS"].notna().all(), "unexpected SNP without PS in phased VCF"
     logging.info(
-        f"#seg_id={snps['seg_id'].nunique()}, #phaseset={snps['PS'].nunique()}"
+        f"#seg_id={snps['seg_id'].nunique()}, #phase clusters={snps['PS'].nunique()}"
     )
     return ["region_id", "seg_id", "PS"]
 
@@ -68,7 +69,7 @@ def apply_phase_to_mat(tot_mtx, ref_mtx, alt_mtx, phases):
 
 
 def detect_phase_flips(
-    snps, a_mtx, b_mtx, grp_cols, tumor_sidx=0, epsilon=0.05, alpha=0.05
+    snps, a_mtx, b_mtx, cluster_cols, tumor_sidx=0, epsilon=0.05, alpha=0.05
 ):
     """Detect phase flips between consecutive SNPs using Beta credible intervals.
 
@@ -84,7 +85,7 @@ def detect_phase_flips(
         A-allele counts (N SNPs, M samples).
     b_mtx : (N, M) ndarray
         B-allele counts (N SNPs, M samples).
-    grp_cols : list of str
+    cluster_cols : list of str
         Columns to group SNPs by (e.g. ["region_id", "PS"]).
     tumor_sidx : int
         Index of first tumor sample column.
@@ -96,7 +97,7 @@ def detect_phase_flips(
     Returns
     -------
     pd.Series
-        Globally unique phase_group IDs aligned to snps index.
+        Globally unique phase-cluster IDs aligned to the snps index.
     """
     a_tumor = (
         a_mtx[:, tumor_sidx:].toarray() if issparse(a_mtx) else a_mtx[:, tumor_sidx:]
@@ -114,17 +115,17 @@ def detect_phase_flips(
         b_tumor, tot_tumor, out=np.full_like(b_tumor, np.nan), where=tot_tumor > 0
     )
 
-    phase_group = np.zeros(len(snps), dtype=np.int64)
-    global_pg = 0
+    phase_cluster = np.zeros(len(snps), dtype=np.int64)
+    global_pc = 0
     n_boundaries = 0
-    n_groups_split = 0
+    n_clusters_split = 0
     flip_records = []
 
-    for _, grp in snps.groupby(grp_cols, sort=False):
+    for _, grp in snps.groupby(cluster_cols, sort=False):
         idx = grp.index.to_numpy()
         if len(idx) < 2:
-            phase_group[idx] = global_pg
-            global_pg += 1
+            phase_cluster[idx] = global_pc
+            global_pc += 1
             continue
 
         # Vectorized: check all consecutive pairs × all samples at once
@@ -135,13 +136,13 @@ def detect_phase_flips(
             | ((lo_prev > 0.5 + epsilon) & (hi_curr < 0.5 - epsilon))
         ).any(axis=1)
 
-        local_pg = np.concatenate([[0], np.cumsum(is_flip)])
-        phase_group[idx] = global_pg + local_pg
+        local_pc = np.concatenate([[0], np.cumsum(is_flip)])
+        phase_cluster[idx] = global_pc + local_pc
 
         n_flip = int(is_flip.sum())
         n_boundaries += n_flip
         if n_flip > 0:
-            n_groups_split += 1
+            n_clusters_split += 1
             for fp in np.where(is_flip)[0]:
                 pi, ci = idx[fp], idx[fp + 1]
                 mean_diff = np.nanmean(np.abs(baf[pi] - baf[ci]))
@@ -156,12 +157,12 @@ def detect_phase_flips(
                     )
                 )
 
-        global_pg += int(local_pg[-1]) + 1
+        global_pc += int(local_pc[-1]) + 1
 
     logging.info(
         f"detect_phase_flips: epsilon={epsilon}, alpha={alpha}, "
-        f"boundaries={n_boundaries}, groups_split={n_groups_split}, "
-        f"new_phase_groups={global_pg}"
+        f"boundaries={n_boundaries}, clusters_split={n_clusters_split}, "
+        f"new_phase_groups={global_pc}"
     )
 
     if flip_records:
@@ -179,59 +180,59 @@ def detect_phase_flips(
                 b2s = ",".join(f"{v:.3f}" for v in b2)
                 logging.info(f"  {chrom}:{p1}-{p2}  BAF=[{b1s}]→[{b2s}]  |Δ|={d:.3f}")
 
-    return pd.Series(phase_group, index=snps.index, dtype=np.int64)
+    return pd.Series(phase_cluster, index=snps.index, dtype=np.int64)
 
 
-def interp_cM_blocks(
-    blocks: pd.DataFrame,
+def interp_cM_between_bbs(
+    bbs: pd.DataFrame,
     snp_info: pd.DataFrame,
     genetic_map: pd.DataFrame,
-    block_id_col: str = "bbc_id",
+    bb_id_col: str = "bb_id",
 ):
-    """Interpolate centimorgan distances between consecutive blocks using a genetic map.
+    """Interpolate centimorgan distances between consecutive bbs using a genetic map.
 
     Parameters
     ----------
-    blocks : pd.DataFrame
-        Block-level DataFrame with a block ID column and ``#CHR`` column.
+    bbs : pd.DataFrame
+        bb-level DataFrame with a bb ID column and ``#CHR`` column.
     snp_info : pd.DataFrame
-        SNP DataFrame with a matching block ID column and ``POS`` column.
+        SNP DataFrame with a matching bb ID column and ``POS`` column.
     genetic_map : pd.DataFrame
         Genetic map with ``#CHR``, ``POS``, and ``cM`` columns.
-    block_id_col : str
-        Name of the block ID column in both *blocks* and *snp_info*.
+    bb_id_col : str
+        Name of the bb ID column in both *bbs* and *snp_info*.
 
     Returns
     -------
     np.ndarray
-        Inter-block cM distances (first block per chromosome gets 0).
+        Inter-bb cM distances (first bb per chromosome gets 0).
     """
-    blocks = blocks.copy(deep=True)
-    blocks["dist_cM"] = 0.0
+    bbs = bbs.copy(deep=True)
+    bbs["dist_cM"] = 0.0
 
-    hb_pos = snp_info.groupby(block_id_col, sort=False)["POS"].agg(
+    hb_pos = snp_info.groupby(bb_id_col, sort=False)["POS"].agg(
         snp_start="min", snp_end="max"
     )
-    blocks = blocks.join(hb_pos, on=block_id_col)
+    bbs = bbs.join(hb_pos, on=bb_id_col)
 
     genetic_map_chrs = genetic_map.groupby(by="#CHR", sort=False, observed=True)
-    for ch, ch_blocks in blocks.groupby(by="#CHR", sort=False, observed=True):
+    for ch, ch_bbs in bbs.groupby(by="#CHR", sort=False, observed=True):
         ch_map = genetic_map_chrs.get_group(ch)
         start_cMs = np.interp(
-            ch_blocks["snp_start"].to_numpy(),
+            ch_bbs["snp_start"].to_numpy(),
             ch_map["POS"].to_numpy(),
             ch_map["cM"].to_numpy(),
         )
         end_cMs = np.interp(
-            ch_blocks["snp_end"].to_numpy(),
+            ch_bbs["snp_end"].to_numpy(),
             ch_map["POS"].to_numpy(),
             ch_map["cM"].to_numpy(),
         )
 
-        dist_cM = np.zeros(len(ch_blocks), dtype=np.float32)
+        dist_cM = np.zeros(len(ch_bbs), dtype=np.float32)
         dist_cM[1:] = start_cMs[1:] - end_cMs[:-1]
-        blocks.loc[ch_blocks.index, "dist_cM"] = np.maximum(dist_cM, 0.0)
-    return blocks["dist_cM"].to_numpy()
+        bbs.loc[ch_bbs.index, "dist_cM"] = np.maximum(dist_cM, 0.0)
+    return bbs["dist_cM"].to_numpy()
 
 
 def estimate_switchprobs_cM(dist_cms: np.ndarray, nu=1, min_switchprob=1e-6):
@@ -242,7 +243,7 @@ def estimate_switchprobs_cM(dist_cms: np.ndarray, nu=1, min_switchprob=1e-6):
     Parameters
     ----------
     dist_cms : np.ndarray
-        Inter-SNP or inter-block centimorgan distances.
+        Inter-SNP or inter-bb centimorgan distances.
     nu : float
         Scaling factor for the Haldane function.
     min_switchprob : float
@@ -257,29 +258,29 @@ def estimate_switchprobs_cM(dist_cms: np.ndarray, nu=1, min_switchprob=1e-6):
     return np.clip(switchprobs, a_min=min_switchprob, a_max=None)
 
 
-def estimate_switchprobs_PS(blocks: pd.DataFrame, switchprob_ps=0.05):
-    """Assign switch probabilities based on PS phaseset membership.
+def estimate_switchprobs_PS(bbs: pd.DataFrame, switchprob_ps=0.05):
+    """Assign switch probabilities based on phase-cluster (``PS``) membership.
 
-    Within the same phaseset, the probability is *switchprob_ps*; across
-    different phasesets it is approximately 0.5.
+    Within the same phase cluster the probability is *switchprob_ps*; across clusters
+    it is approximately 0.5.
 
     Parameters
     ----------
-    blocks : pd.DataFrame
-        DataFrame with a ``PS`` column indicating phaseset IDs.
+    bbs : pd.DataFrame
+        DataFrame with a ``PS`` column indicating the phase cluster.
     switchprob_ps : float
-        Switch probability within the same phaseset.
+        Switch probability within the same phase cluster.
 
     Returns
     -------
     np.ndarray
-        Switch probabilities per block.
+        Switch probabilities per bb.
     """
     switch_bias = 1e-4
-    same_block = blocks["PS"] == blocks["PS"].shift(1).fillna(False)
+    same_ps = bbs["PS"] == bbs["PS"].shift(1).fillna(False)
     switchprobs = np.where(
-        same_block,
-        switchprob_ps,  # within same PS phase block
-        0.5 - switch_bias,  # across different PS phase block
+        same_ps,
+        switchprob_ps,  # within the same phase cluster
+        0.5 - switch_bias,  # across phase clusters
     )
     return switchprobs

@@ -522,7 +522,7 @@ def parse_workflow(config):
     msr = config["params_combine_counts"]["min_snp_reads"]
     msr_list = [int(m) for m in (msr if isinstance(msr, list) else [msr])]
 
-    # === segment BED + window build (one grid for every bulk assay: WGS/WGS-lr/WES) ===
+    # === segment BED + bin BED build (one bin set for every bulk assay: WGS/WGS-lr/WES) ===
     bedpe_files = list(
         dict.fromkeys(
             r["files"]["breakpoint_bedpe"]

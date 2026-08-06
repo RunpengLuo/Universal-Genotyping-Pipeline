@@ -3,7 +3,7 @@
 Tiles segment_bed, assigns region_id (arm) + seg_id (breakpoint chunk) by window
 midpoint, then annotates GC (always), MAP (when a mappability_bed input is given), and
 REPLI (when Repli-seq bedGraphs are given). Output columns: #CHR START END region_id
-seg_id GC [MAP] [REPLI] -- the window BED consumed by count_reads (one grid for every
+seg_id GC [MAP] [REPLI] -- the window BED consumed by count_reads (one bin set for every
 bulk assay: WGS/WGS-lr/WES). The Repli-seq bigWig fetch + bigWigToBedGraph + liftOver
 are Snakemake rules; this script only bins the resulting bedGraphs.
 """
@@ -85,7 +85,7 @@ regions = read_BED(region_bed)
 regions["#CHR"] = regions["#CHR"].astype(str)
 regions[["START", "END"]] = regions[["START", "END"]].astype(np.int64)
 
-# tile the segment BED (one grid for every bulk assay: WGS/WGS-lr/WES)
+# tile the segment BED (one bin set for every bulk assay: WGS/WGS-lr/WES)
 windows = generate_wgs_windows(int(p["window_size"]), chroms, regions)
 n_tiled = len(windows)
 logging.info(f"tiled {n_tiled} windows")
@@ -126,7 +126,7 @@ logging.info(
 )
 
 # bedtools resolves contigs against the reference FASTA and genome_size, so the
-# intervals it receives carry the genome's naming; results map back by row order/_idx
+# intervals it receives carry the genome's naming; results map back by row order/_df_idx
 bed_windows = windows[["#CHR", "START", "END"]].copy()
 if input_nochr:
     bed_windows["#CHR"] = bed_windows["#CHR"].map(strip_chr_prefix)
@@ -142,7 +142,7 @@ mappability_bed = maybe_path(inp["mappability_bed"])
 if mappability_bed:
     n_windows = len(windows)
     win_bed = bed_windows.copy()
-    win_bed["_idx"] = np.arange(n_windows)
+    win_bed["_df_idx"] = np.arange(n_windows)
     wb = BedTool.from_dataframe(win_bed).sort(g=genome_size)
     # streams; bedtools resolves both operands against genome_size
     map_bt = (
@@ -152,8 +152,8 @@ if mappability_bed:
         wb.map(b=map_bt, c=4, o="mean", g=genome_size).fn,
         sep="\t",
         header=None,
-        names=["#CHR", "START", "END", "_idx", "MAP"],
-        dtype={"#CHR": str, "START": int, "END": int, "_idx": int, "MAP": str},
+        names=["#CHR", "START", "END", "_df_idx", "MAP"],
+        dtype={"#CHR": str, "START": int, "END": int, "_df_idx": int, "MAP": str},
     )
     assert len(map_cov) == n_windows, (
         f"bedtools map returned {len(map_cov)} rows, expected {n_windows}"
@@ -161,7 +161,7 @@ if mappability_bed:
     map_cov["MAP"] = (
         pd.to_numeric(map_cov["MAP"], errors="coerce").fillna(0.0).clip(0.0, 1.0)
     )
-    windows["MAP"] = map_cov.sort_values("_idx")["MAP"].values
+    windows["MAP"] = map_cov.sort_values("_df_idx")["MAP"].values
     logging.info(f"annotated MAP from {os.path.basename(mappability_bed)}")
 else:
     logging.info("no mappability_bed; MAP skipped")
@@ -187,18 +187,18 @@ if bedgraphs:
         )
         bg = bg[bg["chrom"].isin(chroms)].reset_index(drop=True)
         for chrom, grp in bg.groupby("chrom", sort=False):
-            win_idx = np.where((windows["#CHR"] == chrom).to_numpy())[0]
-            if len(win_idx) == 0:
+            bin_df_idx = np.where((windows["#CHR"] == chrom).to_numpy())[0]
+            if len(bin_df_idx) == 0:
                 continue
-            win_starts = windows["START"].to_numpy()[win_idx]
-            order = np.argsort(win_starts)
-            win_starts, win_idx = win_starts[order], win_idx[order]
+            bin_starts = windows["START"].to_numpy()[bin_df_idx]
+            order = np.argsort(bin_starts)
+            bin_starts, bin_df_idx = bin_starts[order], bin_df_idx[order]
             bg_mids = ((grp["start"] + grp["end"]) // 2).to_numpy()
-            bin_idx = np.searchsorted(win_starts, bg_mids, side="right") - 1
-            valid = (bin_idx >= 0) & (bin_idx < len(win_idx))
-            global_idx = win_idx[bin_idx[valid]]
-            signal_sum[global_idx] += grp["signal"].to_numpy()[valid]
-            signal_count[global_idx] += 1
+            hit_idx = np.searchsorted(bin_starts, bg_mids, side="right") - 1
+            valid = (hit_idx >= 0) & (hit_idx < len(bin_df_idx))
+            global_df_idx = bin_df_idx[hit_idx[valid]]
+            signal_sum[global_df_idx] += grp["signal"].to_numpy()[valid]
+            signal_count[global_df_idx] += 1
     with np.errstate(invalid="ignore", divide="ignore"):
         windows["REPLI"] = np.round(
             np.where(signal_count > 0, signal_sum / signal_count, np.nan), 6

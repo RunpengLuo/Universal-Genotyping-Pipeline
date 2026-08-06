@@ -86,7 +86,7 @@ else:
             ref_af,
             genome_size,
             out_pdf,
-            unit="SNP",
+            feature_label="SNP",
             val_type="AF",
             mask=is_het,
             mask_labels=("het", "hom-alt"),

@@ -15,7 +15,7 @@ from matplotlib.lines import Line2D
 
 from cnplot import adaptive_dot_size, plot_scatter_1d, plot_scatter_2d
 
-from matrix_utils import dense_col
+from matrix_utils import dense_observation
 
 from plot_utils import (
     _bold_chrnames,
@@ -126,14 +126,17 @@ def plot_segmentation_qc(
             f"{assay} ({row.get('sample_type', '')})"
         )
         _hist_with_stats(
-            axes[ri, 0], dense_col(x_count_mat, ri), "Read count", sci_x=True
+            axes[ri, 0], dense_observation(x_count_mat, ri), "Read count", sci_x=True
         )
         _hist_with_stats(
-            axes[ri, 1], dense_col(b_count_mat, ri), "B-allele count", sci_x=True
+            axes[ri, 1],
+            dense_observation(b_count_mat, ri),
+            "B-allele count",
+            sci_x=True,
         )
         _hist_with_stats(
             axes[ri, 2],
-            dense_col(tot_count_mat, ri),
+            dense_observation(tot_count_mat, ri),
             "total allele count",
             sci_x=True,
         )
@@ -169,7 +172,7 @@ def plot_rdr_baf(
     rdr_norm_labels: list,
     genome_size: str,
     out_file: str,
-    unit="bb",
+    feature_label="bb",
     s=4,
     dpi=72,
     alpha=0.7,
@@ -200,7 +203,7 @@ def plot_rdr_baf(
             ``"median"``), length T; shown in the RDR y-label.
         genome_size: Path to chromosome sizes file.
         out_file: Output PDF path; used only when ``pdf`` is ``None``.
-        unit: Feature unit label for the x-label (e.g. ``"bb"``).
+        feature_label: Feature named in the x-label (e.g. ``"bb"``).
         rdr_ylim: Upper y-axis limit for the RDR row. No limit if ``None``.
         region_bed: Path to whitelist BED for background shading.
         blacklist_bed: Path to blacklist BED for background shading.
@@ -210,7 +213,7 @@ def plot_rdr_baf(
     """
     n_tumors = len(titles)
     logging.info(
-        f"genome-wide {unit}-level depth+RDR+BAF plot "
+        f"genome-wide {feature_label}-level depth+RDR+BAF plot "
         f"({n_tumors} tumors), out_file={out_file}"
     )
     axis = _get_axis(genome_size, pos_df["#CHR"])
@@ -307,7 +310,7 @@ def plot_rdr_baf(
         )
         _bold_chrnames(ax_baf)
 
-        _finish_page(fig, titles[si], unit, dpi=dpi, pdf=pdf_pages)
+        _finish_page(fig, titles[si], feature_label, dpi=dpi, pdf=pdf_pages)
     if _own_pdf:
         pdf_pages.close()
 

@@ -1,4 +1,4 @@
-"""Per-window read-depth bias correction and its GC diagnostics.
+"""Per-fixed-bin read-depth bias correction and its GC diagnostics.
 
 HMMcopy-style sequential LOWESS correction, a quadratic median-regression
 alternative, and the GC/RD summary statistics plotted alongside them.
@@ -36,13 +36,13 @@ def correct_readcount_lowess(
     Parameters
     ----------
     reads : np.ndarray
-        Raw read counts per window (1-D).
+        Raw read counts per fixed bin (1-D).
     gc : np.ndarray
-        Per-window GC fraction in [0, 1].
+        Per-bin GC fraction in [0, 1].
     mappability : np.ndarray or None
-        Per-window mappability values in [0, 1]. If None, stage 2 is skipped.
+        Per-bin mappability values in [0, 1]. If None, stage 2 is skipped.
     repliseq : np.ndarray or None
-        Per-window consensus replication timing score. If None, stage 3 is
+        Per-bin consensus replication timing score. If None, stage 3 is
         skipped.  Higher values = earlier replication = higher expected
         coverage in cycling cells.
     samplesize : int
@@ -357,11 +357,11 @@ def compute_gc_rd_stats(mat, gc_vals, labels, n_gc_bins=100):
         else:
             gc_corr[label] = (np.nan, np.nan)
 
-        bin_idx = np.digitize(gc_vals, gc_bins) - 1
-        bin_idx = np.clip(bin_idx, 0, n_gc_bins - 1)
+        gc_bin_idx = np.digitize(gc_vals, gc_bins) - 1
+        gc_bin_idx = np.clip(gc_bin_idx, 0, n_gc_bins - 1)
         medians = []
         for b in range(n_gc_bins):
-            mask = (bin_idx == b) & np.isfinite(v)
+            mask = (gc_bin_idx == b) & np.isfinite(v)
             if mask.any():
                 medians.append(np.median(v[mask]))
         gc_bin_median_std[label] = float(np.std(medians)) if medians else np.nan

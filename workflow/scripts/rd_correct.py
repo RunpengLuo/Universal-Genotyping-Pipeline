@@ -1,10 +1,10 @@
-"""Per-window LOWESS bias correction for bulk samples.
+"""Per-fixed-bin LOWESS bias correction for bulk samples.
 
-Loads mosdepth fixed-window depth, joins with pre-filtered window BED
+Loads mosdepth fixed-bin depth, joins the pre-filtered bin BED
 (GC/MAP/REPLI/region_id), applies correct_readcount_lowess() per
-sample, and saves corrected depth matrix + filtered window dataframe.
+sample, and saves the corrected depth matrix + the filtered bin frame.
 
-The window BED is expected to be pre-filtered by region and blacklist
+The bin BED (config `window_bed`) is expected to be pre-filtered by region and blacklist
 (produced by build_window_bed.py), with region_id column already present.
 """
 
@@ -42,7 +42,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 
 # inputs
-window_bed_file = snakemake_handle.input["window_bed"]
+bin_bed_file = snakemake_handle.input["window_bed"]
 genome_size = snakemake_handle.input["genome_size"]
 region_bed = snakemake_handle.input["region_bed"] or None
 blacklist_bed = maybe_path(snakemake_handle.input.get("blacklist_bed", None))
@@ -65,7 +65,7 @@ qc_dir = snakemake_handle.params["qc_dir"]
 # outputs
 out_depth_stats = snakemake_handle.output["depth_stats"]
 out_dp_corrected = snakemake_handle.output["dp_corrected"]
-window_df = snakemake_handle.output["window_df"]
+out_bin_df = snakemake_handle.output["window_df"]
 
 run_id = getattr(snakemake_handle.params, "run_id", "")
 
@@ -76,14 +76,14 @@ join_keys = ["#CHR", "START", "END"]
 
 logging.info(f"rd_correct: {nsamples} samples, {len(target_chroms)} chroms")
 
-logging.info("load window BED and mosdepth depth")
-win_df = pd.read_table(window_bed_file, sep="\t", dtype={"#CHR": str})
-assert "#CHR" in win_df.columns and "GC" in win_df.columns, (
-    f"window_bed must have #CHR, START, END, GC columns; got {win_df.columns.tolist()}"
+logging.info("load bin BED and mosdepth depth")
+bin_df = pd.read_table(bin_bed_file, sep="\t", dtype={"#CHR": str})
+assert "#CHR" in bin_df.columns and "GC" in bin_df.columns, (
+    f"window_bed must have #CHR, START, END, GC columns; got {bin_df.columns.tolist()}"
 )
-win_df["#CHR"] = add_chr_prefix(win_df["#CHR"])
+bin_df["#CHR"] = add_chr_prefix(bin_df["#CHR"])
 
-win_df = win_df[win_df["#CHR"].isin(target_chroms)].reset_index(drop=True)
+bin_df = bin_df[bin_df["#CHR"].isin(target_chroms)].reset_index(drop=True)
 
 mos_dfs = []
 for dataset_id in dataset_ids:
@@ -100,26 +100,26 @@ for dataset_id in dataset_ids:
     mos_dfs.append(mos_df)
 
 coords = mos_dfs[0][join_keys].copy()
-n_windows = len(coords)
-logging.info(f"{n_windows} windows across {len(target_chroms)} chromosomes")
+n_bins = len(coords)
+logging.info(f"{n_bins} fixed bins across {len(target_chroms)} chromosomes")
 
-win_df = pd.merge(left=coords, right=win_df, on=join_keys, how="left", sort=False)
-_gc_matched = int(win_df["GC"].notna().sum())
+bin_df = pd.merge(left=coords, right=bin_df, on=join_keys, how="left", sort=False)
+_gc_matched = int(bin_df["GC"].notna().sum())
 logging.info(
-    f"GC BED matched {_gc_matched}/{n_windows} ({_gc_matched / max(n_windows, 1) * 100:.1f}%)"
+    f"GC BED matched {_gc_matched}/{n_bins} ({_gc_matched / max(n_bins, 1) * 100:.1f}%)"
 )
 
-dp_raw = np.zeros((n_windows, nsamples), dtype=np.float32)
+dp_raw = np.zeros((n_bins, nsamples), dtype=np.float32)
 for i, mos_df in enumerate(mos_dfs):
     dp_raw[:, i] = mos_df["DEPTH"].to_numpy(dtype=np.float32)
 
-# mosdepth emits windows in BAM @SQ order; reorder to genomic order (permute dp_raw too)
-win_df["_ord"] = np.arange(len(win_df))
-win_df = sort_df_chr(win_df, ch="#CHR", pos="START")
-dp_raw = dp_raw[win_df["_ord"].to_numpy()]
-win_df = win_df.drop(columns="_ord")
+# mosdepth emits bins in BAM @SQ order; reorder to genomic order (permute dp_raw too)
+bin_df["_ord"] = np.arange(len(bin_df))
+bin_df = sort_df_chr(bin_df, ch="#CHR", pos="START")
+dp_raw = dp_raw[bin_df["_ord"].to_numpy()]
+bin_df = bin_df.drop(columns="_ord")
 
-depth_stats = compute_depth_statistics(dp_raw, win_df, sample_ids)
+depth_stats = compute_depth_statistics(dp_raw, bin_df, sample_ids)
 depth_stats.to_csv(out_depth_stats, sep="\t", index=False)
 logging.info(f"wrote depth statistics to {out_depth_stats}")
 for _, row in depth_stats[depth_stats["#CHR"] == "TOTAL"].iterrows():
@@ -127,23 +127,23 @@ for _, row in depth_stats[depth_stats["#CHR"] == "TOTAL"].iterrows():
         f"  {row['SAMPLE']}: mean={row['mean_depth']:.2f}, median={row['median_depth']:.2f}"
     )
 
-gc_vals = win_df["GC"].to_numpy()
+gc_vals = bin_df["GC"].to_numpy()
 
 rd_raw_ylim = max(np.nanquantile(dp_raw, 0.99), 1.0) * 1.1
 gc_corr_before, gc_std_before = compute_gc_rd_stats(dp_raw, gc_vals, dataset_ids)
 
-logging.info(f"{n_windows} windows for bias correction")
+logging.info(f"{n_bins} fixed bins for bias correction")
 
-map_vals = win_df["MAP"].to_numpy() if gc_correct and "MAP" in win_df.columns else None
+map_vals = bin_df["MAP"].to_numpy() if gc_correct and "MAP" in bin_df.columns else None
 repli_vals = (
-    win_df["REPLI"].to_numpy(dtype=np.float64)
-    if rt_correct and "REPLI" in win_df.columns
+    bin_df["REPLI"].to_numpy(dtype=np.float64)
+    if rt_correct and "REPLI" in bin_df.columns
     else None
 )
 if repli_vals is not None:
     _n_finite = int(np.isfinite(repli_vals).sum())
     logging.info(
-        f"REPLI column: {_n_finite}/{n_windows} ({_n_finite / max(n_windows, 1) * 100:.1f}%) finite"
+        f"REPLI column: {_n_finite}/{n_bins} ({_n_finite / max(n_bins, 1) * 100:.1f}%) finite"
     )
 else:
     logging.info("no REPLI column; skipping replication timing correction")
@@ -189,7 +189,7 @@ rd_ylim = max(np.nanquantile(dp_corrected, 0.99), 1.0) * 1.1
 
 rd_pdf = PdfPages(snakemake_handle.output["qc_pdf"])
 plot_rd_1d_scatter(
-    win_df,
+    bin_df,
     dp_raw,
     dp_corrected,
     sample_ids,
@@ -213,30 +213,30 @@ plot_rd_2d_kde(
 rd_pdf.close()
 
 nan_mask = np.isnan(dp_corrected).any(axis=1)
-n_nan_rows = int(nan_mask.sum())
-n_valid = n_windows - n_nan_rows
+n_nan_bins = int(nan_mask.sum())
+n_valid = n_bins - n_nan_bins
 logging.info(
-    f"NaN row filter: {n_nan_rows}/{n_windows} windows have NaN, "
-    f"keeping {n_valid} ({n_valid / max(n_windows, 1) * 100:.1f}%)"
+    f"NaN filter: {n_nan_bins}/{n_bins} fixed bins have NaN, "
+    f"keeping {n_valid} ({n_valid / max(n_bins, 1) * 100:.1f}%)"
 )
 
-if n_nan_rows > 0:
+if n_nan_bins > 0:
     valid = ~nan_mask
     dp_corrected = dp_corrected[valid]
-    win_df = win_df.loc[valid].reset_index(drop=True)
+    bin_df = bin_df.loc[valid].reset_index(drop=True)
 
 np.savez_compressed(out_dp_corrected, mat=dp_corrected)
 
 out_cols = ["#CHR", "START", "END", "region_id"]
-if "seg_id" in win_df.columns:
+if "seg_id" in bin_df.columns:
     out_cols.append("seg_id")
 out_cols.append("GC")
-if "MAP" in win_df.columns:
+if "MAP" in bin_df.columns:
     out_cols.append("MAP")
-if "REPLI" in win_df.columns:
+if "REPLI" in bin_df.columns:
     out_cols.append("REPLI")
-win_df[out_cols].to_csv(
-    window_df,
+bin_df[out_cols].to_csv(
+    out_bin_df,
     sep="\t",
     header=True,
     index=False,

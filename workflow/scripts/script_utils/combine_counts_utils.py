@@ -12,7 +12,7 @@ from scipy.io import mmread
 from scipy.sparse import csr_matrix, hstack
 from scipy.stats import beta
 
-from interval_utils import assign_pos_to_range
+from range_utils import assign_pos_to_range
 from io_utils import read_VCF
 from utils import sort_df_chr
 
@@ -24,7 +24,7 @@ def canon_mat_from_files(
     ad_mtx_file: str,
     ncells: int,
 ):
-    """Read a replicate's cellSNP-format files, then canonicalize onto the parent grid.
+    """Read a replicate's cellSNP-format files, then canonicalize onto the parent SNP set.
 
     Thin file-reading wrapper over ``canon_mat_one_replicate`` for the cellsnp-lite path
     (single-cell). Bulk builds the DataFrame/matrices from bcftools counts instead.
@@ -43,11 +43,11 @@ def bcftools_counts_to_child_mats(bcf_df: pd.DataFrame, parent_alt_by_key: dict)
     so downstream ``REF = DP - ALT`` is exact). Rows follow ``bcf_df`` order.
 
     Args:
-        bcf_df: output of ``read_bcftools_counts`` (KEY, ALT list, AD list, RAW_SNP_IDX).
+        bcf_df: output of ``read_bcftools_counts`` (KEY, ALT list, AD list, RAW_SNP_DF_IDX).
         parent_alt_by_key: parent ALT allele keyed by ``#CHROM_POS``.
 
     Returns:
-        ``(child_snps, tot_mtx, ad_mtx)``: child_snps has KEY + RAW_SNP_IDX; matrices are
+        ``(child_snps, tot_mtx, ad_mtx)``: child_snps has KEY + RAW_SNP_DF_IDX; matrices are
         ``(len(bcf_df), 1)`` csr.
     """
     n = len(bcf_df)
@@ -66,7 +66,7 @@ def bcftools_counts_to_child_mats(bcf_df: pd.DataFrame, parent_alt_by_key: dict)
         )
         ad[i] = alt_cnt
         tot[i] = ref_cnt + alt_cnt
-    child_snps = pd.DataFrame({"KEY": keys, "RAW_SNP_IDX": np.arange(n)})
+    child_snps = pd.DataFrame({"KEY": keys, "RAW_SNP_DF_IDX": np.arange(n)})
     tr = np.flatnonzero(tot)
     ar = np.flatnonzero(ad)
     tot_mtx = csr_matrix(
@@ -83,14 +83,14 @@ def canon_mat_one_replicate(
     ad_mtx: csr_matrix,
     ncells: int,
 ):
-    """Map a replicate's DP/AD matrices onto the parent SNP grid (0-fill missing loci).
+    """Map a replicate's DP/AD matrices onto the parent SNP set (0-fill missing loci).
 
     Args:
         parent_keys: parent SNP KEYs (``#CHROM_POS``) in output row order.
-        child_snps: DataFrame with ``KEY`` + ``RAW_SNP_IDX`` for this replicate's loci
+        child_snps: DataFrame with ``KEY`` + ``RAW_SNP_DF_IDX`` for this replicate's loci
             (in the matrices' row order).
         tot_mtx, ad_mtx: ``(m, ncells)`` count matrices, ``m == len(child_snps)``.
-        ncells: number of columns (1 for bulk pseudobulk; #barcodes for single-cell).
+        ncells: number of observations (1 for bulk pseudobulk; #barcodes for single-cell).
 
     Returns:
         ``(tot_canon, ad_canon)`` csr matrices of shape ``(len(parent_keys), ncells)``.
@@ -103,16 +103,16 @@ def canon_mat_one_replicate(
     assert tot_mtx.shape == ad_mtx.shape
     assert tot_mtx.shape == (m, ncells)
 
-    raw_snp_ids = child_snps["RAW_SNP_IDX"].to_numpy()
-    tot_mtx = tot_mtx[raw_snp_ids, :]
-    ad_mtx = ad_mtx[raw_snp_ids, :]
+    raw_snp_df_idx = child_snps["RAW_SNP_DF_IDX"].to_numpy()
+    tot_mtx = tot_mtx[raw_snp_df_idx, :]
+    ad_mtx = ad_mtx[raw_snp_df_idx, :]
 
     dup_mask = child_snps["KEY"].duplicated(keep=False).to_numpy()
-    n_dup_rows = int(dup_mask.sum())
-    if n_dup_rows > 0:
+    n_dup_snps = int(dup_mask.sum())
+    if n_dup_snps > 0:
         n_dup_keys = int(child_snps.loc[dup_mask, "KEY"].nunique())
         logging.warning(
-            f"#found duplicated SNP #CHR/POS, #rows={n_dup_rows}/{m} #SNPs={n_dup_keys}, drop all"
+            f"#found duplicated SNP #CHR/POS, {n_dup_snps}/{m} SNPs over {n_dup_keys} keys, drop all"
         )
         child_snps = child_snps.loc[~dup_mask].reset_index(drop=True)
         tot_mtx = tot_mtx[~dup_mask, :]
@@ -145,8 +145,8 @@ def canon_mat_one_replicate(
     return tot_canon, ad_canon
 
 
-def cell_rep_idx_from_mapping(rep2bc: pd.DataFrame, dataset_ids):
-    """Convert a REP_ID,BARCODE DataFrame into an int64 array of rep indices.
+def observation_cluster_ids(rep2bc: pd.DataFrame, dataset_ids):
+    """Cluster id per observation: REP_ID,BARCODE -> int64 index into dataset_ids.
 
     Categorical mapping with explicit ``dataset_ids`` order ensures the codes
     align with the position of each rep in the caller's dataset_ids list.
@@ -159,7 +159,7 @@ def cell_rep_idx_from_mapping(rep2bc: pd.DataFrame, dataset_ids):
     return codes
 
 
-def merge_mats(tot_list: list, ad_list: list):
+def hstack_replicate_mats(tot_list: list, ad_list: list):
     """Horizontally stack per-replicate total and alt-count matrices.
 
     Derives the REF matrix as ``TOT - ALT``.
@@ -167,9 +167,9 @@ def merge_mats(tot_list: list, ad_list: list):
     Parameters
     ----------
     tot_list : list of csr_matrix
-        Per-replicate total depth matrices (SNPs x cells).
+        Per-replicate total depth matrices (SNP features x observations).
     ad_list : list of csr_matrix
-        Per-replicate alt-allele count matrices (SNPs x cells).
+        Per-replicate alt-allele count matrices (SNP features x observations).
 
     Returns
     -------
@@ -185,15 +185,15 @@ def merge_mats(tot_list: list, ad_list: list):
 
 
 ##################################################
-# combine_counts: SNP parsing, grouping, and bulk depth/RDR aggregation
+# combine_counts: SNP parsing, clustering, and bulk depth/RDR aggregation
 
 
-def build_union_snp_grid(snps_list):
-    """Union per-assay SNP tables onto one genomically-sorted grid.
+def build_union_snps(snps_list):
+    """Union per-assay SNP tables into one genomically-sorted set.
 
-    Keeps shared annotation columns (``PS``/``feature_id`` only when present in
+    Keeps the shared annotation columns (``PS``/``feature_id`` only when present in
     EVERY assay), dedupes on ``(#CHR, POS0)``, sorts, and adds a 0-based
-    ``snp_row``. Returns ``(snps, has_ps, has_feature)``.
+    ``snp_id``. Returns ``(snps, has_ps, has_feature)``.
     """
     has_ps = all("PS" in s.columns for s in snps_list)
     has_feature = all("feature_id" in s.columns for s in snps_list)
@@ -210,96 +210,96 @@ def build_union_snp_grid(snps_list):
         [s[annot_cols] for s in snps_list], ignore_index=True
     ).drop_duplicates(["#CHR", "POS0"])
     snps = sort_df_chr(snps, ch="#CHR", pos="POS0").reset_index(drop=True)
-    snps["snp_row"] = np.arange(len(snps))
+    snps["snp_id"] = np.arange(len(snps))
     return snps, has_ps, has_feature
 
 
-def build_assay_blocks(sample_df, bulk_assays):
-    """Group joint sample columns by assay into per-assay block descriptors.
+def build_assay_obs_clusters(sample_df, bulk_assays):
+    """Cluster the joint observations by assay into per-assay descriptors.
 
-    Each block records the assay's column ``offset``, size ``n``, and
-    ``tumor_cols``. Returns ``(assay_blocks, tumor_cols_all)``.
+    Each cluster records the assay's observation ``offset``, size ``n``, and
+    ``tumor_obs``. Returns ``(assay_obs_clusters, tumor_obs_all)``.
     """
-    col_assay = sample_df["assay_type"].tolist()
-    col_stype = sample_df["sample_type"].tolist()
-    assay_blocks = []
+    obs_assay = sample_df["assay_type"].tolist()
+    obs_stype = sample_df["sample_type"].tolist()
+    assay_obs_clusters = []
     for at in bulk_assays:
-        cols = [i for i, a in enumerate(col_assay) if a == at]
-        assert cols, f"no samples for assay {at} in joint sample sheet"
-        stypes = [col_stype[i] for i in cols]
-        assay_blocks.append(
+        obs = [i for i, a in enumerate(obs_assay) if a == at]
+        assert obs, f"no samples for assay {at} in joint sample sheet"
+        stypes = [obs_stype[i] for i in obs]
+        assay_obs_clusters.append(
             {
                 "assay": at,
-                "offset": cols[0],
-                "n": len(cols),
-                "tumor_cols": [cols[i] for i, st in enumerate(stypes) if st == "tumor"],
+                "offset": obs[0],
+                "n": len(obs),
+                "tumor_obs": [obs[i] for i, st in enumerate(stypes) if st == "tumor"],
             }
         )
-    tumor_cols_all = [c for blk in assay_blocks for c in blk["tumor_cols"]]
-    return assay_blocks, tumor_cols_all
+    tumor_obs_all = [o for c in assay_obs_clusters for o in c["tumor_obs"]]
+    return assay_obs_clusters, tumor_obs_all
 
 
 def build_rdr_base_map(sample_df):
-    """Map each tumor column to its RDR base (denominator) column.
+    """Map each tumor observation to its RDR base (denominator) observation.
 
     A tumor row's optional ``RDR_BASE_REP_ID`` names the ``REP_ID`` of the
-    sample used as its RDR baseline. Returns ``{tumor_col: base_col}``; a tumor
+    sample used as its RDR baseline. Returns ``{tumor_obs: base_obs}``; a tumor
     with an unset ``RDR_BASE_REP_ID`` is omitted (median-normalized downstream).
     """
-    col_repid = sample_df["REP_ID"].tolist()
-    col_stype = sample_df["sample_type"].tolist()
-    repid_to_col = {rid: i for i, rid in enumerate(col_repid)}
+    obs_repid = sample_df["REP_ID"].tolist()
+    obs_stype = sample_df["sample_type"].tolist()
+    repid_to_obs = {rid: i for i, rid in enumerate(obs_repid)}
 
     has_col = "RDR_BASE_REP_ID" in sample_df.columns
-    col_base_rep = (
-        sample_df["RDR_BASE_REP_ID"].tolist() if has_col else [None] * len(col_repid)
+    obs_base_rep = (
+        sample_df["RDR_BASE_REP_ID"].tolist() if has_col else [None] * len(obs_repid)
     )
 
     base_map = {}
-    for i in range(len(col_repid)):
-        if col_stype[i] != "tumor":
+    for i in range(len(obs_repid)):
+        if obs_stype[i] != "tumor":
             continue
-        brep = col_base_rep[i]
+        brep = obs_base_rep[i]
         if has_col and pd.notna(brep) and str(brep) != "":
-            assert brep in repid_to_col, (
-                f"RDR_BASE_REP_ID={brep!r} for tumor {col_repid[i]!r} is not a REP_ID"
+            assert brep in repid_to_obs, (
+                f"RDR_BASE_REP_ID={brep!r} for tumor {obs_repid[i]!r} is not a REP_ID"
             )
-            assert repid_to_col[brep] != i, (
-                f"RDR_BASE_REP_ID={brep!r} for tumor {col_repid[i]!r} is itself"
+            assert repid_to_obs[brep] != i, (
+                f"RDR_BASE_REP_ID={brep!r} for tumor {obs_repid[i]!r} is itself"
             )
-            base_map[i] = repid_to_col[brep]
+            base_map[i] = repid_to_obs[brep]
     return base_map
 
 
-def aggregate_window_depth_to_bins(
-    assay_blocks, scaffold, window_df_list, dp_corrected_list, num_bbs, total_samples
+def aggregate_bin_depth_to_bbs(
+    assay_obs_clusters, scaffold, bin_df_list, dp_corrected_list, num_bbs, total_samples
 ):
-    """Length-weighted aggregation of corrected window depth into adaptive bins.
+    """Length-weighted aggregation of corrected fixed-bin depth into bbs.
 
-    Each assay's windows are assigned to bins by midpoint over the ``scaffold``
-    (the binning-grid windows carrying ``bin_id``), so a finer WES grid is
-    projected onto the WGS bins. Returns ``(bb_dp, bb_bases)``: per-bin mean depth
-    and per-bin total aligned bases, both ``(num_bbs, total_samples)``.
+    Each assay's fixed bins are assigned to a bb by midpoint over the ``scaffold``
+    (the binning fixed bins carrying ``bb_id``), so a finer WES bin set is projected onto
+    the WGS bbs. Returns ``(bb_dp, bb_bases)``: per-bb mean depth and per-bb total
+    aligned bases, both ``(num_bbs, total_samples)``.
     """
 
-    def _windows_to_bins(win_a, bin_spans):
-        """Assign each window to the bin whose genomic span contains its midpoint.
+    def _bins_to_bbs(bins_a, bb_spans):
+        """Assign each fixed bin to the bb whose span contains its midpoint.
 
-        Returns an int64 array of ``bin_id`` per window, ``-1`` where the midpoint
-        falls in no bin. Works for a same-grid assay (window in its own bin) and for
-        a finer WES grid projected onto WGS bins.
+        Returns an int64 array of ``bb_id`` per fixed bin, ``-1`` where the midpoint
+        falls in no bb. Works for an assay on the same bins (bin in its own bb) and for a finer
+        WES bin set projected onto the WGS bbs.
         """
         mids = pd.DataFrame(
             {
-                "#CHR": win_a["#CHR"].to_numpy(),
-                "POS0": ((win_a["START"] + win_a["END"]) // 2).to_numpy(np.int64),
+                "#CHR": bins_a["#CHR"].to_numpy(),
+                "POS0": ((bins_a["START"] + bins_a["END"]) // 2).to_numpy(np.int64),
             }
         )
-        mids = assign_pos_to_range(mids, bin_spans, ref_id="bin_id", pos_col="POS0")
-        return mids["bin_id"].fillna(-1).to_numpy(np.int64)
+        mids = assign_pos_to_range(mids, bb_spans, ref_id="bb_id", pos_col="POS0")
+        return mids["bb_id"].fillna(-1).to_numpy(np.int64)
 
-    bin_spans = (
-        scaffold.groupby("bin_id", sort=True)
+    bb_spans = (
+        scaffold.groupby("bb_id", sort=True)
         .agg(
             **{
                 "#CHR": ("#CHR", "first"),
@@ -311,75 +311,77 @@ def aggregate_window_depth_to_bins(
     )
     bb_dp = np.full((num_bbs, total_samples), np.nan, dtype=np.float32)
     bb_bases = np.zeros((num_bbs, total_samples), dtype=np.float64)
-    for blk, win_a, dp_a in zip(assay_blocks, window_df_list, dp_corrected_list):
-        bin_ids = _windows_to_bins(win_a, bin_spans)
-        valid = bin_ids >= 0
+    for clu, bins_a, dp_a in zip(assay_obs_clusters, bin_df_list, dp_corrected_list):
+        bb_ids = _bins_to_bbs(bins_a, bb_spans)
+        valid = bb_ids >= 0
         n_drop = int((~valid).sum())
         if n_drop:
             logging.info(
-                f"{blk['assay']}: {n_drop}/{len(win_a)} windows outside all bins (dropped)"
+                f"{clu['assay']}: {n_drop}/{len(bins_a)} fixed bins outside all bbs (dropped)"
             )
-        vb = bin_ids[valid]
-        win_lengths = (win_a["END"] - win_a["START"]).to_numpy(dtype=np.float64)[valid]
-        total_len_per_bin = np.bincount(vb, weights=win_lengths, minlength=num_bbs)
-        for s in range(blk["n"]):
+        vb = bb_ids[valid]
+        bin_lengths = (bins_a["END"] - bins_a["START"]).to_numpy(dtype=np.float64)[
+            valid
+        ]
+        total_len_per_bb = np.bincount(vb, weights=bin_lengths, minlength=num_bbs)
+        for s in range(clu["n"]):
             weighted_sums = np.bincount(
-                vb, weights=dp_a[valid, s] * win_lengths, minlength=num_bbs
+                vb, weights=dp_a[valid, s] * bin_lengths, minlength=num_bbs
             )
-            bb_bases[:, blk["offset"] + s] = weighted_sums
+            bb_bases[:, clu["offset"] + s] = weighted_sums
             with np.errstate(invalid="ignore"):
-                bb_dp[:, blk["offset"] + s] = weighted_sums / total_len_per_bin
+                bb_dp[:, clu["offset"] + s] = weighted_sums / total_len_per_bb
     return bb_dp, bb_bases
 
 
 def compute_bb_rdr(
-    assay_blocks,
-    window_df_list,
+    assay_obs_clusters,
+    bin_df_list,
     dp_corrected_list,
     bb_dp,
-    tumor_cols_all,
+    tumor_obs_all,
     base_map,
     rdr_outlier_quantile,
-    col_repid,
+    obs_repid,
 ):
-    """Per-bin RDR for every tumor column.
+    """Per-bb RDR for every tumor observation.
 
-    Each tumor with an RDR base column (from ``base_map``) is normalized by that
-    base column, library-size corrected; a tumor without a base is
-    median-centered. The base may live in any column (e.g. a different
-    assay/platform), so library sizes are computed globally per column. Entries
-    above the ``1 - rdr_outlier_quantile`` quantile are set to NaN. Returns a
-    ``(num_bbs, len(tumor_cols_all))`` array column-aligned to ``tumor_cols_all``.
+    Each tumor with an RDR base observation (from ``base_map``) is normalized by that
+    base, library-size corrected; a tumor without a base is median-centered. The base
+    may be any observation (e.g. a different assay/platform), so library sizes are
+    computed globally per observation. Entries above the ``1 - rdr_outlier_quantile``
+    quantile are set to NaN. Returns a ``(num_bbs, len(tumor_obs_all))`` array aligned
+    to ``tumor_obs_all``.
     """
     num_bbs, total_samples = bb_dp.shape
-    bb_rdr = np.full((num_bbs, len(tumor_cols_all)), np.nan, dtype=np.float32)
-    rdr_pos = {c: i for i, c in enumerate(tumor_cols_all)}
+    bb_rdr = np.full((num_bbs, len(tumor_obs_all)), np.nan, dtype=np.float32)
+    rdr_pos = {o: i for i, o in enumerate(tumor_obs_all)}
 
-    # global per-column total aligned bases for library-size correction
-    col_total_bases = np.full(total_samples, np.nan, dtype=np.float64)
-    for blk, win_a, dp_a in zip(assay_blocks, window_df_list, dp_corrected_list):
-        win_sizes = (win_a["END"] - win_a["START"]).to_numpy(dtype=np.float64)
-        tb = np.nansum(dp_a * win_sizes[:, None], axis=0)
-        for s in range(blk["n"]):
-            col_total_bases[blk["offset"] + s] = tb[s]
+    # global per-observation total aligned bases for library-size correction
+    obs_total_bases = np.full(total_samples, np.nan, dtype=np.float64)
+    for clu, bins_a, dp_a in zip(assay_obs_clusters, bin_df_list, dp_corrected_list):
+        bin_sizes = (bins_a["END"] - bins_a["START"]).to_numpy(dtype=np.float64)
+        tb = np.nansum(dp_a * bin_sizes[:, None], axis=0)
+        for s in range(clu["n"]):
+            obs_total_bases[clu["offset"] + s] = tb[s]
 
-    for c in tumor_cols_all:
-        m = base_map.get(c)
+    for o in tumor_obs_all:
+        m = base_map.get(o)
         if m is not None:
-            lib = col_total_bases[m] / col_total_bases[c]
+            lib = obs_total_bases[m] / obs_total_bases[o]
             logging.info(
-                f"  bb RDR {col_repid[c]} / base {col_repid[m]}: library factor={lib:.4f}"
+                f"  bb RDR {obs_repid[o]} / base {obs_repid[m]}: library factor={lib:.4f}"
             )
             with np.errstate(invalid="ignore", divide="ignore"):
-                bb_rdr[:, rdr_pos[c]] = bb_dp[:, c] / bb_dp[:, m] * lib
+                bb_rdr[:, rdr_pos[o]] = bb_dp[:, o] / bb_dp[:, m] * lib
         else:
-            col = bb_dp[:, c]
-            valid_i = np.isfinite(col) & (col > 0)
+            vals = bb_dp[:, o]
+            valid_i = np.isfinite(vals) & (vals > 0)
             if valid_i.any():
-                med = np.median(col[valid_i])
-                logging.info(f"  bb median-centering {col_repid[c]}: median={med:.4f}")
+                med = np.median(vals[valid_i])
+                logging.info(f"  bb median-centering {obs_repid[o]}: median={med:.4f}")
                 with np.errstate(invalid="ignore", divide="ignore"):
-                    bb_rdr[valid_i, rdr_pos[c]] = col[valid_i] / med
+                    bb_rdr[valid_i, rdr_pos[o]] = vals[valid_i] / med
 
     if rdr_outlier_quantile > 0:
         rdr_upper = np.nanquantile(bb_rdr, 1 - rdr_outlier_quantile)
@@ -443,10 +445,8 @@ def get_mask_by_het_balanced(
 
 
 ##################################################
-def assign_snp_bounderies(
-    snps: pd.DataFrame, regions: pd.DataFrame, colname="region_id"
-):
-    """Split each region into one ``[START, END)`` sub-interval per SNP it contains.
+def assign_snp_ranges(snps: pd.DataFrame, regions: pd.DataFrame, colname="region_id"):
+    """Split each region into one ``[START, END)`` range per SNP it contains.
 
     A SNP owns the span between the midpoints of its neighbours, bounded by the
     region edges; a lone SNP owns the whole region. SNPs outside every region keep
@@ -455,7 +455,7 @@ def assign_snp_bounderies(
 
     Args:
         snps: SNPs with ``#CHR``, ``POS``, ``POS0``, sorted genomically.
-        regions: Intervals with ``#CHR``, ``START``, ``END``, ``region_id`` and
+        regions: Ranges with ``#CHR``, ``START``, ``END``, ``region_id`` and
             optionally ``seg_id``.
         colname: Column to write the region identifier into.
 
@@ -464,25 +464,25 @@ def assign_snp_bounderies(
     """
     has_seg = "seg_id" in regions.columns
     regions = regions.reset_index(drop=True)
-    regions["_reg_row"] = np.arange(len(regions))
+    regions["_reg_id"] = np.arange(len(regions))
 
-    snps = assign_pos_to_range(snps, regions, ref_id="_reg_row", pos_col="POS")
+    snps = assign_pos_to_range(snps, regions, ref_id="_reg_id", pos_col="POS")
     snps["START"] = 0
     snps["END"] = 0
     snps[colname] = ""
     if has_seg:
         snps["seg_id"] = ""
 
-    inside = snps["_reg_row"].notna()
+    inside = snps["_reg_id"].notna()
     n_out = int((~inside).sum())
     if n_out:
-        logging.info(f"SNP boundaries: {n_out}/{len(snps)} SNPs outside every region")
+        logging.info(f"SNP ranges: {n_out}/{len(snps)} SNPs outside every region")
 
     reg_start = regions["START"].to_numpy()
     reg_end = regions["END"].to_numpy()
-    for reg_row, grp in snps.loc[inside].groupby("_reg_row", sort=False):
+    for reg_id, grp in snps.loc[inside].groupby("_reg_id", sort=False):
         idx = grp.index.to_numpy()
-        r = int(reg_row)
+        r = int(reg_id)
         snps.loc[idx, colname] = regions.at[r, "region_id"]
         if has_seg:
             snps.loc[idx, "seg_id"] = regions.at[r, "seg_id"]
@@ -495,6 +495,6 @@ def assign_snp_bounderies(
         snps.loc[idx, "START"] = bounds[:-1]
         snps.loc[idx, "END"] = bounds[1:]
 
-    snps.drop(columns="_reg_row", inplace=True)
+    snps.drop(columns="_reg_id", inplace=True)
     snps["BLOCKSIZE"] = snps["END"] - snps["START"]
     return snps

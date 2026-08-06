@@ -17,13 +17,13 @@ import squidpy as sq
 
 from const import RANGER_MATRIX_H5, RANGER_SPATIAL_DIR, SPATIAL_ASSAYS
 from io_utils import read_BED, read_barcodes, read_genes_gtf_file
-from rna_utils import feature_to_blocks
+from rna_utils import assign_features_to_ranges
 
 ##################################################
 """
 Input:
 1. 10x cell/space-ranger RNA Anndata, multiple replicates
-2. reference GTF file with gene_id and intervals
+2. reference GTF file with gene_id and ranges
 3. gene blacklist
 4. genome size file
 5. genome regions whitelist
@@ -182,7 +182,7 @@ if assay_type in SPATIAL_ASSAYS:
     )
 
 regions = read_BED(region_bed)[["#CHR", "START", "END", "region_id"]]
-adata = feature_to_blocks(adata, regions, assay_type)
+adata = assign_features_to_ranges(adata, regions, assay_type)
 
 chs = sort_chroms(adata.var["#CHR"].unique().tolist())
 adata.var["#CHR"] = pd.Categorical(adata.var["#CHR"], categories=chs, ordered=True)
