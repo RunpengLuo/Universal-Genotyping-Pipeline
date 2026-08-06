@@ -84,7 +84,7 @@ else:
         params:
             out_prefix=config["pileup_dir"]
             + "/{assay_type}/out_mosdepth/{dataset_id}.chr{chrname}",
-            chrom=lambda wc: raw_chrom(wc.chrname),
+            chrom=lambda wc: input_chrom(wc.chrname),
             read_quality=config["params_mosdepth"]["read_quality"],
             extra_params=config["params_mosdepth"]["extra_params"],
             bam_arg=lambda wc: bam_stream_arg(get_data[(wc.assay_type, wc.dataset_id)]),

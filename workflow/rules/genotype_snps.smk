@@ -38,7 +38,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
             min_qual=config["params_bcftools"]["min_qual"],
             extra_params=config["params_bcftools"]["extra_params"],
             bam_arg=bam_stream_arg(genotype_files),
-            region_arg=lambda wc: f"-r {raw_chrom(wc.chrname)}" if remote_stream else "",
+            region_arg=lambda wc: f"-r {input_chrom(wc.chrname)}" if remote_stream else "",
         shell:
             r"""
             ALN="{input.alignment}"; [ -z "$ALN" ] && ALN="{params.bam_arg}"
@@ -183,7 +183,7 @@ if not run_genotyping and run_phasing:
             "../envs/bcftools.yaml"
         threads: 1
         params:
-            chrom=lambda wc: raw_chrom(wc.chrname),
+            chrom=lambda wc: input_chrom(wc.chrname),
         shell:
             r"""
             if [ ! -f "{input.het_snp_vcf}.tbi" ] && [ ! -f "{input.het_snp_vcf}.csi" ]; then

@@ -19,7 +19,7 @@ if run_phasing and config["phaser"] == "shapeit":
             "../envs/shapeit.yaml"
         threads: config["threads"]["phase"]
         params:
-            chrom=lambda wc: raw_chrom(wc.chrname),
+            chrom=lambda wc: input_chrom(wc.chrname),
         shell:
             r"""
             SHAPEIT5_phase_common \

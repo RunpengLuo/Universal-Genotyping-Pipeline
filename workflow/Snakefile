@@ -29,9 +29,6 @@ from parse_workflow_args import parse_workflow
 from utils import logging_snakemake
 
 _run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-# Skip validation when no real config is provided (e.g., --conda-create-envs-only).
-# Detected by checking that sample_file points to an existing file.
 _has_config = (
     "workflow_mode" in config
     and config.get("sample_file") is not None
@@ -39,12 +36,13 @@ _has_config = (
 )
 
 if _has_config:
+
+    # run workflow
     logging_snakemake("=== Configuration Parameters ===")
     for key, val in config.items():
         logging_snakemake(f"  {key}: {val}")
     logging_snakemake("")
 
-    # config + sample file -> every name the rules read; see scripts/parse_workflow_args.py
     _wf = parse_workflow(config)
     workflow_mode = _wf["workflow_mode"]
     sample_id = _wf["sample_id"]
@@ -54,7 +52,7 @@ if _has_config:
     chroms = _wf["chroms"]
     input_nochr = _wf["input_nochr"]
 
-    def raw_chrom(chrname):
+    def input_chrom(chrname):
         """Region string for a tool that reads the alignment."""
         return str(chrname) if input_nochr else f"chr{chrname}"
 
@@ -86,10 +84,6 @@ if _has_config:
 
     os.makedirs(config["qc_dir"], exist_ok=True)
 
-    # Global wildcard grammar: the token universe for wildcards shared across rules.
-    # Rules may narrow a wildcard further (e.g. non-bulk rules restrict assay_type).
-    # Pinning dataset_id/chrname stops a greedy wildcard from swallowing an adjacent
-    # path segment (e.g. mosdepth {dataset_id}.chr{chrname} vs {dataset_id}).
     wildcard_constraints:
         assay_type="|".join(sorted(ALLOWED_ASSAY_TYPES, key=len, reverse=True)),
         dataset_id=r"[^./]+",

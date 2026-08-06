@@ -28,7 +28,7 @@ rule pileup_snps_bulk_bcftools:
         extra_params=config["params_bcftools"]["extra_params"],
         bam_arg=lambda wc: bam_stream_arg(get_data[(wc.assay_type, wc.dataset_id)]),
         region_arg=(
-            "-r " + ",".join(raw_chrom(c) for c in config["chromosomes"])
+            "-r " + ",".join(input_chrom(c) for c in config["chromosomes"])
             if remote_stream
             else ""
         ),
