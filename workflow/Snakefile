@@ -26,6 +26,7 @@ from const import (
     is_url,
 )
 from parse_workflow_args import parse_workflow
+from utils import logging_snakemake
 
 _run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -38,10 +39,10 @@ _has_config = (
 )
 
 if _has_config:
-    print("=== Configuration Parameters ===")
+    logging_snakemake("=== Configuration Parameters ===")
     for key, val in config.items():
-        print(f"  {key}: {val}")
-    print()
+        logging_snakemake(f"  {key}: {val}")
+    logging_snakemake("")
 
     # config + sample file -> every name the rules read; see scripts/parse_workflow_args.py
     _wf = parse_workflow(config)
@@ -60,7 +61,6 @@ if _has_config:
     assay_types = _wf["assay_types"]
     modalities = _wf["modalities"]
     msr_list = _wf["msr_list"]
-    # get_data[(assay_type, dataset_id)] -> the record's files map (docs/sample_sheet.md)
     get_data = _wf["get_data"]
     modality2files = _wf["modality2files"]
     assay2dataset_ids = _wf["assay2dataset_ids"]

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Parse and validate everything workflow/Snakefile needs before the DAG is built.
 
-Runpeng Luo (2026-07-11)
+Runpeng Luo
+Last update: 2026-08-06
 
 ``parse_workflow(config)`` is the only entry point the Snakefile calls; it returns
 every name the rules read, and inlines the whole flow as ``# ===`` blocks. Three
@@ -26,7 +27,6 @@ Notes/References:
 import csv
 import json
 import os
-import sys
 
 from const import (
     ALIGNMENT_FILES,
@@ -57,7 +57,7 @@ from const import (
     is_url,
 )
 from io_utils import get_chr_sizes
-from utils import strip_chr_prefix
+from utils import logging_snakemake, strip_chr_prefix
 
 
 def parse_sample_file_json(path):
@@ -246,10 +246,9 @@ def validate_records(
         files = {k: v for k, v in rec["files"].items() if k in readable}
         ignored = set(rec["files"]) - set(files)
         if ignored:
-            print(
+            logging_snakemake(
                 f"NOTE: {at}: ignoring files key(s) {sorted(ignored)}; "
                 f"{assay_type} reads {sorted(readable)}",
-                file=sys.stderr,
             )
         rec["files"] = files
 
@@ -413,14 +412,14 @@ def parse_workflow(config):
         raise ValueError("chromosomes is empty")
     chroms = [f"chr{c}" for c in wanted]
     input_nochr = not by_core[wanted[0]].lower().startswith("chr")
-    print(f"chromosomes: {chroms[:3]}... input_nochr={input_nochr}")
+    logging_snakemake(f"chromosomes: {chroms[:3]}... input_nochr={input_nochr}")
 
     # === species ===
     species = config.get("species")
     if not species:
         raise ValueError(f"species is required in the config; one of {list(SPECIES)}")
     if species not in SPECIES:
-        print(
+        logging_snakemake(
             f"WARNING: species={species!r} is not natively supported ({list(SPECIES)})."
         )
 
@@ -433,7 +432,7 @@ def parse_workflow(config):
         )
     reference_version = canonical_refver(raw_refver)
     if not is_known_refver(raw_refver):
-        print(
+        logging_snakemake(
             f"WARNING: reference_version={raw_refver!r} is not natively supported "
             f"({REFVERS})."
         )
@@ -444,9 +443,13 @@ def parse_workflow(config):
         spelling = rec["reference_version"]
         n, ids = matched.get(spelling, (0, set()))
         matched[spelling] = (n + 1, ids | {rec["sample_id"]})
-    print(f"reference_version: config={raw_refver!r} -> {reference_version}")
+    logging_snakemake(
+        f"reference_version: config={raw_refver!r} -> {reference_version}"
+    )
     for spelling, (n_rec, ids) in sorted(matched.items()):
-        print(f"  {spelling:<20} {n_rec:5d} record(s) {len(ids):4d} sample_id(s)")
+        logging_snakemake(
+            f"  {spelling:<20} {n_rec:5d} record(s) {len(ids):4d} sample_id(s)"
+        )
 
     # === validate against the spec + selection rules (mutates files in place) ===
     validate_records(
@@ -487,12 +490,12 @@ def parse_workflow(config):
             "rdr_normalization='auto' to median-normalize these."
         )
     if ignored:
-        print(
+        logging_snakemake(
             f"NOTE: rdr_normalization='median' -> ignoring rdr_base_dataset_id on "
             f"{len(ignored)} tumor(s): {sorted(ignored)}"
         )
     if unbased:
-        print(
+        logging_snakemake(
             f"NOTE: {len(unbased)} tumor(s) have no rdr_base_dataset_id; RDR uses "
             f"median normalization: {sorted(unbased)}"
         )
@@ -542,7 +545,7 @@ def parse_workflow(config):
         assert os.path.exists(window_bed), f"window_bed does not exist: {window_bed}"
     use_prebuilt_windows = is_bulk and window_bed is not None and not has_breakpoints
     if is_bulk and window_bed is not None and has_breakpoints:
-        print(
+        logging_snakemake(
             f"NOTE: window_bed ignored ({window_bed}); {len(bedpe_files)} "
             "breakpoint_bedpe file(s) re-tile the arms, so windows are built"
         )
@@ -550,7 +553,7 @@ def parse_workflow(config):
         config["aux_dir"] + "/segment.bed" if is_bulk else config["region_bed"]
     )
     if is_bulk:
-        print(
+        logging_snakemake(
             f"NOTE: bulk -> segment BED ({segment_bed}); "
             f"{len(bedpe_files)} breakpoint_bedpe file(s), region_id=arm, seg_id=chunk; "
             f"windows: {'pre-built ' + window_bed if use_prebuilt_windows else 'built'}"
@@ -582,7 +585,7 @@ def parse_workflow(config):
                 r["dataset_id"] for r in chosen if r["sample_type"] != "normal"
             ]
             if non_normal:
-                print(
+                logging_snakemake(
                     f"WARN: genotype_dataset_ids includes non-normal dataset(s) "
                     f"{non_normal}; germline SNPs may carry somatic signal"
                 )
@@ -597,7 +600,7 @@ def parse_workflow(config):
             if not chosen:
                 raise ValueError(f"no records to genotype for sample_id={sample_id!r}")
             r0 = chosen[0]
-            print(
+            logging_snakemake(
                 f"NOTE: genotype_dataset_ids unset; genotyping {r0['dataset_id']!r} "
                 f"({r0['sample_type']}, {r0['assay_type']})"
             )
@@ -654,7 +657,7 @@ def parse_workflow(config):
                 normals = [r for r in lr if r["sample_type"] == "normal"]
                 chosen = normals or lr
                 kind = "normal" if normals else "tumor (no normal)"
-                print(
+                logging_snakemake(
                     f"NOTE: phase_dataset_ids unset; longphase co-phases "
                     f"{[r['dataset_id'] for r in chosen]} ({kind})"
                 )

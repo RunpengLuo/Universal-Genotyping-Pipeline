@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build mm10 genetic maps (Eagle2 + SHAPEIT5) from the CoxMapV3 table.
 
-Runpeng Luo (2026-07-27)
+Runpeng Luo
+Last update: 2026-08-06
 
 Dependencies:
   numpy, pandas

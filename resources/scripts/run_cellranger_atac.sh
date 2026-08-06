@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run cellranger-atac count on one or more scATAC samples, logging each run.
 #
-# Runpeng Luo (2026-07-14)
+# Runpeng Luo
+# Last update: 2026-08-06
 #
 # Dependencies:
 #   cellranger-atac (set CELLRANGER); a Cell Ranger ARC / ATAC reference (set REFERENCE).

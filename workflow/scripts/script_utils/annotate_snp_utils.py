@@ -1,6 +1,7 @@
 """Pseudobulk SNP annotation helpers.
 
-Runpeng Luo (2026-08-05)
+Runpeng Luo
+Last update: 2026-08-06
 
 Dependencies:
   pandas; script_utils (io_utils, utils).

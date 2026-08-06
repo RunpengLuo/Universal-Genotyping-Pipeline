@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Dry-run the DAG for every workflow mode, from both sample-file formats.
 
-Runpeng Luo (2026-07-12)
+Runpeng Luo
+Last update: 2026-08-06
 
 These tests build the DAG only (`snakemake -n`); no rule is executed and no real
 data is needed. They cover sample-file parsing and validation, rule wiring, the

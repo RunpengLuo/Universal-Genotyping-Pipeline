@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Chromosome-name helpers behind the resolution in parse_workflow.
 
-Runpeng Luo (2026-08-05)
+Runpeng Luo
+Last update: 2026-08-06
 
 parse_workflow inlines the resolution itself from get_chr_sizes and
 strip_chr_prefix; its behaviour is covered end to end by tests/test_chrstyle.py

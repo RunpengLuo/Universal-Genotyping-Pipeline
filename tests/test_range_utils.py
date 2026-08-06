@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Unit tests for the shared range-assignment primitives.
 
-Runpeng Luo (2026-08-06)
+Runpeng Luo
+Last update: 2026-08-06
 
 ``range_utils`` replaced five near-copies of the same "which range contains
 this?" loop, so these tests pin the behaviours the callers rely on: the vectorized

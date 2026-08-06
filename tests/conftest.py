@@ -1,6 +1,7 @@
 """Shared fixtures: a stub workspace the DAG can be built against.
 
-Runpeng Luo (2026-07-12)
+Runpeng Luo
+Last update: 2026-08-06
 
 Dry-run tests only build the DAG, so every reference asset and input file can be
 an empty stub; nothing is read. Sample files are written in both formats from one

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Remote sample-file inputs: URLs are wrapped in storage() and fetched with their index.
 
-Runpeng Luo (2026-07-12)
+Runpeng Luo
+Last update: 2026-08-06
 
 The local test serves a stub alignment over http://127.0.0.1 and dry-runs against
 it, so no network is needed. The GIAB test resolves real URLs and is marked

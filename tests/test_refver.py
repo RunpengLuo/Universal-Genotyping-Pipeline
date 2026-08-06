@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """reference_version canonicalization: the alias table and its lookup helpers.
 
-Runpeng Luo (2026-08-05)
+Runpeng Luo
+Last update: 2026-08-06
 
 Pure-function tests; no sample file, no snakemake, no network.
 

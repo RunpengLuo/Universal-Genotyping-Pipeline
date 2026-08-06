@@ -1,6 +1,7 @@
 """Genotyping QC: het vs hom-alt allele-fraction diagnostic (bulk genotyped VCFs).
 
-Runpeng Luo (2026-07-27)
+Runpeng Luo
+Last update: 2026-08-06
 
 Reads the per-chromosome genotyped VCFs (``snps/chr{c}.vcf.gz``), which retain het +
 hom-alt SNPs with the genotyping sample's ``FORMAT/AD`` and ``DP``, and renders a QC PDF:

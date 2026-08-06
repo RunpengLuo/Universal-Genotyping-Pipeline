@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Validate a JSON (or TSV) sample file without running the workflow.
 
-Runpeng Luo (2026-07-12)
+Runpeng Luo
+Last update: 2026-08-06
 
 Runs the same parser and the same checks the Snakefile runs at DAG build, so a
 malformed sample file is caught in a second rather than mid-run. Every sample_id

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Chromosome naming style: region strings follow the genome-size file.
 
-Runpeng Luo (2026-08-05)
+Runpeng Luo
+Last update: 2026-08-06
 
 The genome-size file declares how the raw inputs name their contigs. Region strings
 handed to bcftools/mosdepth must use that spelling, or the tool silently matches

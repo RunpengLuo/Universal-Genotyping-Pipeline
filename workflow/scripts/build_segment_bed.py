@@ -1,6 +1,7 @@
 """Build the segment BED shared by all bulk assays.
 
-Runpeng Luo (2026-07-22)
+Runpeng Luo
+Last update: 2026-08-06
 
 Starts from the accessible-regions BED (region.bed; its 4th column is the
 chromosome-arm ``region_id``), subtracts the blacklist, then splits each arm at the

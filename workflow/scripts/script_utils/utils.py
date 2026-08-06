@@ -57,6 +57,41 @@ def setup_logging(log):
     root.addHandler(fh)
 
 
+def logging_snakemake(msg):
+    """Log to Snakemake's run log (``.snakemake/log``) instead of the console.
+
+    Snakemake attaches two handlers to its ``snakemake.logging`` logger: a stream
+    handler on stderr and a file handler on the run log. Handing the record to the file
+    handler alone keeps workflow-parse diagnostics in the run log and off the terminal;
+    ``logger.info`` would reach both, and ``print`` neither.
+
+    Falls back to ``print`` when there is no file handler: outside Snakemake (e.g.
+    ``resources/scripts/validate_sample_file.py``) and under ``--dryrun``, which writes
+    no log file at all.
+
+    Args:
+        msg: Message text, emitted as one unformatted INFO record.
+    """
+
+    def logfile_handler():
+        """Snakemake's run-log file handler, or None when there is no run."""
+        try:
+            from snakemake.logging import logger
+        except ImportError:
+            return None
+        return next(
+            (h for h in logger.handlers if isinstance(h, logging.FileHandler)), None
+        )
+
+    handler = logfile_handler()
+    if handler is None:
+        print(msg)
+        return
+    handler.handle(
+        logging.LogRecord("snakemake", logging.INFO, __file__, 0, msg, None, None)
+    )
+
+
 def maybe_path(x):
     """Return None if *x* is an empty list or None, otherwise return *x* unchanged.
 
