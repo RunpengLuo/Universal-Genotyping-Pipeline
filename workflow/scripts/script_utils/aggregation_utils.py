@@ -350,7 +350,9 @@ def build_adaptive_bins(
     for col in cluster_cols:
         pos_dict[col] = (col, "first")
 
-    bbs = bins.groupby("bb_id", sort=True).agg(**pos_dict)
+    # drop the index name: it would collide with the bb_id column added below, and
+    # pandas rejects `join(on="bb_id")` when the name is both an index level and a column
+    bbs = bins.groupby("bb_id", sort=True).agg(**pos_dict).rename_axis(None)
 
     # SNP counts per bb
     snp_counts = snps.groupby("bb_id").size()

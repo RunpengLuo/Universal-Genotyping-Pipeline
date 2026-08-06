@@ -39,6 +39,13 @@ def mat():
     return pytest.importorskip("matrix_utils")
 
 
+@pytest.fixture
+def agg():
+    """aggregation_utils; its binning kernel needs numba."""
+    pytest.importorskip("numba")
+    return pytest.importorskip("aggregation_utils")
+
+
 def _snps(n, region="r", ps=1):
     """SNP frame with the columns detect_phase_flips expects (incl. #CHR/POS0), index 0..n-1."""
     return pd.DataFrame(
@@ -119,6 +126,50 @@ def test_loh_cancelled_when_merged_but_preserved_when_split(mat):
     tsum = _dense(mat.sum_features_to_bbs(tot, bins, k))[:, 0]
     folded = np.minimum(bsum / tsum, 1 - bsum / tsum)
     assert np.allclose(folded, 0.2, atol=1e-9)
+
+
+def test_bbs_frame_joins_on_bb_id(agg):
+    """`bbs` must be join-able on bb_id: the index name must not shadow the column.
+
+    build_adaptive_bins groups the fixed bins by bb_id and then adds a bb_id column.
+    If the grouped index keeps that name, pandas rejects `join(on="bb_id")` with
+    "both an index level and a column label", which is how interp_cM_between_bbs
+    consumes the frame.
+    """
+    n_bins = 40
+    bins = pd.DataFrame(
+        {
+            "#CHR": ["chr1"] * n_bins,
+            "START": np.arange(n_bins) * 1000,
+            "END": (np.arange(n_bins) + 1) * 1000,
+            "region_id": ["r"] * n_bins,
+        }
+    )
+    bins["bin_id"] = np.arange(n_bins)
+    snps = pd.DataFrame(
+        {
+            "#CHR": ["chr1"] * 80,
+            "POS0": np.arange(80) * 500,
+            "POS": np.arange(80) * 500 + 1,
+            "region_id": ["r"] * 80,
+        }
+    )
+    tot = np.full((80, 2), 10.0)
+    bbs, snps_bb = agg.build_adaptive_bins(
+        bins,
+        agg.assign_snps_to_bins(snps, bins, tot),
+        tot,
+        50,
+        2,
+        cluster_cols=["region_id"],
+        tumor_sidx=0,
+    )
+    assert bbs.index.name is None, "bb_id index name shadows the bb_id column"
+    assert "bb_id" in bbs.columns and "bb_id" in snps_bb.columns
+    # the exact operation interp_cM_between_bbs performs
+    span = snps_bb.groupby("bb_id", sort=False)["POS"].agg(lo="min", hi="max")
+    joined = bbs.join(span, on="bb_id")
+    assert len(joined) == len(bbs) and joined["lo"].notna().all()
 
 
 if __name__ == "__main__":
