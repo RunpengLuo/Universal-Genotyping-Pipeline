@@ -11,36 +11,45 @@ All outputs live under ``bb_dir/MSR{msr}/{assay}/``: the shared grid ``bb.tsv.gz
 (``bb.{T,A,B}allele.npz``, ``multi_snp.*``, ``barcodes*``). Input for HATCHet3 and CalicoST.
 """
 
-import os
 import logging
 import shutil
 
 
 snakemake_handle = snakemake
 
-t = int(getattr(snakemake_handle, "threads", 1))
-os.environ["OMP_NUM_THREADS"] = str(t)
-os.environ["OPENBLAS_NUM_THREADS"] = str(t)
-os.environ["MKL_NUM_THREADS"] = str(t)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(t)
-os.environ["NUMEXPR_NUM_THREADS"] = str(t)
+from utils import set_omp_threads, setup_logging, maybe_path
+
+set_omp_threads(snakemake_handle)
+setup_logging(snakemake_handle.log[0])
 
 import numpy as np
 import pandas as pd
 from scipy.sparse import save_npz, load_npz
 
-from utils import *
-from io_utils import *
-from aggregation_utils import *
-from combine_counts_utils import *
+from io_utils import read_barcodes, read_full_barcodes
+from combine_counts_utils import (
+    build_union_snp_grid,
+    cell_rep_idx_from_mapping,
+)
+from phasing_utils import (
+    estimate_switchprobs_PS,
+    estimate_switchprobs_cM,
+    interp_cM_blocks,
+    setup_phaseset_groups,
+)
+from matrix_utils import matrix_segmentation, pseudobulk_by_groups
+from atac_utils import atac_fragments_to_bb
+from rna_utils import rna_h5ad_to_bb
+from aggregation_utils import (
+    adaptive_segmentation,
+    gene_block_labels,
+    merge_feature_ids,
+    snps_to_windows,
+)
 from plot_alleles import plot_allele_freqs
 from matplotlib.backends.backend_pdf import PdfPages
 
-from switchprobs import *
-
 ##################################################
-log_file = snakemake_handle.log[0]
-setup_logging(log_file)
 
 # inputs
 snp_info_files = list(snakemake_handle.input["snp_info"])
@@ -102,12 +111,12 @@ cell_rep_idx_list = [
     for k, bc_full in enumerate(barcode_full_files)
 ]
 
-sample_name = (
+sample_id = (
     sample_ids_list[0]["SAMPLE_NAME"].iloc[0]
     if "SAMPLE_NAME" in sample_ids_list[0]
     else ""
 )
-logging.info(f"joint non-bulk binning: sample={sample_name}, assays={nonbulk_assays}")
+logging.info(f"joint non-bulk binning: sample_id={sample_id}, assays={nonbulk_assays}")
 
 ##################################################
 # 1. shared SNP grid (union across assays)
@@ -154,7 +163,7 @@ for k in range(n_assays):
         .to_numpy()
         .astype(np.int64)
     )
-    scatter_counts_to_shared_snps(tot_pb, tot_pb_k, shared_row, offset)
+    tot_pb[shared_row, offset : offset + tot_pb_k.shape[1]] = tot_pb_k
     col_assay += [nonbulk_assays[k]] * n_reps_k
     col_repid += rep_ids_list[k]
     col_offsets.append(offset)
@@ -177,6 +186,8 @@ if gene_aware_binning:
 snp_windows = snps[win_cols].copy()
 snp_windows["win_idx"] = np.arange(len(snp_windows))
 tot_pb_cont = np.ascontiguousarray(tot_pb)
+# assigned once here; every MSR below reuses it
+snps_win = snps_to_windows(snps, snp_windows, tot_pb_cont)
 
 # per-assay multi-SNP pre-grouping (diagnostic; every nsnp_multi SNPs)
 multi_cache = []
@@ -227,7 +238,7 @@ for j, min_snp_reads in enumerate(msr_list):
     logging.info(f"===== joint non-bulk binning MSR={min_snp_reads} =====")
     bbs, snps_bb = adaptive_segmentation(
         snp_windows,
-        snps.copy(),
+        snps_win.copy(),
         tot_pb_cont,
         min_snp_reads,
         min_snp_per_bin,
@@ -237,7 +248,6 @@ for j, min_snp_reads in enumerate(msr_list):
         gene_aware=gene_aware_binning,
     )
     num_bbs = len(bbs)
-    count_split_genes(snps_bb, grp_cols, gene_aware_binning)
 
     if genetic_map is not None:
         dist_cms = interp_cM_blocks(bbs, snps_bb, genetic_map, block_id_col="bb_id")
@@ -319,7 +329,7 @@ for j, min_snp_reads in enumerate(msr_list):
             unit="bb",
             run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
             name_prefix="combine_counts",
-            sample_id=sample_name,
+            sample_id=sample_id,
             pdf=pdf,
         )
 
@@ -341,7 +351,7 @@ for j, min_snp_reads in enumerate(msr_list):
             unit="multi-snp",
             run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
             name_prefix="combine_counts",
-            sample_id=sample_name,
+            sample_id=sample_id,
             pdf=pdf,
         )
         pdf.close()

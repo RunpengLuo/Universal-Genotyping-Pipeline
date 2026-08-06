@@ -1,163 +1,18 @@
-import heapq
 import logging
 
 import numpy as np
 import pandas as pd
 import numba
 
-from scipy.sparse import csr_matrix, issparse
-from scipy.stats import beta as beta_dist
+from scipy.sparse import issparse
 
-import scanpy as sc
-
-from io_utils import *
-from combine_counts_utils import *
-from count_reads_utils import *
-
-
-def detect_phase_flips(
-    snps, a_mtx, b_mtx, grp_cols, tumor_sidx=0, epsilon=0.05, alpha=0.05
-):
-    """Detect phase flips between consecutive SNPs using Beta credible intervals.
-
-    For each pair of consecutive SNPs within a group, compute a 95% Beta(b+1, a+1)
-    credible interval for the BAF. If any tumor sample shows the two intervals
-    confidently on opposite sides of a dead zone around 0.5, mark a phase boundary.
-
-    Parameters
-    ----------
-    snps : pd.DataFrame
-        SNP DataFrame with grouping columns.
-    a_mtx : (N, M) ndarray
-        A-allele counts (N SNPs, M samples).
-    b_mtx : (N, M) ndarray
-        B-allele counts (N SNPs, M samples).
-    grp_cols : list of str
-        Columns to group SNPs by (e.g. ["region_id", "PS"]).
-    tumor_sidx : int
-        Index of first tumor sample column.
-    epsilon : float
-        Half-width of dead zone around 0.5. Default 0.05 → dead zone [0.45, 0.55].
-    alpha : float
-        Significance level for credible intervals. Default 0.05 → 95% CI.
-
-    Returns
-    -------
-    pd.Series
-        Globally unique phase_group IDs aligned to snps index.
-    """
-    a_tumor = (
-        a_mtx[:, tumor_sidx:].toarray() if issparse(a_mtx) else a_mtx[:, tumor_sidx:]
-    ).astype(np.float64)
-    b_tumor = (
-        b_mtx[:, tumor_sidx:].toarray() if issparse(b_mtx) else b_mtx[:, tumor_sidx:]
-    ).astype(np.float64)
-
-    ci_lo = beta_dist.ppf(alpha / 2, b_tumor + 1, a_tumor + 1)
-    ci_hi = beta_dist.ppf(1 - alpha / 2, b_tumor + 1, a_tumor + 1)
-
-    # Observed BAF for logging
-    tot_tumor = a_tumor + b_tumor
-    baf = np.divide(
-        b_tumor, tot_tumor, out=np.full_like(b_tumor, np.nan), where=tot_tumor > 0
-    )
-
-    phase_group = np.zeros(len(snps), dtype=np.int64)
-    global_pg = 0
-    n_boundaries = 0
-    n_groups_split = 0
-    flip_records = []
-
-    for _, grp in snps.groupby(grp_cols, sort=False):
-        idx = grp.index.to_numpy()
-        if len(idx) < 2:
-            phase_group[idx] = global_pg
-            global_pg += 1
-            continue
-
-        # Vectorized: check all consecutive pairs × all samples at once
-        hi_prev, lo_curr = ci_hi[idx[:-1]], ci_lo[idx[1:]]
-        lo_prev, hi_curr = ci_lo[idx[:-1]], ci_hi[idx[1:]]
-        is_flip = (
-            ((hi_prev < 0.5 - epsilon) & (lo_curr > 0.5 + epsilon))
-            | ((lo_prev > 0.5 + epsilon) & (hi_curr < 0.5 - epsilon))
-        ).any(axis=1)
-
-        local_pg = np.concatenate([[0], np.cumsum(is_flip)])
-        phase_group[idx] = global_pg + local_pg
-
-        n_flip = int(is_flip.sum())
-        n_boundaries += n_flip
-        if n_flip > 0:
-            n_groups_split += 1
-            for fp in np.where(is_flip)[0]:
-                pi, ci = idx[fp], idx[fp + 1]
-                mean_diff = np.nanmean(np.abs(baf[pi] - baf[ci]))
-                flip_records.append(
-                    (
-                        snps.iat[pi, snps.columns.get_loc("#CHR")],
-                        snps.iat[pi, snps.columns.get_loc("POS0")],
-                        snps.iat[ci, snps.columns.get_loc("POS0")],
-                        baf[pi],
-                        baf[ci],
-                        mean_diff,
-                    )
-                )
-
-        global_pg += int(local_pg[-1]) + 1
-
-    logging.info(
-        f"detect_phase_flips: epsilon={epsilon}, alpha={alpha}, "
-        f"boundaries={n_boundaries}, groups_split={n_groups_split}, "
-        f"new_phase_groups={global_pg}"
-    )
-
-    if flip_records:
-        flip_records.sort(key=lambda r: r[5], reverse=True)
-        n_show = min(10, len(flip_records))
-        logging.info(f"top {n_show} flips by |ΔBAF| (largest gap):")
-        for chrom, p1, p2, b1, b2, d in flip_records[:n_show]:
-            b1s = ",".join(f"{v:.3f}" for v in b1)
-            b2s = ",".join(f"{v:.3f}" for v in b2)
-            logging.info(f"  {chrom}:{p1}-{p2}  BAF=[{b1s}]→[{b2s}]  |Δ|={d:.3f}")
-        if len(flip_records) > n_show:
-            logging.info(f"bottom {n_show} flips by |ΔBAF| (smallest gap):")
-            for chrom, p1, p2, b1, b2, d in flip_records[-n_show:]:
-                b1s = ",".join(f"{v:.3f}" for v in b1)
-                b2s = ",".join(f"{v:.3f}" for v in b2)
-                logging.info(f"  {chrom}:{p1}-{p2}  BAF=[{b1s}]→[{b2s}]  |Δ|={d:.3f}")
-
-    return pd.Series(phase_group, index=snps.index, dtype=np.int64)
-
-
-def count_split_genes(
-    snps, grp_cols, gene_aware, bb_col="bb_id", feature_col="feature_id"
-):
-    """Log a gene-split sanity check for gene-aware binning.
-
-    A gene is "split" if, within one ``grp_cols`` group (region_id / PS / phase_group),
-    its SNPs land in more than one bin. Logs the split count over genic SNPs; no-op if
-    no ``feature_col`` is present.
-    """
-    if feature_col not in snps.columns:
-        return
-    g = snps.loc[
-        snps[feature_col].notna() & (snps[feature_col] != "intergenic"),
-        grp_cols + [bb_col, feature_col],
-    ].copy()
-    if len(g) > 0:
-        g[feature_col] = g[feature_col].str.split(";")
-        g = g.explode(feature_col)
-        g = g[g[feature_col] != "intergenic"]
-    if len(g) == 0:
-        n_split, n_genes = 0, 0
-    else:
-        key = g.groupby(grp_cols + [feature_col], sort=False)[bb_col].nunique()
-        n_split, n_genes = int((key > 1).sum()), int(len(key))
-    logging.info(
-        f"gene-split sanity: {n_split}/{n_genes} genes have SNPs crossing a bin "
-        f"boundary (gene_aware_binning={gene_aware})"
-    )
+from interval_utils import (
+    assign_all_features,
+    assign_pos_to_range,
+    overlaps_any_range,
+)
+from io_utils import read_BED, read_gtf
+from matrix_utils import group_sum
 
 
 def gene_block_labels(n_items, ranges):
@@ -299,6 +154,66 @@ def _bin_windows_numba(
     return bin_ids, bin_id
 
 
+def assign_and_keep(snps, ref, ref_id, pos_col="POS0", label=""):
+    """Assign SNPs to reference intervals, log the misses, and drop them.
+
+    The shared body of ``snps_to_windows`` and ``snp_to_region``: assign, report the
+    fraction outside every interval, drop those rows, and cast the id to the
+    reference's own dtype.
+
+    Args:
+        snps: SNP frame with ``#CHR`` and *pos_col*.
+        ref: Reference intervals carrying *ref_id*.
+        ref_id: Identifier column to assign.
+        pos_col: 0-based position column of *snps*.
+        label: Prefix for the log line.
+
+    Returns:
+        ``(kept, outside_mask)``: the assigned SNPs reindexed from 0, and the
+        boolean mask of dropped rows over the INPUT frame.
+    """
+    snps = assign_pos_to_range(snps, ref, ref_id=ref_id, pos_col=pos_col)
+    outside = snps[ref_id].isna()
+    n_out = int(outside.sum())
+    logging.info(
+        f"{label}SNPs outside any {ref_id}: {n_out}/{len(snps)} "
+        f"({n_out / max(len(snps), 1):.3%})"
+    )
+    kept = snps.loc[~outside].reset_index(drop=True)
+    kept[ref_id] = kept[ref_id].astype(ref[ref_id].dtype)
+    return kept, outside.to_numpy()
+
+
+def snps_to_windows(snps, windows, tot_mtx):
+    """Assign SNPs to windows once, dropping those outside every window.
+
+    Hoisted out of ``adaptive_segmentation`` so a caller sweeping a binning grid
+    pays for the assignment once instead of per grid point. The returned frame
+    carries ``_orig_idx`` (row in the input frame, indexing ``tot_mtx``) and an
+    int64 ``win_idx``; ``adaptive_segmentation`` skips step 1 when it sees one.
+
+    Args:
+        snps: SNP frame with ``#CHR`` and ``POS0``.
+        windows: Window frame with ``#CHR``, ``START``, ``END``, ``win_idx``.
+        tot_mtx: Per-SNP total counts, for the off-window depth log only.
+
+    Returns:
+        The SNPs inside a window, reindexed from 0.
+    """
+    snps["_orig_idx"] = np.arange(len(snps))
+    orig_idx = snps["_orig_idx"].to_numpy()
+    kept, outside = assign_and_keep(snps, windows, "win_idx")
+    if outside.any():
+        off_depth = tot_mtx[orig_idx[outside]].sum(axis=1)
+        logging.info(
+            f"off-target SNP depth: "
+            f"min={off_depth.min()}, max={off_depth.max()}, "
+            f"mean={off_depth.mean():.1f}, median={np.median(off_depth):.1f}"
+        )
+    kept["win_idx"] = kept["win_idx"].astype(np.int64)
+    return kept
+
+
 def adaptive_segmentation(
     windows: pd.DataFrame,
     snps: pd.DataFrame,
@@ -342,7 +257,6 @@ def adaptive_segmentation(
         Input SNPs with ``bb_id`` and ``win_idx`` columns added. SNPs not falling
         in any window are dropped.
     """
-    from scipy.sparse import issparse
 
     M_tumor = tot_mtx.shape[1] - tumor_sidx
     min_snp_reads_vec = np.ascontiguousarray(
@@ -354,30 +268,12 @@ def adaptive_segmentation(
         f"max_blocksize={max_blocksize}"
     )
 
-    # 1. Assign SNPs to windows
-    snps["_orig_idx"] = np.arange(len(snps))
-    snps = assign_pos_to_range(snps, windows, ref_id="win_idx", pos_col="POS0")
-    outside_mask = snps["win_idx"].isna()
-    n_outside = outside_mask.sum()
-    logging.info(
-        f"SNPs outside any window: {n_outside}/{len(snps)} ({n_outside / max(len(snps), 1):.3%})"
-    )
-    if n_outside > 0:
-        off_idx = snps.loc[outside_mask, "_orig_idx"].to_numpy()
-        off_depth = tot_mtx[off_idx].sum(axis=1)
-        logging.info(
-            f"off-target SNP depth: "
-            f"min={off_depth.min()}, max={off_depth.max()}, "
-            f"mean={off_depth.mean():.1f}, median={np.median(off_depth):.1f}"
-        )
-    snps = snps.dropna(subset=["win_idx"]).reset_index(drop=True)
-    snps["win_idx"] = snps["win_idx"].astype(np.int64)
+    # 1. Assign SNPs to windows, unless the caller already did (see snps_to_windows)
+    if "win_idx" not in snps.columns:
+        snps = snps_to_windows(snps, windows, tot_mtx)
 
     # 2. Compute per-window stats
     W = len(windows)
-    win_nsnps = np.zeros(W, dtype=np.int64)
-    win_reads = np.zeros((W, M_tumor), dtype=np.float64)
-
     snp_win_idx = snps["win_idx"].to_numpy()
     snp_orig_idx = snps["_orig_idx"].to_numpy()
 
@@ -386,10 +282,10 @@ def adaptive_segmentation(
     else:
         tot_tumor = tot_mtx[:, tumor_sidx:].astype(np.float64)
 
-    for i in range(len(snps)):
-        w = snp_win_idx[i]
-        win_nsnps[w] += 1
-        win_reads[w] += tot_tumor[snp_orig_idx[i]]
+    win_nsnps = np.bincount(snp_win_idx, minlength=W).astype(np.int64)
+    win_reads = np.asarray(
+        group_sum(tot_tumor[snp_orig_idx], snp_win_idx, W, axis=0), dtype=np.float64
+    )
 
     # 3. Group windows and run numba kernel
     bin_id = 0
@@ -473,83 +369,6 @@ def adaptive_segmentation(
     return bbs, snps
 
 
-def _searchsorted_assign(starts, ends, positions):
-    """Index of the non-overlapping, start-sorted interval containing each position.
-
-    ``starts``/``ends`` are 0-based half-open (``START <= pos < END``), sorted by
-    ``starts`` with no overlaps. Returns ``(idx, valid)``: ``idx[k]`` is the interval
-    index for ``positions[k]`` where ``valid[k]``, undefined otherwise.
-    """
-    if len(starts) == 0:
-        n = len(positions)
-        return np.zeros(n, dtype=np.int64), np.zeros(n, dtype=bool)
-    idx = np.searchsorted(starts, positions, side="right") - 1
-    safe_idx = idx.clip(min=0)
-    valid = (idx >= 0) & (positions < ends[safe_idx])
-    return idx, valid
-
-
-def _interval_tiers(starts, ends):
-    """Partition intervals into the minimum number of non-overlapping tiers.
-
-    Greedy earliest-finishing assignment (sort by start, reuse the tier whose last
-    END fits before the next START, else open a new tier). Tier count equals the max
-    overlap depth. Members within a tier come out start-sorted. Returns a list of
-    index arrays into the input.
-    """
-    order = np.argsort(starts, kind="stable")
-    heap = []  # (last_end, tier_id)
-    tier_members = []
-    for i in order:
-        s, e = int(starts[i]), int(ends[i])
-        if heap and heap[0][0] <= s:
-            _, t = heapq.heappop(heap)
-            tier_members[t].append(i)
-            heapq.heappush(heap, (e, t))
-        else:
-            t = len(tier_members)
-            tier_members.append([i])
-            heapq.heappush(heap, (e, t))
-    return [np.array(m, dtype=np.int64) for m in tier_members]
-
-
-def assign_all_features(
-    snps, ref, id_col, pos_col="POS0", sep=";", default="intergenic"
-):
-    """All overlapping ``ref`` ids per SNP, ``sep``-joined (``default`` when none).
-
-    Vectorized: ``ref`` intervals are split into non-overlapping tiers so each tier
-    uses the ``_searchsorted_assign`` fast path. The first (densest) tier is assigned
-    fully vectorized; only the rare SNPs that also hit a higher tier are joined.
-    Returns a Series aligned to ``snps.index``.
-    """
-    result = pd.Series(default, index=snps.index, dtype=object)
-    if len(ref) == 0:
-        return result
-    for chrom, ref_c in ref.groupby("#CHR", sort=False):
-        qmask = (snps["#CHR"] == chrom).to_numpy()
-        if not qmask.any():
-            continue
-        positions = snps.loc[qmask, pos_col].to_numpy()
-        qidx = snps.index[qmask]
-        starts = ref_c["START"].to_numpy()
-        ends = ref_c["END"].to_numpy()
-        ids = ref_c[id_col].to_numpy().astype(str)
-        tiers = _interval_tiers(starts, ends)
-
-        t0 = tiers[0]
-        idx0, valid0 = _searchsorted_assign(starts[t0], ends[t0], positions)
-        joined = np.where(valid0, ids[t0][idx0.clip(min=0)], "").astype(object)
-        for tier in tiers[1:]:
-            idx, valid = _searchsorted_assign(starts[tier], ends[tier], positions)
-            for k in np.nonzero(valid)[0]:
-                gid = ids[tier][idx[k]]
-                joined[k] = gid if joined[k] == "" else f"{joined[k]}{sep}{gid}"
-        joined = np.where(joined == "", default, joined)
-        result.loc[qidx] = joined
-    return result
-
-
 def merge_feature_ids(strings, sep=";", default="intergenic"):
     """Collapse an iterable of ``sep``-joined feature_id strings into one deduped union.
 
@@ -565,135 +384,22 @@ def merge_feature_ids(strings, sep=";", default="intergenic"):
     return sep.join(seen) if seen else default
 
 
-def _assign_chrom_overlapping(qry, qry_mask, ref_chrom, ref_id, pos_col):
-    """Assign positions to overlapping intervals on one chromosome using numpy."""
-    positions = qry.loc[qry_mask, pos_col].to_numpy()
-    qry_indices = qry.index[qry_mask]
-    starts = ref_chrom["START"].to_numpy()
-    ends = ref_chrom["END"].to_numpy()
-    ids = ref_chrom[ref_id].to_numpy()
-
-    sort_idx = np.argsort(starts)
-    starts = starts[sort_idx]
-    ends = ends[sort_idx]
-    ids = ids[sort_idx]
-
-    right_bounds = np.searchsorted(starts, positions, side="right")
-    for i in range(len(positions)):
-        pos = positions[i]
-        cands = slice(0, right_bounds[i])
-        mask = ends[cands] > pos
-        if mask.any():
-            qry.loc[qry_indices[i], ref_id] = ids[cands][mask][0]
-
-
-def assign_pos_to_range(
-    qry: pd.DataFrame,
-    ref: pd.DataFrame,
-    ref_id="region_id",
-    pos_col="POS0",
-    nodup=True,
-):
-    """Assign each query position to the reference interval it falls within.
-
-    Uses ``np.searchsorted`` for non-overlapping intervals (fast path) and
-    falls back to a loop for chromosomes with overlapping intervals.
-
-    Parameters
-    ----------
-    qry : pd.DataFrame
-        Query DataFrame with ``#CHR`` and *pos_col* columns.
-    ref : pd.DataFrame
-        Reference intervals with ``#CHR``, ``START``, ``END``, and *ref_id*.
-    ref_id : str
-        Column name for the reference interval identifier.
-    pos_col : str
-        Column in *qry* containing 0-based positions.
-    nodup : bool
-        If True, each query is assigned to at most one reference interval;
-        if False, returns all overlapping (query, ref) pairs.
-
-    Returns
-    -------
-    pd.DataFrame
-        *qry* with *ref_id* column added (if ``nodup=True``), or a hits
-        DataFrame (if ``nodup=False``).
-    """
-    if not nodup:
-        rows = []
-        for chrom in ref["#CHR"].unique():
-            qm = (qry["#CHR"] == chrom).to_numpy()
-            if not qm.any():
-                continue
-            positions = qry.loc[qm, pos_col].to_numpy()
-            q_indices = qry.index[qm].to_numpy()
-            starts = ref.loc[ref["#CHR"] == chrom, "START"].to_numpy()
-            ends = ref.loc[ref["#CHR"] == chrom, "END"].to_numpy()
-            ids = ref.loc[ref["#CHR"] == chrom, ref_id].to_numpy()
-            sort_idx = np.argsort(starts)
-            starts, ends, ids = starts[sort_idx], ends[sort_idx], ids[sort_idx]
-            right_bounds = np.searchsorted(starts, positions, side="right")
-            for i in range(len(positions)):
-                pos = positions[i]
-                cands = slice(0, right_bounds[i])
-                mask = ends[cands] > pos
-                for rid in ids[cands][mask]:
-                    rows.append((chrom, pos, q_indices[i], rid))
-        hits = pd.DataFrame(rows, columns=["#CHR", "POS0", "qry_index", ref_id])
-        hits["POS"] = hits["POS0"] + 1
-        return hits
-
-    # nodup=True: assign each query position to at most one interval
-    qry[ref_id] = pd.NA
-    for chrom in ref["#CHR"].unique():
-        qry_mask = (qry["#CHR"] == chrom).to_numpy()
-        if not qry_mask.any():
-            continue
-
-        ref_chrom = ref.loc[ref["#CHR"] == chrom].sort_values("START")
-        starts = ref_chrom["START"].to_numpy()
-        ends = ref_chrom["END"].to_numpy()
-        ids = ref_chrom[ref_id].to_numpy()
-        positions = qry.loc[qry_mask, pos_col].to_numpy()
-
-        has_overlap = len(starts) > 1 and np.any(starts[1:] < ends[:-1])
-
-        if not has_overlap:
-            idx, valid = _searchsorted_assign(starts, ends, positions)
-            qry_indices = qry.index[qry_mask]
-            qry.loc[qry_indices[valid], ref_id] = ids[idx[valid]]
-        else:
-            _assign_chrom_overlapping(qry, qry_mask, ref_chrom, ref_id, pos_col)
-
-    return qry
-
-
 def annotate_feature_type(snps, gtf_file):
-    """Annotate SNPs with feature_type (exon/intron/intergenic) and feature_id (genes).
+    """Annotate SNPs with feature_id (overlapping genes) and feature_type.
 
     ``feature_id`` is a ``;``-joined list of every GTF gene the SNP overlaps
-    (``intergenic`` when none); ``feature_type`` is set independently from gene/exon
-    membership. Returns ``(snps, genes_gtf, gene_mask)`` where ``gene_mask`` flags
-    SNPs falling within a gene.
+    (``intergenic`` when none), so gene membership is read back off it rather than
+    assigned a second time. ``feature_type`` is exon > intron > intergenic.
     """
-    genes_gtf = read_genes_gtf_file(gtf_file, id_col="gene_id")[
-        ["gene_id", "#CHR", "START", "END"]
-    ]
-    genes_gtf["gene_idx"] = np.arange(len(genes_gtf))
-    snps = assign_pos_to_range(snps, genes_gtf, ref_id="gene_idx", pos_col="POS0")
-    gene_mask = snps["gene_idx"].notna()
-    snps["feature_id"] = assign_all_features(snps, genes_gtf, id_col="gene_id")
-
-    exons_gtf = read_exons_gtf_file(gtf_file)
-    exons_gtf["exon_idx"] = np.arange(len(exons_gtf))
-    snps = assign_pos_to_range(snps, exons_gtf, ref_id="exon_idx", pos_col="POS0")
+    gtf = read_gtf(gtf_file, ("gene", "exon"))
+    snps["feature_id"] = assign_all_features(snps, gtf["gene"], id_col="gene_id")
+    in_gene = snps["feature_id"] != "intergenic"
+    in_exon = pd.Series(overlaps_any_range(snps, gtf["exon"]), index=snps.index)
 
     snps["feature_type"] = "intergenic"
-    snps.loc[gene_mask, "feature_type"] = "intron"
-    snps.loc[snps["exon_idx"].notna(), "feature_type"] = "exon"
-
-    snps.drop(columns=["exon_idx"], inplace=True, errors="ignore")
-    return snps, genes_gtf, gene_mask
+    snps.loc[in_gene, "feature_type"] = "intron"
+    snps.loc[in_exon, "feature_type"] = "exon"
+    return snps
 
 
 def apply_region_blacklist_masks(snps, snp_mask, region_bed, blacklist_bed):
@@ -702,13 +408,13 @@ def apply_region_blacklist_masks(snps, snp_mask, region_bed, blacklist_bed):
     Returns the updated mask and the parsed regions (reused for boundaries).
     """
     regions = read_BED(region_bed)
-    region_mask = get_mask_by_region(snps, regions)
+    region_mask = overlaps_any_range(snps, regions)
     logging.info(f"region filter: {np.sum(region_mask)}/{len(snps)} SNPs passed")
     snp_mask &= region_mask
 
     if blacklist_bed is not None:
         bl_regions = read_BED(blacklist_bed)
-        bl_mask = get_mask_by_region(snps, bl_regions)
+        bl_mask = overlaps_any_range(snps, bl_regions)
         logging.info(
             f"blacklist filter: {np.sum(bl_mask)}/{len(snps)} SNPs in blacklist"
         )
@@ -732,263 +438,15 @@ def apply_exon_only_mask(snps, snp_mask, exon_only):
 def snp_to_region(
     snp_df: pd.DataFrame, region_df: pd.DataFrame, assay_type: str, region_id="BIN_ID"
 ):
-    """
-    region_df must be 0-indexed non-overlapping intervals [s, t) in standard BED format.
+    """Assign SNPs to pre-computed regions and count them per region.
+
+    ``region_df`` must hold 0-based, half-open, non-overlapping intervals. It gains a
+    ``#SNPS`` column in place; SNPs outside every region are dropped.
     """
     logging.info(f"#{assay_type}-SNP (raw)={len(snp_df)}")
-    snp_df = assign_pos_to_range(snp_df, region_df, ref_id=region_id, pos_col="POS0")
-    isna_snp_df = snp_df[region_id].isna()
-    logging.info(
-        f"#{assay_type}: #SNPS outside any region={np.sum(isna_snp_df) / len(snp_df):.3%}"
-    )
-    snp_df.dropna(subset=region_id, inplace=True)
-    snp_df[region_id] = snp_df[region_id].astype(region_df[region_id].dtype)
+    snp_df, _ = assign_and_keep(snp_df, region_df, region_id, label=f"{assay_type}: ")
     logging.info(f"#{assay_type}-SNP (remain)={len(snp_df)}")
 
     counts = snp_df[region_id].value_counts()
     region_df["#SNPS"] = region_df[region_id].map(counts).fillna(0).astype(int)
     return snp_df
-
-
-def matrix_segmentation(X, bin_ids, K):
-    """
-    N: #features
-    M: #samples
-    X: (N, M) sparse or dense   [snp-by-sample]
-    bin_ids: (N,) ints in [0..K-1]  (assign each SNP to a bin, bin ids are non-decreasing)
-    return:
-      - sparse in  -> (K, M) csr_matrix
-      - dense in   -> (K, M) ndarray
-    """
-    X = X.tocsr() if issparse(X) else np.asarray(X)
-
-    bin_ids = np.asarray(bin_ids, dtype=np.int64)
-    N, M = X.shape
-    if bin_ids.shape[0] != N:
-        raise ValueError(f"bin_ids length {bin_ids.shape[0]} != N {N}")
-    if N and (bin_ids.min() < 0 or bin_ids.max() >= K):
-        raise ValueError("bin_ids out of range")
-
-    # (K, N) one-hot: row=bin, col=snp
-    B = csr_matrix(
-        (np.ones(N, dtype=np.int8), (bin_ids, np.arange(N, dtype=np.int64))),
-        shape=(K, N),
-    )
-
-    X_bin = B @ X  # (K, M)
-    return X_bin
-
-
-def assign_largest_overlap(
-    qry: pd.DataFrame, ref: pd.DataFrame, qry_id: str, ref_id: str
-) -> pd.DataFrame:
-    """For each row in qry, assign the ID of the overlapping ref interval
-    with the largest overlap length.
-
-    Both *qry* and *ref* must have ``#CHR``, ``START``, ``END`` columns
-    (0-based half-open).
-    """
-    qry = qry.copy()
-    qry[ref_id] = pd.NA
-
-    for chrom in ref["#CHR"].unique():
-        qm = qry["#CHR"] == chrom
-        rm = ref["#CHR"] == chrom
-        if not qm.any():
-            continue
-
-        q_starts = qry.loc[qm, "START"].to_numpy()
-        q_ends = qry.loc[qm, "END"].to_numpy()
-        r_starts = ref.loc[rm, "START"].to_numpy()
-        r_ends = ref.loc[rm, "END"].to_numpy()
-        r_ids = ref.loc[rm, ref_id].to_numpy()
-
-        sort_idx = np.argsort(r_starts)
-        r_starts = r_starts[sort_idx]
-        r_ends = r_ends[sort_idx]
-        r_ids = r_ids[sort_idx]
-
-        right_bounds = np.searchsorted(r_starts, q_ends, side="left")
-
-        best_ids = np.empty(len(q_starts), dtype=object)
-        best_ids[:] = pd.NA
-        for i in range(len(q_starts)):
-            qs, qe = q_starts[i], q_ends[i]
-            cands = slice(0, right_bounds[i])
-            mask = r_ends[cands] > qs
-            if not mask.any():
-                continue
-            c_starts = r_starts[cands][mask]
-            c_ends = r_ends[cands][mask]
-            c_ids = r_ids[cands][mask]
-            overlap = np.minimum(qe, c_ends) - np.maximum(qs, c_starts)
-            best_ids[i] = c_ids[np.argmax(overlap)]
-
-        qry.loc[qm, ref_id] = best_ids
-
-    return qry
-
-
-def feature_to_blocks(
-    adata: sc.AnnData,
-    blocks: pd.DataFrame,
-    assay_type: str,
-    feature_idx="feature_idx",
-    block_idx="region_id",
-    drop_cols=True,
-):
-    """
-    filter features not in blocks, likely masked regions include centromeres
-    """
-    logging.info(f"assign {assay_type} features to blocks, {feature_idx}-{block_idx}")
-    if adata.is_view:
-        adata = adata.copy()
-    adata.var[feature_idx] = np.arange(len(adata.var))
-
-    feature_df = adata.var.reset_index(drop=True)
-    logging.info(f"#{assay_type}-features (raw)={len(feature_df)}")
-
-    feature_df = assign_largest_overlap(feature_df, blocks, feature_idx, block_idx)
-    isna_features = feature_df[block_idx].isna()
-    logging.info(
-        f"#{assay_type} feature outside any blocks={np.sum(isna_features) / len(feature_df):.3%}"
-    )
-    feature_df.dropna(subset=block_idx, inplace=True)
-    feature_df[block_idx] = feature_df[block_idx].astype(blocks[block_idx].dtype)
-    logging.info(f"#{assay_type} feature (remain)={len(feature_df)}")
-
-    ##################################################
-    adata.var = (
-        adata.var.reset_index(drop=False)
-        .merge(
-            right=feature_df[[feature_idx, block_idx]],
-            on=feature_idx,
-            how="left",
-        )
-        .set_index("index")
-    )
-    adata = adata[:, adata.var[block_idx].notna()].copy()
-    if drop_cols:
-        adata.var.drop(columns=[feature_idx, block_idx], inplace=True)
-    else:
-        adata.var[block_idx] = adata.var[block_idx].astype(feature_df[block_idx].dtype)
-    return adata
-
-
-def rna_h5ad_to_bb(h5ad_file, barcodes, bb_df, num_bbs, assay_type):
-    """Aggregate per-cell RNA counts (h5ad from ``process_rna_anndata``) into bb bins.
-
-    Each RNA feature (gene) is assigned to the bb bin it overlaps most (``feature_to_blocks``
-    -> largest overlap, same mapping as copytyping's ``combine_counts_fixed_bins``); its per-cell counts
-    are summed into that bin. Cells are reordered to ``barcodes`` so the columns match that
-    assay's ``bb.*allele.npz`` matrices.
-
-    Parameters
-    ----------
-    h5ad_file : str
-        AnnData (cells x genes) with ``var`` carrying ``#CHR``, ``START``, ``END``.
-    barcodes : sequence of str
-        Cell barcodes (``"{raw}_{rep}"``) in matrix-column order (that assay's allele columns).
-    bb_df : pd.DataFrame
-        Bins with ``#CHR``, ``START``, ``END`` (0-based half-open) and ``bb_id``.
-    num_bbs : int
-        Number of bins (output rows).
-
-    Returns
-    -------
-    scipy.sparse.csr_matrix, shape ``(num_bbs, n_cells)``, dtype int32.
-    """
-    adata = sc.read_h5ad(h5ad_file)
-    barcodes = np.asarray(barcodes, dtype=str)
-    missing = barcodes[~np.isin(barcodes, adata.obs_names)]
-    if len(missing):
-        raise ValueError(
-            f"{len(missing)} barcodes missing from {h5ad_file}, e.g. {missing[:5]}"
-        )
-    adata = adata[barcodes, :].copy()
-    adata = feature_to_blocks(
-        adata, bb_df, assay_type, block_idx="bb_id", drop_cols=False
-    )
-    x_count = matrix_segmentation(adata.X.T, adata.var["bb_id"].to_numpy(), num_bbs)
-    return x_count.astype(np.int32)
-
-
-def atac_fragments_to_bb(
-    frag_files, reps, barcodes_full, bb_df, num_bbs, chunksize=5_000_000
-):
-    """Count deduped ATAC fragments per bb bin per cell from 10x fragment files.
-
-    Each row of a 10x ``atac_fragments.tsv.gz`` is one deduplicated fragment
-    (``chrom, start, end, barcode, readSupport``); the readSupport column is IGNORED.
-    Every fragment is counted once, assigned to the bb bin containing its midpoint, so
-    the column sums equal the number of in-bin fragments per cell.
-
-    Parameters
-    ----------
-    frag_files, reps : parallel lists
-        ``frag_files[i]`` is the fragment file for replicate ``reps[i]``.
-    barcodes_full : pd.DataFrame
-        Columns ``REP_ID``, ``BARCODE`` (``BARCODE`` = ``"{raw}_{rep}"``) giving the cell
-        column order (identical to that assay's ``bb.*allele.npz`` columns).
-    bb_df : pd.DataFrame
-        Bins with ``#CHR``, ``START``, ``END`` (0-based half-open) and ``bb_id``.
-    num_bbs : int
-        Number of bins (output rows).
-
-    Returns
-    -------
-    scipy.sparse.csr_matrix, shape ``(num_bbs, n_cells)``, dtype int32.
-    """
-    n_cells = len(barcodes_full)
-    bc_rep = barcodes_full["REP_ID"].to_numpy().astype(str)
-    bc_full = barcodes_full["BARCODE"].to_numpy().astype(str)
-    # global column index keyed by (rep, raw_barcode); strip the "_{rep}" suffix
-    col_of = {}
-    for i in range(n_cells):
-        rep, raw = bc_rep[i], bc_full[i]
-        sfx = "_" + rep
-        if raw.endswith(sfx):
-            raw = raw[: -len(sfx)]
-        col_of[(rep, raw)] = i
-
-    rows_all, cols_all = [], []
-    for frag_file, rep in zip(frag_files, reps):
-        rep_map = {raw: c for (r, raw), c in col_of.items() if r == rep}
-        if not rep_map or frag_file is None:
-            continue
-        n_frag = 0
-        for chunk in pd.read_csv(
-            frag_file,
-            sep="\t",
-            comment="#",
-            header=None,
-            usecols=[0, 1, 2, 3],
-            names=["#CHR", "start", "end", "BC"],
-            dtype={0: str, 1: np.int64, 2: np.int64, 3: str},
-            chunksize=chunksize,
-        ):
-            col_vals = chunk["BC"].map(rep_map).to_numpy()
-            m = ~pd.isna(col_vals)
-            if not m.any():
-                continue
-            sub = chunk.loc[m]
-            sub = sub.assign(**{"#CHR": add_chr_prefix(sub["#CHR"])})
-            mid = (sub["start"].to_numpy() + sub["end"].to_numpy()) // 2
-            frag = pd.DataFrame({"#CHR": sub["#CHR"].to_numpy(), "POS0": mid})
-            frag = assign_pos_to_range(frag, bb_df, ref_id="bb_id", pos_col="POS0")
-            keep = frag["bb_id"].notna().to_numpy()
-            if not keep.any():
-                continue
-            rows_all.append(frag.loc[keep, "bb_id"].to_numpy().astype(np.int64))
-            cols_all.append(col_vals[m][keep].astype(np.int64))
-            n_frag += int(keep.sum())
-        logging.info(f"  ATAC {rep}: {n_frag} in-bin fragments counted")
-
-    if rows_all:
-        rows = np.concatenate(rows_all)
-        cols = np.concatenate(cols_all)
-    else:
-        rows = np.zeros(0, dtype=np.int64)
-        cols = np.zeros(0, dtype=np.int64)
-    data = np.ones(len(rows), dtype=np.int32)
-    return csr_matrix((data, (rows, cols)), shape=(num_bbs, n_cells), dtype=np.int32)

@@ -1,25 +1,22 @@
-"""Shared plotting helpers: genome axis, region shading, value names, stats histogram.
+"""Shared plotting helpers: genome axis, region shading, page layout, histograms.
 
 The common base imported by the per-step plot modules (``plot_genome``,
 ``plot_count_reads``, ``plot_alleles``, ``plot_combine_counts``,
-``plot_genotype_snps``); it creates no figures itself.
+``plot_genotype_snps``); it draws into axes and figures the callers create, and
+opens no figure of its own.
 """
 
 import numpy as np
 import pandas as pd
 
-from scipy.sparse import issparse
+import matplotlib
 
-from cnplot import GenomeAxis, shade_regions
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+from cnplot import GenomeAxis, read_bed, shade_regions
 
 from io_utils import get_chr_sizes
-
-
-def _extract_col(mat, col_idx):
-    """Extract a single matrix column as a 1-D numpy array (dense or sparse)."""
-    if issparse(mat):
-        return np.asarray(mat[:, col_idx].toarray()).ravel()
-    return np.asarray(mat[:, col_idx]).ravel()
 
 
 # Full names for value-type abbreviations, used in figure titles only (ylabels keep
@@ -64,31 +61,6 @@ def _get_axis(genome_size, chroms):
     return axis
 
 
-def _merge_intervals(df):
-    """Union overlapping/touching [START, END) intervals per ``#CHR``.
-
-    Shading each raw interval separately stacks the alpha where they overlap, so
-    overlapping masked regions render darker than a single interval. Merging first
-    keeps the fill uniform.
-    """
-    if df is None or len(df) == 0:
-        return df
-    out = []
-    for chrom, grp in df.groupby("#CHR", sort=False):
-        g = grp.sort_values("START")
-        starts = g["START"].to_numpy()
-        ends = g["END"].to_numpy()
-        cs, ce = starts[0], ends[0]
-        for s, e in zip(starts[1:], ends[1:]):
-            if s <= ce:
-                ce = max(ce, e)
-            else:
-                out.append((chrom, cs, ce))
-                cs, ce = s, e
-        out.append((chrom, cs, ce))
-    return pd.DataFrame(out, columns=["#CHR", "START", "END"])
-
-
 def _shade(ax, axis, region_df, blacklist_df):
     """Shade masked (blacklist) regions gray; callable regions keep the white background.
 
@@ -96,9 +68,69 @@ def _shade(ax, axis, region_df, blacklist_df):
     white; it is kept in the signature for caller stability. Blacklist intervals are
     unioned first so overlaps do not compound the alpha.
     """
+
+    def _merge_intervals(df):
+        """Union overlapping/touching [START, END) intervals per ``#CHR``.
+
+        Shading each raw interval separately stacks the alpha where they overlap, so
+        overlapping masked regions render darker than a single interval. Merging first
+        keeps the fill uniform.
+        """
+        if df is None or len(df) == 0:
+            return df
+        out = []
+        for chrom, grp in df.groupby("#CHR", sort=False):
+            g = grp.sort_values("START")
+            starts = g["START"].to_numpy()
+            ends = g["END"].to_numpy()
+            cs, ce = starts[0], ends[0]
+            for s, e in zip(starts[1:], ends[1:]):
+                if s <= ce:
+                    ce = max(ce, e)
+                else:
+                    out.append((chrom, cs, ce))
+                    cs, ce = s, e
+            out.append((chrom, cs, ce))
+        return pd.DataFrame(out, columns=["#CHR", "START", "END"])
+
     del region_df
     if blacklist_df is not None:
         shade_regions(ax, axis, _merge_intervals(blacklist_df), color="gray", alpha=0.2)
+
+
+def _load_shading(region_bed, blacklist_bed):
+    """Read the two optional shading BEDs; either path may be ``None``."""
+    return (
+        read_bed(region_bed) if region_bed else None,
+        read_bed(blacklist_bed) if blacklist_bed else None,
+    )
+
+
+def _suptitle(fig, title):
+    """Bold page title, placed just above a ``tight_layout``-ed figure."""
+    fig.subplots_adjust(top=1 - 0.4 / fig.get_figheight())
+    fig.suptitle(title, fontweight="bold", y=1 - 0.12 / fig.get_figheight())
+
+
+def _finish_page(fig, title, unit, out_file=None, dpi=72, pdf=None):
+    """Label, lay out and title one genome-wide page, then write and close it.
+
+    Args:
+        fig: The figure to finish.
+        title: Bold page super-title.
+        unit: Feature unit named in the x-label (``window``, ``SNP``, ``bb``).
+        out_file: Destination when *pdf* is None.
+        dpi: Raster resolution.
+        pdf: Open ``PdfPages`` to append to; the caller closes it.
+    """
+    fig.supxlabel(f"Genome positions (MB) - {unit}")
+    fig.tight_layout()
+    _suptitle(fig, title)
+    if pdf is not None:
+        pdf.savefig(fig, dpi=dpi)
+    else:
+        fig.savefig(out_file, dpi=dpi)
+    plt.close(fig)
 
 
 def _bold_chrnames(ax):

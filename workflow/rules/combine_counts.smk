@@ -285,7 +285,7 @@ elif workflow_mode == "copytyping_preprocess":
         threads: 1
         params:
             qc_dir=config["qc_dir"],
-            sample_name=sample_id,
+            sample_id=sample_id,
             assay_type=lambda wc: wc.assay_type,
             run_id=_run_id,
         script:

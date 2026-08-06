@@ -11,26 +11,33 @@ EVERY normal pileup, and >= min_depth in EVERY sample. Outputs (under one per-st
 allele_dir/{bulkWGS,bulkWES}/ subdir) feed combine_counts directly.
 """
 
-import os
 import logging
 
 snakemake_handle = snakemake
 
-t = int(getattr(snakemake_handle, "threads", 1))
-os.environ["OMP_NUM_THREADS"] = str(t)
-os.environ["OPENBLAS_NUM_THREADS"] = str(t)
-os.environ["MKL_NUM_THREADS"] = str(t)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(t)
-os.environ["NUMEXPR_NUM_THREADS"] = str(t)
+from utils import set_omp_threads, setup_logging, maybe_path
+
+set_omp_threads(snakemake_handle)
+setup_logging(snakemake_handle.log[0])
 
 import numpy as np
 import pandas as pd
 
-from utils import *
-from io_utils import *
-from combine_counts_utils import *
-from count_reads_utils import *
-from aggregation_utils import *
+from io_utils import read_VCF, read_bcftools_counts
+from combine_counts_utils import (
+    assign_snp_bounderies,
+    bcftools_counts_to_child_mats,
+    canon_mat_one_replicate,
+    get_mask_by_depth,
+    get_mask_by_het_balanced,
+    merge_mats,
+)
+from phasing_utils import apply_phase_to_mat
+from aggregation_utils import (
+    annotate_feature_type,
+    apply_exon_only_mask,
+    apply_region_blacklist_masks,
+)
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_alleles import plot_allele_freqs, plot_snp_depth
 from plot_utils import sample_row_order
@@ -52,8 +59,6 @@ def log_ref_mapping_bias(ref_counts, alt_counts, label=""):
 
 
 ##################################################
-log_file = snakemake_handle.log[0]
-setup_logging(log_file)
 logging.info("joint phase and concat for bulk assays")
 
 # inputs
@@ -66,7 +71,7 @@ blacklist_bed = maybe_path(snakemake_handle.input["blacklist_bed"])
 
 # parameters
 qc_dir = snakemake_handle.params["qc_dir"]
-sample_name = snakemake_handle.params["sample_name"]
+sample_id = snakemake_handle.params["sample_id"]
 col_assays = list(snakemake_handle.params["col_assays"])
 col_reps = list(snakemake_handle.params["col_reps"])
 col_sample_types = list(snakemake_handle.params["col_sample_types"])
@@ -86,7 +91,7 @@ out_sample_file = snakemake_handle.output["sample_file"]
 n_samples = len(col_reps)
 normal_cols = [k for k, st in enumerate(col_sample_types) if st == "normal"]
 logging.info(
-    f"sample_name={sample_name}, {n_samples} bulk samples across assays={col_assays}, "
+    f"sample_id={sample_id}, {n_samples} bulk samples across assays={col_assays}, "
     f"normal columns={normal_cols}"
 )
 
@@ -132,8 +137,7 @@ snp_mask, regions = apply_region_blacklist_masks(
     snps, snp_mask, region_bed, blacklist_bed
 )
 
-snps, _, _ = annotate_feature_type(snps, gtf_file)
-snps.drop(columns=["gene_idx"], inplace=True, errors="ignore")
+snps = annotate_feature_type(snps, gtf_file)
 
 snp_mask &= get_mask_by_depth(snps, tot_mtx, min_dp=max(min_depth, 1))
 for nc in normal_cols:
@@ -169,7 +173,7 @@ with PdfPages(af_pdf_path) as pdf:
         name_prefix="phase_and_concat",
         pdf=pdf,
         row_order=plot_row_order,
-        sample_id=sample_name,
+        sample_id=sample_id,
     )
     plot_allele_freqs(
         snps,
@@ -185,7 +189,7 @@ with PdfPages(af_pdf_path) as pdf:
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         run_id=run_id,
-        sample_id=sample_name,
+        sample_id=sample_id,
         row_order=plot_row_order,
         pdf=pdf,
     )
@@ -203,7 +207,7 @@ with PdfPages(af_pdf_path) as pdf:
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         run_id=run_id,
-        sample_id=sample_name,
+        sample_id=sample_id,
         row_order=plot_row_order,
         pdf=pdf,
     )
@@ -225,8 +229,8 @@ np.savez_compressed(out_b_mtx_snp, mat=b_mtx)
 
 sample_df = pd.DataFrame(
     {
-        "SAMPLE": [f"{sample_name}_{rep}" for rep in col_reps],
-        "SAMPLE_NAME": sample_name,
+        "SAMPLE": [f"{sample_id}_{rep}" for rep in col_reps],
+        "SAMPLE_NAME": sample_id,
         "REP_ID": col_reps,
         "sample_type": col_sample_types,
         "assay_type": col_assays,

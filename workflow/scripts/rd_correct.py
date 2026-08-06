@@ -13,20 +13,23 @@ import logging
 
 snakemake_handle = snakemake
 
-t = int(getattr(snakemake_handle, "threads", 1))
-os.environ["OMP_NUM_THREADS"] = str(t)
-os.environ["OPENBLAS_NUM_THREADS"] = str(t)
-os.environ["MKL_NUM_THREADS"] = str(t)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(t)
-os.environ["NUMEXPR_NUM_THREADS"] = str(t)
+from utils import (
+    set_omp_threads,
+    setup_logging,
+    add_chr_prefix,
+    maybe_path,
+    sort_df_chr,
+)
+
+set_omp_threads(snakemake_handle)
+setup_logging(snakemake_handle.log[0])
 
 import numpy as np
 import pandas as pd
 
-from utils import add_chr_prefix, setup_logging, maybe_path, sort_df_chr
-from io_utils import compute_depth_statistics
-from count_reads_utils import compute_gc_rd_stats
 from rd_correct_utils import (
+    compute_depth_statistics,
+    compute_gc_rd_stats,
     correct_readcount_lowess,
     correct_readcount_quadreg,
 )
@@ -37,8 +40,6 @@ import matplotlib
 matplotlib.use("Agg")
 from matplotlib.backends.backend_pdf import PdfPages
 
-log_file = snakemake_handle.log[0]
-setup_logging(log_file)
 
 # inputs
 window_bed_file = snakemake_handle.input["window_bed"]
@@ -48,8 +49,8 @@ blacklist_bed = maybe_path(snakemake_handle.input.get("blacklist_bed", None))
 
 # parameters
 assay_type = str(snakemake_handle.params["assay_type"])
+sample_id = str(snakemake_handle.params["sample_id"])
 dataset_ids = [str(r) for r in snakemake_handle.params["dataset_ids"]]
-sample_ids = [str(s) for s in snakemake_handle.params["sample_ids"]]
 mosdepth_dir = snakemake_handle.params["mosdepth_dir"]
 chroms = snakemake_handle.params["chroms"]
 samplesize = int(snakemake_handle.params["samplesize"])
@@ -69,6 +70,7 @@ window_df = snakemake_handle.output["window_df"]
 run_id = getattr(snakemake_handle.params, "run_id", "")
 
 nsamples = len(dataset_ids)
+sample_ids = [f"{sample_id}_{r}" for r in dataset_ids]
 target_chroms = set(chroms)
 join_keys = ["#CHR", "START", "END"]
 
@@ -190,7 +192,7 @@ plot_rd_1d_scatter(
     win_df,
     dp_raw,
     dp_corrected,
-    [f"{s} {r}" for s, r in zip(sample_ids, dataset_ids)],
+    sample_ids,
     genome_size,
     rd_pdf,
     ylim_before=rd_raw_ylim,
@@ -202,7 +204,7 @@ plot_rd_2d_kde(
     gc_vals,
     dp_raw,
     dp_corrected,
-    [f"{s} {r}" for s, r in zip(sample_ids, dataset_ids)],
+    sample_ids,
     rd_pdf,
     gc_rmse=gc_rmse_list,
     mappability=map_vals,

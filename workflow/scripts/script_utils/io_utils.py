@@ -3,7 +3,8 @@ from collections import OrderedDict
 import pandas as pd
 import numpy as np
 
-from utils import *
+from const import GTF_COLUMNS
+from utils import add_chr_prefix, sort_chroms, sort_df_chr
 
 
 def get_chr_sizes(sz_file: str):
@@ -156,6 +157,25 @@ def read_bcftools_counts(tsv_file: str):
     return df
 
 
+def read_snp_mats_bulk(snp_info_file, tot_file, a_file, b_file):
+    """Read the joint bulk SNP table and dense T/A/B matrices, genomically sorted.
+
+    Returns ``(snps, tot_mtx, a_mtx, b_mtx)`` with SNP rows in ``#CHR``/``POS0``
+    order and the matrices permuted to match.
+    """
+    snps = pd.read_table(snp_info_file, sep="\t")
+    tot_mtx = np.load(tot_file)["mat"].astype(np.int32)
+    a_mtx = np.load(a_file)["mat"].astype(np.int32)
+    b_mtx = np.load(b_file)["mat"].astype(np.int32)
+
+    snps["_row"] = np.arange(len(snps))
+    snps = sort_df_chr(snps, ch="#CHR", pos="POS0").reset_index(drop=True)
+    perm = snps["_row"].to_numpy()
+    tot_mtx, a_mtx, b_mtx = tot_mtx[perm], a_mtx[perm], b_mtx[perm]
+    snps = snps.drop(columns="_row")
+    return snps, tot_mtx, a_mtx, b_mtx
+
+
 def read_BED(bed_file: str, addchr=True, extra_columns=("region_id", "seg_id")):
     """Read a BED file: the first 3 columns are ``#CHR``/``START``/``END``.
 
@@ -246,49 +266,21 @@ def read_full_barcodes(path: str):
     return pd.read_table(path, sep="\t", header=0, dtype=str)
 
 
-def cell_rep_idx_from_mapping(rep2bc: pd.DataFrame, dataset_ids):
-    """Convert a REP_ID,BARCODE DataFrame into an int64 array of rep indices.
+def read_gtf(gtf_file: str, feature_types):
+    """Parse a GTF once and split it by feature type.
 
-    Categorical mapping with explicit ``dataset_ids`` order ensures the codes
-    align with the position of each rep in the caller's dataset_ids list.
+    Contig names are normalized to chr-notation; coordinates become 0-based
+    half-open. Genes are deduplicated by ``gene_id``; other feature types keep
+    every record.
+
+    Args:
+        gtf_file: Path to a GTF annotation file (optionally gzipped).
+        feature_types: Feature types to extract, e.g. ``("gene", "exon")``.
+
+    Returns:
+        ``{feature_type: DataFrame}`` with ``#CHR``, ``START``, ``END``, ``gene_id``.
     """
-    cats = pd.Categorical(rep2bc["REP_ID"], categories=list(dataset_ids))
-    codes = np.asarray(cats.codes, dtype=np.int64)
-    assert (codes >= 0).all(), (
-        "barcodes.full contains REP_ID values outside dataset_ids"
-    )
-    return codes
-
-
-def compute_depth_statistics(dp_raw, win_df, sample_ids):
-    """Compute per-chromosome and whole-genome mean/median depth per sample.
-
-    Returns a DataFrame with columns: SAMPLE, #CHR, mean_depth, median_depth.
-    """
-    chroms = win_df["#CHR"].to_numpy()
-    sorted_chroms = sort_chroms(win_df["#CHR"].unique().tolist())
-    rows = []
-    for chrom in sorted_chroms:
-        mask = chroms == chrom
-        for s in range(len(sample_ids)):
-            vals = dp_raw[mask, s]
-            rows.append(
-                [sample_ids[s], chrom, float(np.mean(vals)), float(np.median(vals))]
-            )
-    for s in range(len(sample_ids)):
-        vals = dp_raw[:, s]
-        rows.append(
-            [sample_ids[s], "TOTAL", float(np.mean(vals)), float(np.median(vals))]
-        )
-    return pd.DataFrame(rows, columns=["SAMPLE", "#CHR", "mean_depth", "median_depth"])
-
-
-def _read_gtf(gtf_file: str, feature_type: str) -> pd.DataFrame:
-    """Parse a GTF file and return records of the requested feature type.
-
-    Returns a DataFrame with ``#CHR``, ``START`` (0-based), ``END``,
-    and ``gene_id`` columns.
-    """
+    wanted = list(feature_types)
     gtf = pd.read_csv(
         gtf_file,
         sep="\t",
@@ -299,57 +291,40 @@ def _read_gtf(gtf_file: str, feature_type: str) -> pd.DataFrame:
         low_memory=False,
     )
     gtf = gtf.loc[
-        gtf["feature"] == feature_type, ["seqname", "start", "end", "attributes"]
+        gtf["feature"].isin(wanted),
+        ["feature", "seqname", "start", "end", "attributes"],
     ]
-    gene_ids = gtf["attributes"].str.extract(r'gene_id "([^"]+)"', expand=False)
-    return pd.DataFrame(
+    flat = pd.DataFrame(
         {
+            "feature": gtf["feature"].values,
             "#CHR": add_chr_prefix(gtf["seqname"]).values,
-            "START": gtf["start"].values - 1,  # GTF is 1-based → 0-based
-            "END": gtf["end"].values,  # GTF end is inclusive → half-open
-            "gene_id": gene_ids.values,
+            "START": gtf["start"].values - 1,  # GTF is 1-based -> 0-based
+            "END": gtf["end"].values,  # GTF end is inclusive -> half-open
+            "gene_id": gtf["attributes"]
+            .str.extract(r'gene_id "([^"]+)"', expand=False)
+            .values,
         }
     )
+    out = {}
+    for feature_type in wanted:
+        sub = flat.loc[flat["feature"] == feature_type].drop(columns="feature")
+        if feature_type == "gene":
+            sub = sub.drop_duplicates("gene_id", keep="first")
+        out[feature_type] = sub.reset_index(drop=True)
+    return out
 
 
 def read_genes_gtf_file(gtf_file: str, id_col="gene_ids"):
-    """Parse a GTF file and return gene-level records with genomic coordinates.
+    """Gene-level GTF records with 0-based coordinates, deduplicated by gene.
 
-    Extracts gene features, deduplicates by ``gene_id``, and converts to
-    0-based BED-like coordinates.
+    Args:
+        gtf_file: Path to a GTF annotation file.
+        id_col: Column name for the gene identifier in the output.
 
-    Parameters
-    ----------
-    gtf_file : str
-        Path to a GTF annotation file.
-    id_col : str
-        Column name for the gene identifier in the output.
-
-    Returns
-    -------
-    pd.DataFrame
+    Returns:
         DataFrame with ``#CHR``, ``START`` (0-based), ``END``, and *id_col*.
     """
-    genes = _read_gtf(gtf_file, "gene")
-    genes = genes.drop_duplicates("gene_id", keep="first")
+    genes = read_gtf(gtf_file, ("gene",))["gene"]
     if id_col != "gene_id":
         genes = genes.rename(columns={"gene_id": id_col})
     return genes
-
-
-def read_exons_gtf_file(gtf_file: str):
-    """Parse a GTF file and return exon-level records with genomic coordinates.
-
-    Extracts exon features and converts to 0-based BED-like coordinates.
-
-    Parameters
-    ----------
-    gtf_file : str
-        Path to a GTF annotation file.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with ``#CHR``, ``START`` (0-based), ``END``, and ``gene_id``.
-    """
-    return _read_gtf(gtf_file, "exon")

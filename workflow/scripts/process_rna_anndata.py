@@ -4,12 +4,10 @@ import tempfile
 
 snakemake_handle = snakemake
 
-t = int(getattr(snakemake_handle, "threads", 1))
-os.environ["OMP_NUM_THREADS"] = str(t)
-os.environ["OPENBLAS_NUM_THREADS"] = str(t)
-os.environ["MKL_NUM_THREADS"] = str(t)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(t)
-os.environ["NUMEXPR_NUM_THREADS"] = str(t)
+from utils import set_omp_threads, setup_logging, maybe_path, sort_chroms
+
+set_omp_threads(snakemake_handle)
+setup_logging(snakemake_handle.log[0])
 
 import numpy as np
 import pandas as pd
@@ -17,9 +15,9 @@ import anndata
 import scanpy as sc
 import squidpy as sq
 
-from utils import *
-from io_utils import *
-from aggregation_utils import *
+from const import RANGER_MATRIX_H5, RANGER_SPATIAL_DIR, SPATIAL_ASSAYS
+from io_utils import read_BED, read_barcodes, read_genes_gtf_file
+from rna_utils import feature_to_blocks
 
 ##################################################
 """
@@ -33,8 +31,6 @@ Input:
 Output:
 single h5ad matrix covers all replicates with position columns
 """
-log_file = snakemake_handle.log[0]
-setup_logging(log_file)
 
 # inputs
 barcode_files = snakemake_handle.input["barcodes"]

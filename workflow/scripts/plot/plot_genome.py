@@ -12,9 +12,16 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.lines import Line2D
 
-from cnplot import adaptive_dot_size, plot_scatter_1d, read_bed
+from cnplot import adaptive_dot_size, plot_scatter_1d
 
-from plot_utils import _bold_chrnames, _get_axis, _shade, _val_full
+from plot_utils import (
+    _bold_chrnames,
+    _finish_page,
+    _get_axis,
+    _load_shading,
+    _shade,
+    _val_full,
+)
 
 
 def plot_1d_multi_sample(
@@ -62,8 +69,7 @@ def plot_1d_multi_sample(
         f"({n_samples} samples), out_file={out_file}"
     )
     axis = _get_axis(genome_size, pos_df["#CHR"])
-    region_df = read_bed(region_bed) if region_bed else None
-    blacklist_df = read_bed(blacklist_bed) if blacklist_bed else None
+    region_df, blacklist_df = _load_shading(region_bed, blacklist_bed)
     s_plot = adaptive_dot_size(len(pos_df), s_base=s)
     alphas = np.full(len(pos_df), alpha)
     is_frac = val_type in ("AF", "BAF")
@@ -102,15 +108,7 @@ def plot_1d_multi_sample(
 
     val_name = _val_full(val_type)
     title = f"{sample_id} - {val_name}" if sample_id else val_name
-    fig.supxlabel(f"Genome positions (MB) - {unit}")
-    fig.tight_layout()
-    fig.subplots_adjust(top=1 - 0.4 / fig.get_figheight())
-    fig.suptitle(title, fontweight="bold", y=1 - 0.12 / fig.get_figheight())
-    if pdf is not None:
-        pdf.savefig(fig, dpi=dpi)
-    else:
-        fig.savefig(out_file, dpi=dpi)
-    plt.close(fig)
+    _finish_page(fig, title, unit, out_file=out_file, dpi=dpi, pdf=pdf)
 
 
 def plot_1d_sample(
@@ -144,8 +142,7 @@ def plot_1d_sample(
     """
     logging.info(f"genome-wide {unit}-level {val_type} plot, out_file={out_file}")
     axis = _get_axis(genome_size, pos_df["#CHR"])
-    region_df = read_bed(region_bed) if region_bed else None
-    blacklist_df = read_bed(blacklist_bed) if blacklist_bed else None
+    region_df, blacklist_df = _load_shading(region_bed, blacklist_bed)
 
     m = np.isfinite(val)
     s_plot = adaptive_dot_size(int(m.sum()), s_base=s)
@@ -216,13 +213,5 @@ def plot_1d_sample(
 
     val_name = _val_full(val_type)
     title = f"{sample_id} - {val_name}" if sample_id else val_name
-    fig.supxlabel(f"Genome positions (MB) - {unit}")
-    fig.tight_layout()
-    fig.subplots_adjust(top=1 - 0.4 / fig.get_figheight())
-    fig.suptitle(title, fontweight="bold", y=1 - 0.12 / fig.get_figheight())
-    if pdf is not None:
-        pdf.savefig(fig, dpi=dpi)
-    else:
-        fig.savefig(out_file, dpi=dpi)
-    plt.close(fig)
+    _finish_page(fig, title, unit, out_file=out_file, dpi=dpi, pdf=pdf)
     return

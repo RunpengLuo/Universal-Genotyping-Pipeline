@@ -12,50 +12,43 @@ union); depth/window inputs stay per-assay (index-aligned to ``params.bulk_assay
 Outputs go under ``bb_dir/MSR{msr}/bulk/``; matrix columns are the bulk samples.
 """
 
-import os
 import logging
 
 snakemake_handle = snakemake
 
-t = int(getattr(snakemake_handle, "threads", 1))
-os.environ["OMP_NUM_THREADS"] = str(t)
-os.environ["OPENBLAS_NUM_THREADS"] = str(t)
-os.environ["MKL_NUM_THREADS"] = str(t)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(t)
-os.environ["NUMEXPR_NUM_THREADS"] = str(t)
+from utils import set_omp_threads, setup_logging, maybe_path, sort_df_chr
+
+set_omp_threads(snakemake_handle)
+setup_logging(snakemake_handle.log[0])
 
 import numpy as np
 import pandas as pd
 
-from utils import setup_logging, maybe_path, sort_df_chr
 from aggregation_utils import (
     adaptive_segmentation,
-    assign_pos_to_range,
-    count_split_genes,
-    detect_phase_flips,
     gene_block_labels,
-    matrix_segmentation,
     merge_feature_ids,
+    snps_to_windows,
 )
+from io_utils import read_snp_mats_bulk
+from matrix_utils import matrix_segmentation
 from combine_counts_utils import (
     aggregate_window_depth_to_bins,
     build_assay_blocks,
     build_rdr_base_map,
     compute_bb_rdr,
-    load_bulk_snp_matrices,
+)
+from phasing_utils import (
+    detect_phase_flips,
+    estimate_switchprobs_PS,
+    estimate_switchprobs_cM,
+    interp_cM_blocks,
     setup_phaseset_groups,
 )
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_combine_counts import plot_rdr_baf, plot_rdr_baf_2d, plot_segmentation_qc
 from plot_utils import sample_row_order
-from switchprobs import (
-    interp_cM_blocks,
-    estimate_switchprobs_cM,
-    estimate_switchprobs_PS,
-)
 
-log_file = snakemake_handle.log[0]
-setup_logging(log_file)
 
 # inputs
 snp_info = snakemake_handle.input["snp_info"]
@@ -97,17 +90,17 @@ out_sample_file = list(snakemake_handle.output["sample_file"])
 out_qc_pdf = list(snakemake_handle.output["qc_pdf"])
 
 sample_df = pd.read_table(sample_file)
-snps, tot_mtx, a_mtx, b_mtx = load_bulk_snp_matrices(
+snps, tot_mtx, a_mtx, b_mtx = read_snp_mats_bulk(
     snp_info, tot_mtx_snp, a_mtx_snp, b_mtx_snp
 )
 dp_corrected_list = [np.load(f)["mat"] for f in dp_corrected_files]
 window_df_list = [pd.read_table(f, sep="\t") for f in window_df_files]
 n_snps = len(snps)
 
-sample_name = sample_df["SAMPLE_NAME"].iloc[0]
+sample_id = sample_df["SAMPLE_NAME"].iloc[0]
 total_samples = len(sample_df)
 logging.info(
-    f"combine_counts: sample={sample_name}, bulk_assays={bulk_assays}; "
+    f"combine_counts: sample_id={sample_id}, bulk_assays={bulk_assays}; "
     f"{n_snps} SNPs x {total_samples} samples"
 )
 
@@ -148,27 +141,21 @@ if "seg_id" not in window_df.columns:
 
 gene_aware_binning = gene_aware_binning_param and has_feature
 window_df["win_idx"] = np.arange(len(window_df))
-snp_window_cols = ["#CHR", "POS0", "PS"]
-if phase_flip_test:
-    snp_window_cols.append("phase_group")
-if gene_aware_binning:
-    snp_window_cols.append("feature_id")
-_snps_tmp = snps[snp_window_cols].copy()
-_snps_tmp = assign_pos_to_range(_snps_tmp, window_df, ref_id="win_idx", pos_col="POS0")
-_snps_tmp = _snps_tmp.dropna(subset=["win_idx"])
-_snps_tmp["win_idx"] = _snps_tmp["win_idx"].astype(np.int64)
-snps_per_win = _snps_tmp.groupby("win_idx").size()
+tot_tumor = np.ascontiguousarray(tot_mtx[:, tumor_cols_all], dtype=np.float64)
+# assigned once here; every grid point below reuses it
+snps_win = snps_to_windows(snps, window_df, tot_tumor)
+snps_per_win = snps_win.groupby("win_idx").size()
 logging.info(
     f"SNPs per window: {len(snps_per_win)}/{len(window_df)} windows have SNPs, "
     f"mean={snps_per_win.mean():.1f}, median={snps_per_win.median():.1f}"
 )
-win_ps = _snps_tmp.groupby("win_idx")["PS"].agg(lambda x: x.mode().iloc[0])
+win_ps = snps_win.groupby("win_idx")["PS"].agg(lambda x: x.mode().iloc[0])
 window_df["PS"] = window_df["win_idx"].map(win_ps)
 if window_df["PS"].isna().any():
     window_df["PS"] = window_df["PS"].ffill()
 
 if phase_flip_test:
-    win_pg = _snps_tmp.groupby("win_idx")["phase_group"].agg(lambda x: x.mode().iloc[0])
+    win_pg = snps_win.groupby("win_idx")["phase_group"].agg(lambda x: x.mode().iloc[0])
     window_df["phase_group"] = window_df["win_idx"].map(win_pg)
     if window_df["phase_group"].isna().any():
         window_df["phase_group"] = window_df["phase_group"].ffill()
@@ -176,8 +163,8 @@ if phase_flip_test:
 if gene_aware_binning:
     # glue each gene's window span into one block so a bin never splits a gene;
     # explode the ;-joined multi-gene feature_id so each gene gets its own span
-    genic = _snps_tmp[
-        _snps_tmp["feature_id"].notna() & (_snps_tmp["feature_id"] != "intergenic")
+    genic = snps_win[
+        snps_win["feature_id"].notna() & (snps_win["feature_id"] != "intergenic")
     ].copy()
     genic["feature_id"] = genic["feature_id"].str.split(";")
     genic = genic.explode("feature_id")
@@ -191,7 +178,6 @@ if gene_aware_binning:
         f"{window_df['gene_block'].nunique()} gene/intergenic blocks (bins never split a gene)"
     )
 
-tot_tumor = np.ascontiguousarray(tot_mtx[:, tumor_cols_all], dtype=np.float64)
 sample_labels = [f"{col_assay[i]}:{col_repid[i]}" for i in range(total_samples)]
 tumor_labels = [sample_labels[c] for c in tumor_cols_all]
 genetic_map = pd.read_table(gmap_file, sep="\t") if gmap_file is not None else None
@@ -211,7 +197,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     min_snp_reads_vec = np.full(len(tumor_cols_all), msr, dtype=np.float64)
     bbs, snps_bb = adaptive_segmentation(
         window_df,
-        snps.copy(),
+        snps_win.copy(),
         tot_tumor,
         min_snp_reads_vec,
         min_snp_per_bin,
@@ -221,7 +207,6 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         gene_aware=gene_aware_binning,
     )
     num_bbs = len(bbs)
-    count_split_genes(snps_bb, grp_cols, gene_aware_binning)
 
     bb_ids = snps_bb["bb_id"].to_numpy()
     snp_orig_idx = snps_bb["_orig_idx"].to_numpy()
@@ -283,7 +268,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     depth_normal = np.full_like(depth_tumor, np.nan, dtype=float)
     rdr_titles, rdr_norm_labels = [], []
     for j, c in enumerate(tumor_cols_all):
-        title = f"{sample_name} ({col_assay[c]}) {col_repid[c]} (T)"
+        title = f"{sample_id} ({col_assay[c]}) {col_repid[c]} (T)"
         if c in base_map:
             depth_normal[:, j] = bb_dp[:, base_map[c]]
             rdr_norm_labels.append("normal")

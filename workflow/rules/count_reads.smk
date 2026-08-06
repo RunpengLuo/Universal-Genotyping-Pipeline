@@ -157,12 +157,8 @@ rule rd_correct:
         "../envs/base.yaml"
     params:
         qc_dir=config["qc_dir"],
-        sample_name=sample_id,
+        sample_id=sample_id,
         dataset_ids=lambda wc: assay2dataset_ids[wc.assay_type],
-        sample_ids=lambda wc: [
-            f"{sample_id}_{dataset_id}"
-            for dataset_id in assay2dataset_ids[wc.assay_type]
-        ],
         mosdepth_dir=lambda wc: config["pileup_dir"] + f"/{wc.assay_type}/out_mosdepth",
         chroms=chroms,
         samplesize=_rdr_cfg["samplesize"],

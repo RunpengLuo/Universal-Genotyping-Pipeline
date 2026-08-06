@@ -9,9 +9,10 @@ import numpy as np
 import pandas as pd
 
 from scipy.io import mmread
-from scipy.sparse import csr_matrix, hstack, issparse
+from scipy.sparse import csr_matrix, hstack
 from scipy.stats import beta
 
+from interval_utils import assign_pos_to_range
 from io_utils import read_VCF
 from utils import sort_df_chr
 
@@ -144,14 +145,18 @@ def canon_mat_one_replicate(
     return tot_canon, ad_canon
 
 
-def scatter_counts_to_shared_snps(dst, src, shared_rows, col_offset):
-    """Write an assay's ``(n_local, n_col)`` counts into a shared matrix in place.
+def cell_rep_idx_from_mapping(rep2bc: pd.DataFrame, dataset_ids):
+    """Convert a REP_ID,BARCODE DataFrame into an int64 array of rep indices.
 
-    ``src`` rows are placed at ``shared_rows`` and columns at
-    ``[col_offset, col_offset + n_col)`` of ``dst`` (the ``(n_shared, n_total)``
-    destination). SNPs absent from the assay keep ``dst``'s existing values.
+    Categorical mapping with explicit ``dataset_ids`` order ensures the codes
+    align with the position of each rep in the caller's dataset_ids list.
     """
-    dst[shared_rows, col_offset : col_offset + src.shape[1]] = src
+    cats = pd.Categorical(rep2bc["REP_ID"], categories=list(dataset_ids))
+    codes = np.asarray(cats.codes, dtype=np.int64)
+    assert (codes >= 0).all(), (
+        "barcodes.full contains REP_ID values outside dataset_ids"
+    )
+    return codes
 
 
 def merge_mats(tot_list: list, ad_list: list):
@@ -179,150 +184,8 @@ def merge_mats(tot_list: list, ad_list: list):
     return tot_mtx, ref_mtx, alt_mtx
 
 
-def apply_phase_to_mat(tot_mtx, ref_mtx, alt_mtx, phases):
-    """Apply per-SNP phase labels to produce phased A/B allele count matrices.
-
-    Parameters
-    ----------
-    tot_mtx : sparse or ndarray
-        Total depth matrix (SNPs x cells/samples).
-    ref_mtx : sparse or ndarray
-        Reference allele count matrix.
-    alt_mtx : sparse or ndarray
-        Alternate allele count matrix.
-    phases : np.ndarray
-        Per-SNP phase labels (0 or 1).
-
-    Returns
-    -------
-    tuple
-        ``(a_mtx, b_mtx)`` — phased allele count matrices.
-    """
-    p = phases[:, None]
-    if issparse(ref_mtx):
-        b_mtx = ref_mtx.multiply(p) + alt_mtx.multiply(1 - p)
-        b_mtx.data = np.rint(b_mtx.data).astype(np.int32)
-    else:
-        b_mtx = ref_mtx * p + alt_mtx * (1 - p)
-        b_mtx = np.round(b_mtx).astype(np.int32)
-    a_mtx = tot_mtx - b_mtx
-    return a_mtx, b_mtx
-
-
-def compute_af_per_sample(tot_mtx, b_mtx, i: int):
-    """Compute per-SNP allele frequency for a single sample column.
-
-    Parameters
-    ----------
-    tot_mtx : sparse or ndarray
-        Total depth matrix (SNPs x samples).
-    b_mtx : sparse or ndarray
-        B-allele count matrix.
-    i : int
-        Sample column index.
-
-    Returns
-    -------
-    np.ndarray
-        Allele frequency per SNP; ``NaN`` where depth is zero.
-    """
-    tot_col = tot_mtx[:, i]
-    b_col = b_mtx[:, i]
-
-    den = (
-        tot_col.toarray().ravel() if issparse(tot_col) else np.asarray(tot_col).ravel()
-    )
-    num = b_col.toarray().ravel() if issparse(b_col) else np.asarray(b_col).ravel()
-
-    out = np.full_like(den, np.nan, dtype=np.float32)
-    return np.divide(num, den, out=out, where=(den > 0))
-
-
-def pseudobulk_by_groups(mat, group_idx, n_groups):
-    """Sum the columns of ``mat`` within each group.
-
-    Parameters
-    ----------
-    mat : sparse or ndarray
-        Feature x cell matrix.
-    group_idx : np.ndarray
-        Length-n_cells int array; ``group_idx[c]`` is the group of column c.
-    n_groups : int
-        Number of groups (output column count).
-
-    Returns
-    -------
-    np.ndarray
-        Dense (n_features, n_groups) array of summed counts.
-    """
-    n_cells = mat.shape[1]
-    assert group_idx.shape[0] == n_cells, "group_idx length must match #cells"
-    indicator = csr_matrix(
-        (np.ones(n_cells, dtype=np.float64), (np.arange(n_cells), group_idx)),
-        shape=(n_cells, n_groups),
-    )
-    out = mat @ indicator
-    return out.toarray() if issparse(out) else np.asarray(out)
-
-
-def compute_af_by_groups(tot_mtx, b_mtx, group_idx, n_groups):
-    """Per-group pseudobulk allele frequency matrix of shape (n_features, n_groups)."""
-    tot_grp = pseudobulk_by_groups(tot_mtx, group_idx, n_groups)
-    b_grp = pseudobulk_by_groups(b_mtx, group_idx, n_groups)
-    out = np.full(tot_grp.shape, np.nan, dtype=np.float32)
-    return np.divide(b_grp, tot_grp, out=out, where=(tot_grp > 0))
-
-
-def compute_af_pseudobulk(tot_mtx, b_mtx):
-    """Compute per-SNP allele frequency across all cells (pseudobulk sum).
-
-    Parameters
-    ----------
-    tot_mtx : sparse or ndarray
-        Total depth matrix (SNPs x cells).
-    b_mtx : sparse or ndarray
-        B-allele count matrix.
-
-    Returns
-    -------
-    np.ndarray
-        Pseudobulk allele frequency per SNP; ``NaN`` where total depth is zero.
-    """
-    if issparse(tot_mtx):
-        den = np.asarray(tot_mtx.sum(axis=1)).ravel()
-    else:
-        den = tot_mtx.sum(axis=1)
-
-    if issparse(b_mtx):
-        num = np.asarray(b_mtx.sum(axis=1)).ravel()
-    else:
-        num = b_mtx.sum(axis=1)
-
-    out = np.full(den.shape[0], np.nan, dtype=np.float32)
-    return np.divide(num, den, out=out, where=(den > 0))
-
-
 ##################################################
 # combine_counts: SNP parsing, grouping, and bulk depth/RDR aggregation
-
-
-def load_bulk_snp_matrices(snp_info_file, tot_file, a_file, b_file):
-    """Read the joint bulk SNP table and dense T/A/B matrices, genomically sorted.
-
-    Returns ``(snps, tot_mtx, a_mtx, b_mtx)`` with SNP rows in ``#CHR``/``POS0``
-    order and the matrices permuted to match.
-    """
-    snps = pd.read_table(snp_info_file, sep="\t")
-    tot_mtx = np.load(tot_file)["mat"].astype(np.int32)
-    a_mtx = np.load(a_file)["mat"].astype(np.int32)
-    b_mtx = np.load(b_file)["mat"].astype(np.int32)
-
-    snps["_row"] = np.arange(len(snps))
-    snps = sort_df_chr(snps, ch="#CHR", pos="POS0").reset_index(drop=True)
-    perm = snps["_row"].to_numpy()
-    tot_mtx, a_mtx, b_mtx = tot_mtx[perm], a_mtx[perm], b_mtx[perm]
-    snps = snps.drop(columns="_row")
-    return snps, tot_mtx, a_mtx, b_mtx
 
 
 def build_union_snp_grid(snps_list):
@@ -349,29 +212,6 @@ def build_union_snp_grid(snps_list):
     snps = sort_df_chr(snps, ch="#CHR", pos="POS0").reset_index(drop=True)
     snps["snp_row"] = np.arange(len(snps))
     return snps, has_ps, has_feature
-
-
-def setup_phaseset_groups(snps):
-    """Ensure ``seg_id``/``PS`` columns exist; return grouping ``[region_id, seg_id, PS]``.
-
-    ``seg_id`` (the breakpoint chunk from build_segment_bed) is the hard bin boundary;
-    binning groups by it and never merges across it, while ``region_id`` (the arm) is
-    carried for RDR/QC. When ``seg_id`` is absent (no global BED), it falls back to
-    ``region_id`` so grouping is identical to the pre-seg_id behavior. If ``PS`` is
-    absent, set ``PS=1``; when present every SNP must carry a non-null value.
-    """
-    assert "region_id" in snps.columns, "invalid SNP file"
-    if "seg_id" not in snps.columns:
-        snps["seg_id"] = snps["region_id"]
-    if "PS" not in snps.columns:
-        logging.info("PS not in SNP columns, setting PS=1 for all SNPs")
-        snps["PS"] = 1
-    else:
-        assert snps["PS"].notna().all(), "unexpected SNP without PS in phased VCF"
-    logging.info(
-        f"#seg_id={snps['seg_id'].nunique()}, #phaseset={snps['PS'].nunique()}"
-    )
-    return ["region_id", "seg_id", "PS"]
 
 
 def build_assay_blocks(sample_df, bulk_assays):
@@ -431,34 +271,6 @@ def build_rdr_base_map(sample_df):
     return base_map
 
 
-def _windows_to_bins(win_a, bin_spans):
-    """Assign each window to the bin whose genomic span contains its midpoint.
-
-    Returns an int64 array of ``bin_id`` per window, ``-1`` where the midpoint
-    falls in no bin. Works for a same-grid assay (window in its own bin) and for
-    a finer WES grid projected onto WGS bins.
-    """
-    mids = ((win_a["START"] + win_a["END"]) // 2).to_numpy(np.int64)
-    chroms = win_a["#CHR"].to_numpy()
-    out = np.full(len(win_a), -1, dtype=np.int64)
-    for chrom, grp in bin_spans.groupby("#CHR", sort=False):
-        m = chroms == chrom
-        if not m.any():
-            continue
-        starts = grp["START"].to_numpy(np.int64)
-        ends = grp["END"].to_numpy(np.int64)
-        ids = grp["bin_id"].to_numpy(np.int64)
-        order = np.argsort(starts)
-        starts, ends, ids = starts[order], ends[order], ids[order]
-        pos = mids[m]
-        j = np.searchsorted(starts, pos, side="right") - 1
-        valid = (j >= 0) & (pos < ends[j.clip(min=0)])
-        res = np.full(len(pos), -1, dtype=np.int64)
-        res[valid] = ids[j[valid]]
-        out[m] = res
-    return out
-
-
 def aggregate_window_depth_to_bins(
     assay_blocks, scaffold, window_df_list, dp_corrected_list, num_bbs, total_samples
 ):
@@ -469,6 +281,23 @@ def aggregate_window_depth_to_bins(
     projected onto the WGS bins. Returns ``(bb_dp, bb_bases)``: per-bin mean depth
     and per-bin total aligned bases, both ``(num_bbs, total_samples)``.
     """
+
+    def _windows_to_bins(win_a, bin_spans):
+        """Assign each window to the bin whose genomic span contains its midpoint.
+
+        Returns an int64 array of ``bin_id`` per window, ``-1`` where the midpoint
+        falls in no bin. Works for a same-grid assay (window in its own bin) and for
+        a finer WES grid projected onto WGS bins.
+        """
+        mids = pd.DataFrame(
+            {
+                "#CHR": win_a["#CHR"].to_numpy(),
+                "POS0": ((win_a["START"] + win_a["END"]) // 2).to_numpy(np.int64),
+            }
+        )
+        mids = assign_pos_to_range(mids, bin_spans, ref_id="bin_id", pos_col="POS0")
+        return mids["bin_id"].fillna(-1).to_numpy(np.int64)
+
     bin_spans = (
         scaffold.groupby("bin_id", sort=True)
         .agg(
@@ -564,43 +393,6 @@ def compute_bb_rdr(
 
 
 ##################################################
-def get_mask_by_region(snps: pd.DataFrame, regions: pd.DataFrame) -> np.ndarray:
-    """
-    Return a boolean mask (len == len(snps)) indicating whether each SNP (CHR, POS)
-    overlaps any interval in a BED-like file, using 0-based half-open intervals
-    [Start, End).
-
-    Assumes SNP POS is 1-based.
-    """
-    n = len(snps)
-    r_chr = regions["#CHR"] if "#CHR" in regions.columns else regions["Chromosome"]
-    r_start = (
-        regions["START"] if "START" in regions.columns else regions["Start"]
-    ).to_numpy()
-    r_end = (regions["END"] if "END" in regions.columns else regions["End"]).to_numpy()
-
-    keep = np.zeros(n, dtype=bool)
-    for chrom in snps["#CHR"].unique():
-        sm = (snps["#CHR"] == chrom).to_numpy()
-        rm = (r_chr == chrom).to_numpy()
-        if not rm.any():
-            continue
-        positions = snps.loc[sm, "POS"].to_numpy().astype(np.int64) - 1
-        reg_starts = r_start[rm]
-        reg_ends = r_end[rm]
-        sort_idx = np.argsort(reg_starts)
-        reg_starts, reg_ends = reg_starts[sort_idx], reg_ends[sort_idx]
-        right_bounds = np.searchsorted(reg_starts, positions, side="right")
-        overlaps = np.array(
-            [
-                np.any(reg_ends[: right_bounds[i]] > positions[i])
-                for i in range(len(positions))
-            ]
-        )
-        keep[np.where(sm)[0]] = overlaps
-    return keep
-
-
 def get_mask_by_depth(snps: pd.DataFrame, tot_mtx: csr_matrix, min_dp=1):
     """Return a boolean mask keeping SNPs where every sample meets the minimum depth.
 
@@ -651,90 +443,58 @@ def get_mask_by_het_balanced(
 
 
 ##################################################
-def subset_baf(
-    baf_df: pd.DataFrame, ch: str, start: int, end: int, is_last_block=False
-):
-    """Slice a BAF DataFrame to a chromosomal interval ``[start, end)``.
-
-    For the last block, the interval is closed on the right: ``[start, end]``.
-
-    Parameters
-    ----------
-    baf_df : pd.DataFrame
-        DataFrame with ``#CHR`` and ``POS`` columns (or ``POS`` as index).
-    ch : str or None
-        Chromosome to filter on; if None, no chromosome filter is applied.
-    start, end : int
-        Genomic position boundaries.
-    is_last_block : bool
-        If True, use a closed right boundary.
-
-    Returns
-    -------
-    pd.DataFrame
-        Filtered subset.
-    """
-    if ch is not None:
-        baf_ch = baf_df[baf_df["#CHR"] == ch]
-    else:
-        baf_ch = baf_df
-    if baf_ch.index.name == "POS":
-        pos = baf_ch.index
-    else:
-        pos = baf_ch["POS"]
-    if is_last_block:
-        return baf_ch[(pos >= start) & (pos <= end)]
-    else:
-        return baf_ch[(pos >= start) & (pos < end)]
-
-
 def assign_snp_bounderies(
     snps: pd.DataFrame, regions: pd.DataFrame, colname="region_id"
 ):
+    """Split each region into one ``[START, END)`` sub-interval per SNP it contains.
+
+    A SNP owns the span between the midpoints of its neighbours, bounded by the
+    region edges; a lone SNP owns the whole region. SNPs outside every region keep
+    ``START = END = 0`` and an empty ``region_id``. Membership is by 1-based ``POS``
+    against the region's coordinates.
+
+    Args:
+        snps: SNPs with ``#CHR``, ``POS``, ``POS0``, sorted genomically.
+        regions: Intervals with ``#CHR``, ``START``, ``END``, ``region_id`` and
+            optionally ``seg_id``.
+        colname: Column to write the region identifier into.
+
+    Returns:
+        *snps* with ``START``, ``END``, ``BLOCKSIZE``, *colname* (and ``seg_id``).
     """
-    divide regions into [START, END) subregions, each subregion has one SNP.
-    If a SNP is out-of-region, its START and END will be 0 and region_id will be "".
-    region_id is taken from regions["region_id"] (4th-column seg_id, with
-    per-row fallback to "CHR:START-END" handled by read_BED).
-    """
+    has_seg = "seg_id" in regions.columns
+    regions = regions.reset_index(drop=True)
+    regions["_reg_row"] = np.arange(len(regions))
+
+    snps = assign_pos_to_range(snps, regions, ref_id="_reg_row", pos_col="POS")
     snps["START"] = 0
     snps["END"] = 0
-
     snps[colname] = ""
-    has_seg = "seg_id" in regions.columns
     if has_seg:
         snps["seg_id"] = ""
 
-    chroms = snps["#CHR"].unique().tolist()
-    region_grps_ch = regions.groupby(by="#CHR", sort=False)
-    for chrom in chroms:
-        regions_ch = region_grps_ch.get_group(chrom)
-        for _, region in regions_ch.iterrows():
-            reg_start, reg_end = region["START"], region["END"]
-            reg_snps = subset_baf(snps, chrom, reg_start, reg_end)
-            if len(reg_snps) == 0:
-                continue
-            reg_snp_positions = reg_snps["POS0"].to_numpy()
-            reg_snp_indices = reg_snps.index.to_numpy()
+    inside = snps["_reg_row"].notna()
+    n_out = int((~inside).sum())
+    if n_out:
+        logging.info(f"SNP boundaries: {n_out}/{len(snps)} SNPs outside every region")
 
-            snps.loc[reg_snp_indices, colname] = region["region_id"]
-            if has_seg:
-                snps.loc[reg_snp_indices, "seg_id"] = region["seg_id"]
+    reg_start = regions["START"].to_numpy()
+    reg_end = regions["END"].to_numpy()
+    for reg_row, grp in snps.loc[inside].groupby("_reg_row", sort=False):
+        idx = grp.index.to_numpy()
+        r = int(reg_row)
+        snps.loc[idx, colname] = regions.at[r, "region_id"]
+        if has_seg:
+            snps.loc[idx, "seg_id"] = regions.at[r, "seg_id"]
+        pos0 = grp["POS0"].to_numpy()
+        if len(idx) == 1:
+            bounds = np.array([reg_start[r], reg_end[r]])
+        else:
+            mids = np.ceil((pos0[:-1] + pos0[1:]) / 2).astype(np.uint32)
+            bounds = np.concatenate([[reg_start[r]], mids, [reg_end[r]]])
+        snps.loc[idx, "START"] = bounds[:-1]
+        snps.loc[idx, "END"] = bounds[1:]
 
-            if len(reg_snps) == 1:
-                snps.loc[reg_snp_indices, "START"] = reg_start
-                snps.loc[reg_snp_indices, "END"] = reg_end
-            else:
-                reg_bounderies = np.ceil(
-                    np.vstack([reg_snp_positions[:-1], reg_snp_positions[1:]]).mean(
-                        axis=0
-                    )
-                ).astype(np.uint32)
-                reg_bounderies = np.concatenate(
-                    [[reg_start], reg_bounderies, [reg_end]]
-                )
-                snps.loc[reg_snp_indices, "START"] = reg_bounderies[:-1]
-                snps.loc[reg_snp_indices, "END"] = reg_bounderies[1:]
-
+    snps.drop(columns="_reg_row", inplace=True)
     snps["BLOCKSIZE"] = snps["END"] - snps["START"]
     return snps

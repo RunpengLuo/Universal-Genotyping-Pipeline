@@ -1,33 +1,31 @@
-import os
+"""Annotate and filter pseudobulk SNPs called by cellsnp-lite.
+
+Merges the per-modality cellsnp-lite calls of every replicate and keeps unique
+bi-allelic het (or hom-alt) SNPs. The emitted VCFs are read back by cellsnp-lite,
+so their contigs follow the alignment naming (``input_nochr``), not ours.
+
+Inputs
+  raw_snp_vcfs: per-modality cellsnp-lite base VCFs
+  genome_size: two-column chrom<TAB>size file, for the ##contig header
+Outputs:
+  het/hom-alt VCFs in the alignment's chromosome naming
+"""
+
 import logging
 import subprocess
 
 snakemake_handle = snakemake
 
-t = int(getattr(snakemake_handle, "threads", 1))
-os.environ["OMP_NUM_THREADS"] = str(t)
-os.environ["OPENBLAS_NUM_THREADS"] = str(t)
-os.environ["MKL_NUM_THREADS"] = str(t)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(t)
-os.environ["NUMEXPR_NUM_THREADS"] = str(t)
+from utils import set_omp_threads, setup_logging, strip_chr_prefix
+
+set_omp_threads(snakemake_handle)
+setup_logging(snakemake_handle.log[0])
 
 import numpy as np
 import pandas as pd
 
 from io_utils import read_VCF, get_chr_sizes
-from utils import strip_chr_prefix
 
-##################################################
-"""
-Given cellsnp-lite results from multiple replicates.
-After annotation, only unique bi-allelic Het or Hom-Alt SNPs are kept.
-"""
-log_file = snakemake_handle.log[0]
-logging.basicConfig(
-    filename=log_file,
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-)
 
 # inputs
 raw_snp_vcfs = list(snakemake_handle.input["raw_snp_vcfs"])

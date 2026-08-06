@@ -13,9 +13,18 @@ import os
 
 snakemake_handle = snakemake  # noqa: F821
 
-t = int(getattr(snakemake_handle, "threads", 1))
-for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
-    os.environ[var] = str(t)
+from utils import (
+    set_omp_threads,
+    setup_logging,
+    is_canonical_chrom,
+    match_chr_style,
+    maybe_path,
+    sort_df_chr,
+    strip_chr_prefix,
+)
+
+set_omp_threads(snakemake_handle)
+setup_logging(snakemake_handle.log[0])
 
 import numpy as np
 import pandas as pd
@@ -29,35 +38,12 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 from io_utils import read_BED
 from plot_utils import _hist_with_stats
-from utils import (
-    is_canonical_chrom,
-    maybe_path,
-    setup_logging,
-    match_chr_style,
-    sort_df_chr,
-    strip_chr_prefix,
-)
 
-setup_logging(snakemake_handle.log[0])
 
 inp = snakemake_handle.input
 p = snakemake_handle.params
 out_bed = snakemake_handle.output["window_bed"]
 qc_pdf = snakemake_handle.output["qc_pdf"]
-
-
-def _tile_region(chrom, start, end, window_size):
-    """Tile a region into fixed-size windows, merging an undersized last bin."""
-    rows = []
-    pos = start
-    while pos < end:
-        w_end = min(pos + window_size, end)
-        rows.append([chrom, pos, w_end])
-        pos = w_end
-    if len(rows) > 1 and (rows[-1][2] - rows[-1][1]) < window_size // 2:
-        rows[-2][2] = rows[-1][2]
-        rows.pop()
-    return rows
 
 
 def _to_genome_style(feature):
@@ -68,6 +54,20 @@ def _to_genome_style(feature):
 
 def generate_wgs_windows(window_size, chroms, regions):
     """Tile fixed-size windows within the segment BED (already blacklist-subtracted)."""
+
+    def _tile_region(chrom, start, end, window_size):
+        """Tile a region into fixed-size windows, merging an undersized last bin."""
+        rows = []
+        pos = start
+        while pos < end:
+            w_end = min(pos + window_size, end)
+            rows.append([chrom, pos, w_end])
+            pos = w_end
+        if len(rows) > 1 and (rows[-1][2] - rows[-1][1]) < window_size // 2:
+            rows[-2][2] = rows[-1][2]
+            rows.pop()
+        return rows
+
     reg_df = regions[regions["#CHR"].isin(chroms)].reset_index(drop=True)
     rows = []
     for _, r in reg_df.iterrows():

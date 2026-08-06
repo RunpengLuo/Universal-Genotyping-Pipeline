@@ -11,9 +11,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from cnplot import adaptive_dot_size, plot_scatter_1d, read_bed
+from cnplot import adaptive_dot_size, plot_scatter_1d
 
-from plot_utils import _get_axis, _shade, _val_full
+from plot_utils import _get_axis, _load_shading, _shade, _val_full
 
 
 def _plot_cov_panel(
@@ -175,8 +175,7 @@ def plot_rd_1d_scatter(
 ):
     """One page per sample: top = before correction, bottom = after correction."""
     axis = _get_axis(genome_size, pos_df["#CHR"])
-    region_df = read_bed(region_bed) if region_bed else None
-    blacklist_df = read_bed(blacklist_bed) if blacklist_bed else None
+    region_df, blacklist_df = _load_shading(region_bed, blacklist_bed)
     s_plot = adaptive_dot_size(len(pos_df), s_base=s)
     alphas = np.full(len(pos_df), alpha)
 

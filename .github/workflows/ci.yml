@@ -10,6 +10,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: ruff (format + lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install ruff
+      # F821 is the point: no `import *` hides an undefined name in a script:
+      - run: ruff check .
+      - run: ruff format --check .
+
   dryrun:
     name: pytest + snakemake dry-run (py${{ matrix.python-version }})
     runs-on: ubuntu-latest

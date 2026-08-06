@@ -13,33 +13,18 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 from matplotlib.lines import Line2D
 
-from cnplot import adaptive_dot_size, plot_scatter_1d, plot_scatter_2d, read_bed
+from cnplot import adaptive_dot_size, plot_scatter_1d, plot_scatter_2d
+
+from matrix_utils import dense_col
 
 from plot_utils import (
     _bold_chrnames,
-    _extract_col,
+    _finish_page,
     _get_axis,
     _hist_with_stats,
+    _load_shading,
     _shade,
-    _val_full,
 )
-
-
-def _seg_gene_counts(seg_df, gene_count, gene_col):
-    """Resolve a per-segment gene count from an explicit array or a seg_df column."""
-    if gene_count is not None:
-        return np.asarray(gene_count, dtype=float)
-    if "n_genes" in seg_df.columns:
-        return seg_df["n_genes"].to_numpy(dtype=float)
-    if gene_col in seg_df.columns:
-
-        def _count(v):
-            if not isinstance(v, str) or v == "":
-                return 0
-            return sum(1 for g in v.split(";") if g and g != "intergenic")
-
-        return seg_df[gene_col].map(_count).to_numpy(dtype=float)
-    return None
 
 
 def plot_segmentation_qc(
@@ -91,6 +76,23 @@ def plot_segmentation_qc(
 
     # ---- page 1: segment length + per-segment gene count ----
     lengths_kbp = (seg_df["END"].to_numpy() - seg_df["START"].to_numpy()) / 1000.0
+
+    def _seg_gene_counts(seg_df, gene_count, gene_col):
+        """Resolve a per-segment gene count from an explicit array or a seg_df column."""
+        if gene_count is not None:
+            return np.asarray(gene_count, dtype=float)
+        if "n_genes" in seg_df.columns:
+            return seg_df["n_genes"].to_numpy(dtype=float)
+        if gene_col in seg_df.columns:
+
+            def _count(v):
+                if not isinstance(v, str) or v == "":
+                    return 0
+                return sum(1 for g in v.split(";") if g and g != "intergenic")
+
+            return seg_df[gene_col].map(_count).to_numpy(dtype=float)
+        return None
+
     genes_per_seg = _seg_gene_counts(seg_df, gene_count, gene_col)
     fig1, ax1 = plt.subplots(1, 2, figsize=(11, 4))
     _hist_with_stats(ax1[0], lengths_kbp, "segment length (kbp)", "Segment length")
@@ -120,18 +122,18 @@ def plot_segmentation_qc(
         assay = str(row.get("assay_type", ""))
         # 2-line sample label, shown once per row as a bold vertical "row super-title"
         row_label = (
-            f"{row.get(name_col, '')} {row.get('REP_ID', '')}\n"
-            f"{assay} {row.get('sample_type', '')}"
+            f"{row.get(name_col, '')}\n{row.get('REP_ID', '')}\n"
+            f"{assay} ({row.get('sample_type', '')})"
         )
         _hist_with_stats(
-            axes[ri, 0], _extract_col(x_count_mat, ri), "Read count", sci_x=True
+            axes[ri, 0], dense_col(x_count_mat, ri), "Read count", sci_x=True
         )
         _hist_with_stats(
-            axes[ri, 1], _extract_col(b_count_mat, ri), "B-allele count", sci_x=True
+            axes[ri, 1], dense_col(b_count_mat, ri), "B-allele count", sci_x=True
         )
         _hist_with_stats(
             axes[ri, 2],
-            _extract_col(tot_count_mat, ri),
+            dense_col(tot_count_mat, ri),
             "total allele count",
             sci_x=True,
         )
@@ -212,8 +214,7 @@ def plot_rdr_baf(
         f"({n_tumors} tumors), out_file={out_file}"
     )
     axis = _get_axis(genome_size, pos_df["#CHR"])
-    region_df = read_bed(region_bed) if region_bed else None
-    blacklist_df = read_bed(blacklist_bed) if blacklist_bed else None
+    region_df, blacklist_df = _load_shading(region_bed, blacklist_bed)
     s_plot = adaptive_dot_size(len(pos_df), s_base=s)
     alphas = np.full(len(pos_df), alpha)
 
@@ -306,12 +307,7 @@ def plot_rdr_baf(
         )
         _bold_chrnames(ax_baf)
 
-        fig.supxlabel(f"Genome positions (MB) - {unit}")
-        fig.tight_layout()
-        fig.subplots_adjust(top=1 - 0.4 / fig.get_figheight())
-        fig.suptitle(titles[si], fontweight="bold", y=1 - 0.12 / fig.get_figheight())
-        pdf_pages.savefig(fig, dpi=dpi)
-        plt.close(fig)
+        _finish_page(fig, titles[si], unit, dpi=dpi, pdf=pdf_pages)
     if _own_pdf:
         pdf_pages.close()
 
@@ -356,7 +352,7 @@ def plot_rdr_baf_2d(
             refline_y=1.0,
             xlabel="BAF",
             ylabel="RDR",
-            title=f"{label} — {_val_full('RDR')} vs {_val_full('BAF')}",
+            title=str(label),
         )
         pdf_pages.savefig(grid.figure, dpi=dpi)
         plt.close(grid.figure)

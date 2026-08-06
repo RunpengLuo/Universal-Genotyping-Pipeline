@@ -3,28 +3,28 @@
 Input for Copy-typing.
 """
 
-import os
 import logging
 import shutil
 
 
 snakemake_handle = snakemake
 
-t = int(getattr(snakemake_handle, "threads", 1))
-os.environ["OMP_NUM_THREADS"] = str(t)
-os.environ["OPENBLAS_NUM_THREADS"] = str(t)
-os.environ["MKL_NUM_THREADS"] = str(t)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(t)
-os.environ["NUMEXPR_NUM_THREADS"] = str(t)
+from utils import set_omp_threads, setup_logging, sort_df_chr
+
+set_omp_threads(snakemake_handle)
+setup_logging(snakemake_handle.log[0])
 
 import numpy as np
 import pandas as pd
-from scipy.sparse import save_npz, load_npz
+from scipy.sparse import issparse, load_npz, save_npz
 import scanpy as sc
-from scipy.sparse import issparse
-from utils import *
-from io_utils import *
-from aggregation_utils import *
+from const import ASSAY_TYPE2MODALITY, BULK_ASSAYS
+from io_utils import read_barcodes, read_full_barcodes
+from combine_counts_utils import cell_rep_idx_from_mapping
+from aggregation_utils import merge_feature_ids, snp_to_region
+from matrix_utils import matrix_segmentation
+from atac_utils import atac_fragments_to_bb
+from rna_utils import feature_to_blocks
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_alleles import plot_allele_freqs
 
@@ -39,9 +39,6 @@ def _sparsity(X):
     nnz = X.nnz if issparse(X) else np.count_nonzero(X)
     return 1.0 - nnz / size
 
-
-log_file = snakemake_handle.log[0]
-setup_logging(log_file)
 
 # inputs
 snp_info = snakemake_handle.input["snp_info"]
@@ -59,7 +56,7 @@ bb_file = snakemake_handle.input["bb_file"]
 
 # parameters
 qc_dir = snakemake_handle.params["qc_dir"]
-sample_name = snakemake_handle.params["sample_name"]
+sample_id = snakemake_handle.params["sample_id"]
 assay_type = snakemake_handle.params["assay_type"]
 run_id = getattr(snakemake_handle.params, "run_id", "")
 
@@ -84,7 +81,7 @@ cell_rep_idx = cell_rep_idx_from_mapping(
     read_full_barcodes(barcodes_full_path), dataset_ids
 )
 
-logging.info(f"cnv segmentation, sample name={sample_name}, assay_type={assay_type}")
+logging.info(f"cnv segmentation, sample_id={sample_id}, assay_type={assay_type}")
 logging.info(f"dataset_ids={dataset_ids}")
 snps = pd.read_table(snp_info, sep="\t")
 
@@ -148,7 +145,7 @@ with PdfPages(pdf_path) as pdf:
         unit="snp",
         suffix=f"_{assay_type}",
         run_id=run_id,
-        sample_id=sample_name,
+        sample_id=sample_id,
         pdf=pdf,
     )
     plot_allele_freqs(
@@ -164,7 +161,7 @@ with PdfPages(pdf_path) as pdf:
         unit="bb",
         suffix=f"_{assay_type}",
         run_id=run_id,
-        sample_id=sample_name,
+        sample_id=sample_id,
         pdf=pdf,
     )
 logging.info(f"saved 2-page BAF PDF to {pdf_path}")

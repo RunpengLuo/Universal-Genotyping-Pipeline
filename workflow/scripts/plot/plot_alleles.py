@@ -15,15 +15,38 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import seaborn as sns
 
-from combine_counts_utils import (
-    compute_af_pseudobulk,
-    compute_af_per_sample,
-    compute_af_by_groups,
-    pseudobulk_by_groups,
-)
+from matrix_utils import dense_col, pseudobulk_by_groups
 
 from plot_genome import plot_1d_sample, plot_1d_multi_sample
-from plot_utils import _extract_col
+from plot_utils import _suptitle
+
+
+def _af(num, den):
+    """``num / den`` as float32, ``NaN`` wherever the denominator is not positive."""
+    out = np.full(np.shape(den), np.nan, dtype=np.float32)
+    return np.divide(num, den, out=out, where=(den > 0))
+
+
+def compute_af_per_sample(tot_mtx, b_mtx, i: int):
+    """Per-SNP allele frequency for one sample column; ``NaN`` where depth is zero."""
+    return _af(dense_col(b_mtx, i), dense_col(tot_mtx, i))
+
+
+def compute_af_by_groups(tot_mtx, b_mtx, group_idx, n_groups):
+    """Per-group pseudobulk allele frequency matrix of shape (n_features, n_groups)."""
+    return _af(
+        pseudobulk_by_groups(b_mtx, group_idx, n_groups),
+        pseudobulk_by_groups(tot_mtx, group_idx, n_groups),
+    )
+
+
+def compute_af_pseudobulk(tot_mtx, b_mtx):
+    """Per-SNP allele frequency summed over all cells; ``NaN`` where depth is zero."""
+
+    def row_sum(mat):
+        return np.asarray(mat.sum(axis=1)).ravel() if issparse(mat) else mat.sum(axis=1)
+
+    return _af(row_sum(b_mtx), row_sum(tot_mtx))
 
 
 def plot_snp_depth(
@@ -118,14 +141,14 @@ def plot_snp_depth(
         return pd.concat(rows, ignore_index=True)
 
     def _depth(ci):
-        total = _extract_col(depth_mat, ci).astype(np.float64)
+        total = dense_col(depth_mat, ci).astype(np.float64)
         return total[total > 0]
 
     def _frac(count_mat):
         def fn(ci):
-            total = _extract_col(depth_mat, ci).astype(np.float64)
+            total = dense_col(depth_mat, ci).astype(np.float64)
             cov = total > 0
-            return _extract_col(count_mat, ci).astype(np.float64)[cov] / total[cov]
+            return dense_col(count_mat, ci).astype(np.float64)[cov] / total[cov]
 
         return fn
 
@@ -156,8 +179,7 @@ def plot_snp_depth(
 
     fig.tight_layout()
     if sample_id:
-        fig.subplots_adjust(top=1 - 0.4 / fig.get_figheight())
-        fig.suptitle(sample_id, fontweight="bold", y=1 - 0.12 / fig.get_figheight())
+        _suptitle(fig, sample_id)
     if pdf is not None:
         pdf.savefig(fig)
         plt.close(fig)

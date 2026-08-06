@@ -33,7 +33,7 @@ rule phase_and_concat_bulk:
         "../envs/base.yaml"
     params:
         qc_dir=config["qc_dir"],
-        sample_name=sample_id,
+        sample_id=sample_id,
         col_assays=[at for at in assay_types for rid in assay2dataset_ids[at]],
         col_reps=[rid for at in assay_types for rid in assay2dataset_ids[at]],
         col_sample_types=[st for at in assay_types for st in assay2sample_types[at]],
@@ -108,7 +108,7 @@ rule phase_and_concat_nonbulk:
         "../envs/base.yaml"
     params:
         qc_dir=config["qc_dir"],
-        sample_name=sample_id,
+        sample_id=sample_id,
         assay_type=lambda wc: wc.assay_type,
         dataset_ids=lambda wc: assay2dataset_ids[wc.assay_type],
         sample_types=lambda wc: assay2sample_types[wc.assay_type],

@@ -1,31 +1,26 @@
-import os
+"""Parse Eagle/SHAPEIT genetic map files into one chr-prefixed table.
+
+Inputs
+  gmap_files: one map for all chromosomes (Eagle) or one per chromosome (SHAPEIT).
+Parameters
+  chroms: this run's chromosomes, chr-prefixed
+  phaser: eagle | shapeit
+  species: selects the sex-chromosome numbering used to relabel numeric labels
+Outputs:
+  gmap_tsv: #CHR POS cM, chr-prefixed, genomically sorted
+"""
+
 import logging
 
 snakemake_handle = snakemake
 
-t = int(getattr(snakemake_handle, "threads", 1))
-os.environ["OMP_NUM_THREADS"] = str(t)
-os.environ["OPENBLAS_NUM_THREADS"] = str(t)
-os.environ["MKL_NUM_THREADS"] = str(t)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(t)
-os.environ["NUMEXPR_NUM_THREADS"] = str(t)
+from utils import set_omp_threads, setup_logging, sort_df_chr, SPECIES2SEXCHROM
+
+set_omp_threads(snakemake_handle)
+setup_logging(snakemake_handle.log[0])
 
 import pandas as pd
 
-from utils import sort_df_chr, SPECIES2SEXCHROM
-
-##################################################
-"""
-Parse genetic map files from Shapeit or Eagle resources.
-chr-prefix will always be added to comply with other tools.
-"""
-
-log_file = snakemake_handle.log[0]
-logging.basicConfig(
-    filename=log_file,
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-)
 
 # inputs
 gmap_files = list(snakemake_handle.input["gmap_files"])

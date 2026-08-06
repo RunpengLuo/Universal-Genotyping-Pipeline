@@ -6,34 +6,39 @@ sparse (SNPs x cells) matrices plus per-cell barcode bookkeeping. Joint binning 
 the sample's assays happens downstream in combine_counts_nonbulk.
 """
 
-import os
 import logging
 
 snakemake_handle = snakemake
 
-t = int(getattr(snakemake_handle, "threads", 1))
-os.environ["OMP_NUM_THREADS"] = str(t)
-os.environ["OPENBLAS_NUM_THREADS"] = str(t)
-os.environ["MKL_NUM_THREADS"] = str(t)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(t)
-os.environ["NUMEXPR_NUM_THREADS"] = str(t)
+from utils import set_omp_threads, setup_logging, maybe_path
+
+set_omp_threads(snakemake_handle)
+setup_logging(snakemake_handle.log[0])
 
 import numpy as np
 import pandas as pd
+import scanpy as sc
 from scipy.sparse import save_npz
 
-from utils import *
-from io_utils import *
-from combine_counts_utils import *
-from count_reads_utils import *
+from const import ASSAY_TYPE2MODALITY
+from io_utils import read_VCF
+from interval_utils import assign_pos_to_range
+from combine_counts_utils import (
+    assign_snp_bounderies,
+    canon_mat_from_files,
+    merge_mats,
+)
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_alleles import plot_allele_freqs, plot_snp_depth
-from aggregation_utils import *
+from phasing_utils import apply_phase_to_mat
+from aggregation_utils import (
+    annotate_feature_type,
+    apply_exon_only_mask,
+    apply_region_blacklist_masks,
+)
 
 
 ##################################################
-log_file = snakemake_handle.log[0]
-setup_logging(log_file)
 logging.info("phase and concat allele-level count matrices")
 
 # inputs
@@ -50,7 +55,7 @@ h5ad_file = snakemake_handle.input["h5ad_file"]
 
 # parameters
 qc_dir = snakemake_handle.params["qc_dir"]
-sample_name = snakemake_handle.params["sample_name"]
+sample_id = snakemake_handle.params["sample_id"]
 assay_type = snakemake_handle.params["assay_type"]
 dataset_ids = snakemake_handle.params["dataset_ids"]
 sample_types = snakemake_handle.params["sample_types"]
@@ -71,7 +76,7 @@ is_rna_assay = ASSAY_TYPE2MODALITY[assay_type] == "RNA"
 
 ##################################################
 logging.info(
-    f"sample_name={sample_name}, assay_type={assay_type}, dataset_ids={dataset_ids}"
+    f"sample_id={sample_id}, assay_type={assay_type}, dataset_ids={dataset_ids}"
 )
 
 snps = read_VCF(snp_vcf, addkey=True, add_phase1=True, add_pos0=True)
@@ -118,8 +123,7 @@ snp_mask, regions = apply_region_blacklist_masks(
 )
 
 # feature_id (;-joined GTF genes) + feature_type, uniform across all assays
-snps, _, _ = annotate_feature_type(snps, gtf_file)
-snps.drop(columns=["gene_idx"], inplace=True, errors="ignore")
+snps = annotate_feature_type(snps, gtf_file)
 
 if is_rna_assay:
     # coverage filter only: RNA reads cover expressed genes, so drop SNPs outside
@@ -167,7 +171,7 @@ with PdfPages(af_pdf_path) as pdf:
         cell_rep_idx=cell_rep_idx,
         name_prefix="phase_and_concat",
         pdf=pdf,
-        sample_id=sample_name,
+        sample_id=sample_id,
     )
     plot_allele_freqs(
         snps,
@@ -183,7 +187,7 @@ with PdfPages(af_pdf_path) as pdf:
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         run_id=run_id,
-        sample_id=sample_name,
+        sample_id=sample_id,
         pdf=pdf,
         cell_rep_idx=cell_rep_idx,
     )
@@ -201,7 +205,7 @@ with PdfPages(af_pdf_path) as pdf:
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         run_id=run_id,
-        sample_id=sample_name,
+        sample_id=sample_id,
         pdf=pdf,
         cell_rep_idx=cell_rep_idx,
     )
@@ -230,9 +234,9 @@ np.save(unique_snp_ids, snp_ids.to_numpy())
 all_barcodes.to_csv(out_all_barcodes, sep="\t", header=False, index=False)
 barcodes_full.to_csv(out_barcodes_full, sep="\t", header=True, index=False)
 sample_df = pd.DataFrame(
-    {"SAMPLE": [f"{sample_name}_{dataset_id}" for dataset_id in dataset_ids]}
+    {"SAMPLE": [f"{sample_id}_{dataset_id}" for dataset_id in dataset_ids]}
 )
-sample_df["SAMPLE_NAME"] = sample_name
+sample_df["SAMPLE_NAME"] = sample_id
 sample_df["REP_ID"] = dataset_ids
 sample_df["sample_type"] = sample_types
 sample_df.to_csv(sample_file, sep="\t", header=True, index=False)

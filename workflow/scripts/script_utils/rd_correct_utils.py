@@ -1,13 +1,19 @@
-"""Utility functions for per-window read depth bias correction.
+"""Per-window read-depth bias correction and its GC diagnostics.
 
-Contains HMMcopy-style LOWESS correction.
+HMMcopy-style sequential LOWESS correction, a quadratic median-regression
+alternative, and the GC/RD summary statistics plotted alongside them.
 """
 
 import logging
 
 import numpy as np
+import pandas as pd
+import statsmodels.formula.api as smf
 from scipy.interpolate import interp1d
+from scipy.stats import pearsonr, spearmanr
 from statsmodels.nonparametric.smoothers_lowess import lowess
+
+from utils import sort_chroms
 
 
 def correct_readcount_lowess(
@@ -249,9 +255,6 @@ def correct_readcount_quadreg(
     float
         RMSE from the GC fit.
     """
-    import pandas as pd
-    import statsmodels.formula.api as smf
-
     reads = reads.astype(np.float64)
     n = len(reads)
 
@@ -316,3 +319,74 @@ def correct_readcount_quadreg(
     logging.info(f"    MEDIAN  {n_nan:>8d}/{n} ({n_nan / max(n, 1) * 100:5.1f}%) NaN")
 
     return corrected.astype(np.float32), rmse
+
+
+def compute_gc_rd_stats(mat, gc_vals, labels, n_gc_bins=100):
+    """Compute per-label Pearson/Spearman corr(RD, GC) and std of binned median RD.
+
+    Parameters
+    ----------
+    mat : np.ndarray
+        (n_bins, n_samples) depth matrix.
+    gc_vals : np.ndarray
+        Per-bin GC fraction (same length as mat rows).
+    labels : list[str]
+        Column labels (sample/rep IDs).
+    n_gc_bins : int
+        Number of equal-width GC bins in [0, 1].
+
+    Returns
+    -------
+    gc_corr : dict[str, tuple[float, float]]
+        {label: (pearson_r, spearman_r)}
+    gc_bin_median_std : dict[str, float]
+        {label: std of per-GC-bin median RD (A_GC)}
+    """
+    gc_bins = np.linspace(0, 1, n_gc_bins + 1)
+    gc_corr = {}
+    gc_bin_median_std = {}
+
+    for i, label in enumerate(labels):
+        v = mat[:, i] if mat.ndim == 2 else mat
+        valid = np.isfinite(v) & np.isfinite(gc_vals)
+
+        if valid.sum() > 2:
+            pr_val, _ = pearsonr(gc_vals[valid], v[valid])
+            sr_val, _ = spearmanr(gc_vals[valid], v[valid])
+            gc_corr[label] = (pr_val, sr_val)
+        else:
+            gc_corr[label] = (np.nan, np.nan)
+
+        bin_idx = np.digitize(gc_vals, gc_bins) - 1
+        bin_idx = np.clip(bin_idx, 0, n_gc_bins - 1)
+        medians = []
+        for b in range(n_gc_bins):
+            mask = (bin_idx == b) & np.isfinite(v)
+            if mask.any():
+                medians.append(np.median(v[mask]))
+        gc_bin_median_std[label] = float(np.std(medians)) if medians else np.nan
+
+    return gc_corr, gc_bin_median_std
+
+
+def compute_depth_statistics(dp_raw, win_df, sample_ids):
+    """Compute per-chromosome and whole-genome mean/median depth per sample.
+
+    Returns a DataFrame with columns: SAMPLE, #CHR, mean_depth, median_depth.
+    """
+    chroms = win_df["#CHR"].to_numpy()
+    sorted_chroms = sort_chroms(win_df["#CHR"].unique().tolist())
+    rows = []
+    for chrom in sorted_chroms:
+        mask = chroms == chrom
+        for s in range(len(sample_ids)):
+            vals = dp_raw[mask, s]
+            rows.append(
+                [sample_ids[s], chrom, float(np.mean(vals)), float(np.median(vals))]
+            )
+    for s in range(len(sample_ids)):
+        vals = dp_raw[:, s]
+        rows.append(
+            [sample_ids[s], "TOTAL", float(np.mean(vals)), float(np.median(vals))]
+        )
+    return pd.DataFrame(rows, columns=["SAMPLE", "#CHR", "mean_depth", "median_depth"])
