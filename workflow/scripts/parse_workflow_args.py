@@ -4,12 +4,6 @@
 Runpeng Luo
 Last update: 2026-08-06
 
-``parse_workflow(config)`` is the only entry point the Snakefile calls; it returns
-every name the rules read, and inlines the whole flow as ``# ===`` blocks. Three
-module-level helpers are shared: ``parse_sample_file_json`` / ``parse_sample_file_tsv``
-(dispatched on the sample-file extension, both emitting the same record schema) and
-``validate_records`` (reused by resources/scripts/validate_sample_file.py).
-
 Dependencies:
   const.py (sample-file schema, 10x layout) and script_utils (get_chr_sizes,
   strip_chr_prefix), both placed on sys.path by the Snakefile.
@@ -337,7 +331,6 @@ def parse_workflow(config):
     Raises:
         ValueError: The mode, assay types, sample file, or phaser is invalid.
     """
-    path = config["sample_file"]
 
     def select_datasets(records, dataset_ids, config_key):
         """Records named by a config dataset_id list, in that order."""
@@ -353,13 +346,14 @@ def parse_workflow(config):
         return [by_id[d] for d in dataset_ids]
 
     # === workflow mode + sample_id ===
+    sample_file = config["sample_file"]
     workflow_mode = config["workflow_mode"]
     if workflow_mode not in WORKFLOW_MODES:
         raise ValueError(f"workflow_mode must be one of {list(WORKFLOW_MODES)}")
     sample_id = config["sample_id"]
 
     # === remote input mode: whole-file storage() download vs direct URL streaming ===
-    remote_mode = config.get("remote_mode", "storage")
+    remote_mode = config["remote_mode"]
     if remote_mode not in ("storage", "stream"):
         raise ValueError(
             f"remote_mode must be 'storage' or 'stream', got {remote_mode!r}"
@@ -383,18 +377,20 @@ def parse_workflow(config):
     configured = [a for a in configured if a in allowed]
 
     # === load the sample file (json or legacy tsv) ===
-    ext = os.path.splitext(path)[1].lower()
+    ext = os.path.splitext(sample_file)[1].lower()
     if ext == ".json":
-        records = parse_sample_file_json(path)
+        records = parse_sample_file_json(sample_file)
     elif ext in (".tsv", ".txt"):
-        records = parse_sample_file_tsv(path)
+        records = parse_sample_file_tsv(sample_file)
     else:
-        raise ValueError(f"{path}: sample file must be .json or .tsv, got {ext!r}")
+        raise ValueError(
+            f"{sample_file}: sample file must be .json or .tsv, got {ext!r}"
+        )
 
-    require_record_keys(records, path)
+    require_record_keys(records, sample_file)
 
     # === chromosomes: must exist in genome_size ===
-    genome_size = config.get("genome_size")
+    genome_size = config["genome_size"]
     if not genome_size:
         raise ValueError("genome_size is required (two-column chrom<TAB>size file)")
     by_core = {}
@@ -415,7 +411,7 @@ def parse_workflow(config):
     logging_snakemake(f"chromosomes: {chroms[:3]}... input_nochr={input_nochr}")
 
     # === species ===
-    species = config.get("species")
+    species = config["species"]
     if not species:
         raise ValueError(f"species is required in the config; one of {list(SPECIES)}")
     if species not in SPECIES:
@@ -424,7 +420,7 @@ def parse_workflow(config):
         )
 
     # === reference version: canonicalize, then filter ===
-    raw_refver = config.get("reference_version")
+    raw_refver = config["reference_version"]
     if not raw_refver:
         raise ValueError(
             f"reference_version is required in the config; one of {REFVERS} "
@@ -453,7 +449,7 @@ def parse_workflow(config):
 
     # === validate against the spec + selection rules (mutates files in place) ===
     validate_records(
-        records, path, workflow_mode, sample_id, configured, reference_version
+        records, sample_file, workflow_mode, sample_id, configured, reference_version
     )
 
     # === select this run's records + add modality ===
@@ -463,7 +459,7 @@ def parse_workflow(config):
     ]
 
     # === RDR normalization policy: drop/keep each bulk tumor's rdr_base ===
-    rdr_normalization = config["params_combine_counts"].get("rdr_normalization", "auto")
+    rdr_normalization = config["params_combine_counts"]["rdr_normalization"]
     if rdr_normalization not in RDR_NORMALIZATIONS:
         raise ValueError(
             f"params_combine_counts.rdr_normalization must be one of "
@@ -505,18 +501,18 @@ def parse_workflow(config):
 
     # === copytyping_preprocess requirements ===
     if workflow_mode == "copytyping_preprocess":
-        assert config.get("het_snp_vcf") is not None, (
+        assert config["het_snp_vcf"] is not None, (
             "het_snp_vcf is required for copytyping_preprocess"
         )
-        assert config.get("het_snp_vcf_phased", True), (
+        assert config["het_snp_vcf_phased"], (
             "het_snp_vcf must be phased for copytyping_preprocess"
         )
-        assert config.get("bb_file") is not None, (
+        assert config["bb_file"] is not None, (
             "bb_file is required for copytyping_preprocess"
         )
 
     # === gtf_file is a required reference input (gene/exon annotation) ===
-    if not config.get("gtf_file"):
+    if not config["gtf_file"]:
         raise ValueError(
             "gtf_file is required (gene/exon annotation GTF); set it in the config"
         )
@@ -536,11 +532,10 @@ def parse_workflow(config):
     has_breakpoints = len(bedpe_files) > 0
     is_bulk = workflow_mode == "bulk_genotyping"
     do_repliseq = reference_version in REPLISEQ_REFVERS
-    pp = config.get("params_build_windows") or {}
-    window_size = int(pp.get("window_size") or 1000)
+    window_size = int(config["params_build_windows"]["window_size"])
 
     # skip window build if pre-built window bed is provided & no breakpoints
-    window_bed = config.get("window_bed")
+    window_bed = config["window_bed"]
     if window_bed is not None and not is_url(window_bed):
         assert os.path.exists(window_bed), f"window_bed does not exist: {window_bed}"
     use_prebuilt_windows = is_bulk and window_bed is not None and not has_breakpoints
@@ -560,25 +555,25 @@ def parse_workflow(config):
         )
 
     # === genotyping / phasing switches (a het_snp_vcf short-circuits the front) ===
-    het_snp_vcf = config.get("het_snp_vcf")
+    het_snp_vcf = config["het_snp_vcf"]
     run_genotyping = het_snp_vcf is None
     run_phasing = True
     phased_snp_vcf = config["phase_dir"] + "/phased_het_snps.vcf.gz"
     if het_snp_vcf is not None:
         assert os.path.exists(het_snp_vcf), f"het_snp_vcf does not exist: {het_snp_vcf}"
-        # default het_snp_vcf_phased=true -> the VCF is taken as phased, phasing skipped
-        run_phasing = not bool(config.get("het_snp_vcf_phased", True))
+        # het_snp_vcf_phased=true -> the VCF is taken as phased, phasing skipped
+        run_phasing = not bool(config["het_snp_vcf_phased"])
         if not run_phasing:
             phased_snp_vcf = het_snp_vcf
 
     # === phaser reference inputs (genotype + phase record selection) ===
-    phaser = config.get("phaser", "undefined")
+    phaser = config["phaser"]
     genotype_files = None
     phase_files = None
     get_genetic_map = None
     get_phasing_panel = None
     if run_genotyping:
-        named = config.get("genotype_dataset_ids") or []
+        named = config["genotype_dataset_ids"]
         if named:
             chosen = select_datasets(records, named, "genotype_dataset_ids")
             non_normal = [
@@ -607,7 +602,7 @@ def parse_workflow(config):
         genotype_files = [r["files"] for r in chosen]
     if run_phasing:
         if phaser in PANEL_PHASER:
-            gmap_path = config.get("gmap_path")
+            gmap_path = config["gmap_path"]
             assert gmap_path, f"gmap_path required for {phaser}"
             get_genetic_map = get_genetic_map_path(gmap_path)
             missing_gmaps = [
@@ -633,7 +628,7 @@ def parse_workflow(config):
                 f"failed to locate panel files: {missing_panels[:3]}"
             )
         elif phaser in LONGREAD_PHASER:
-            named = config.get("phase_dataset_ids") or []
+            named = config["phase_dataset_ids"]
             if named:
                 chosen = select_datasets(records, named, "phase_dataset_ids")
                 short = [
@@ -688,7 +683,7 @@ def parse_workflow(config):
         final_targets = [
             f"{bb_dir}/MSR{m}/bulk/{f}" for m in msr_list for f in BULK_TARGETS
         ]
-        qc_genotype = config.get("qc_genotype_snps", True)
+        qc_genotype = config["qc_genotype_snps"]
         if isinstance(qc_genotype, str):  # --config passes bools as strings
             qc_genotype = qc_genotype.strip().lower() in ("true", "1", "yes")
         if run_genotyping and qc_genotype:
