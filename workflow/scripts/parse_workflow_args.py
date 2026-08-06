@@ -415,8 +415,10 @@ def parse_workflow(config):
     input_nochr = not by_core[wanted[0]].lower().startswith("chr")
     print(f"chromosomes: {chroms[:3]}... input_nochr={input_nochr}")
 
-    # === species: sex-chromosome numbering ===
+    # === species ===
     species = config.get("species")
+    if not species:
+        raise ValueError(f"species is required in the config; one of {list(SPECIES)}")
     if species not in SPECIES:
         print(
             f"WARNING: species={species!r} is not natively supported ({list(SPECIES)})."

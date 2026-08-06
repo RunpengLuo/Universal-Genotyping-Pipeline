@@ -33,7 +33,7 @@ from utils import (
     is_canonical_chrom,
     maybe_path,
     setup_logging,
-    require_matching_chr_style,
+    match_chr_style,
     sort_df_chr,
     strip_chr_prefix,
 )
@@ -58,6 +58,12 @@ def _tile_region(chrom, start, end, window_size):
         rows[-2][2] = rows[-1][2]
         rows.pop()
     return rows
+
+
+def _to_genome_style(feature):
+    """Rename one pybedtools interval to the genome's naming."""
+    feature.chrom = match_chr_style(feature.chrom, input_nochr)
+    return feature
 
 
 def generate_wgs_windows(window_size, chroms, regions):
@@ -135,11 +141,13 @@ logging.info("annotated GC")
 mappability_bed = maybe_path(inp["mappability_bed"])
 if mappability_bed:
     n_windows = len(windows)
-    require_matching_chr_style(mappability_bed, input_nochr, "mappability_bed")
     win_bed = bed_windows.copy()
     win_bed["_idx"] = np.arange(n_windows)
     wb = BedTool.from_dataframe(win_bed).sort(g=genome_size)
-    map_bt = BedTool(mappability_bed).sort(g=genome_size)
+    # streams; bedtools resolves both operands against genome_size
+    map_bt = (
+        BedTool(mappability_bed).each(_to_genome_style).saveas().sort(g=genome_size)
+    )
     map_cov = pd.read_csv(
         wb.map(b=map_bt, c=4, o="mean", g=genome_size).fn,
         sep="\t",

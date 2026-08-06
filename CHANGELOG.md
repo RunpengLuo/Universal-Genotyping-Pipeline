@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through it.
 - `validate_sample_file.py --reference-version`; without it, every genome build in the file
   is validated on its own.
-- `species` config key (`human` | `mouse`, default `human`). Sex-chromosome numbering is a
+- `species` config key (required; `human` | `mouse`, shipped as `human`). An unset value is
+  an error, an unrecognized one warns and is used verbatim. Sex-chromosome numbering is a
   property of the species, not of the reference version.
 - Support for references that name contigs without a `chr` prefix (Ensembl, b37). The style
   is read from `genome_size`; region strings, `windows.3col.bed.gz`, the pybedtools
@@ -54,8 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bare-contig genome every window was dropped as off-segment.
 - `rd_correct` (prebuilt `window_bed`, mosdepth output) and `atac_fragments_to_bb`
   (10x fragment files) now normalize contig names on read.
-- `mappability_bed` is checked against `genome_size`; bedtools resolves both against it, so
-  a mismatch failed silently or with an opaque error.
+- `mappability_bed` intervals are renamed to the genome's convention before bedtools sees
+  them, streamed per interval; previously a mismatch failed silently or with an opaque error.
+- `gtf_file` contig names were passed through verbatim and joined against chr-normalized
+  SNPs, so an Ensembl GTF annotated every SNP as `intergenic` with no warning and
+  `gene_aware_binning` quietly degraded.
 - A `files` entry set to `null` in a JSON sample file became the literal path `"None"` and
   failed DAG building; the key is now dropped, matching an empty TSV cell.
 - A record missing a required key raised a bare `KeyError` from

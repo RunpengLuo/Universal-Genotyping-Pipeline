@@ -83,32 +83,22 @@ def test_add_chr_prefix(names, want):
 
 
 @pytest.mark.parametrize(
-    "first_line,input_nochr,ok",
+    "name,input_nochr,want",
     [
-        ("chr22\t0\t100\t0.9\n", False, True),
-        ("22\t0\t100\t0.9\n", True, True),
-        ("chr22\t0\t100\t0.9\n", True, False),
-        ("22\t0\t100\t0.9\n", False, False),
+        ("22", False, "chr22"),
+        ("chr22", False, "chr22"),
+        ("22", True, "22"),
+        ("chr22", True, "22"),
+        ("chrX", True, "X"),
     ],
 )
-def test_require_matching_chr_style(tmp_path, first_line, input_nochr, ok):
-    """A BED bedtools resolves against genome_size must use its naming."""
-    bed = tmp_path / "x.bed"
-    bed.write_text("track name=x\n" + first_line)
-    if ok:
-        utils.require_matching_chr_style(str(bed), input_nochr, "mappability_bed")
-    else:
-        with pytest.raises(ValueError, match="chr prefix"):
-            utils.require_matching_chr_style(str(bed), input_nochr, "mappability_bed")
+def test_match_chr_style(name, input_nochr, want):
+    """Intervals handed to bedtools take the naming genome_size declares."""
+    assert utils.match_chr_style(name, input_nochr) == want
 
 
-def test_require_matching_chr_style_reads_gzip(tmp_path):
-    """Mappability tracks ship gzipped."""
-    import gzip
-
-    bed = tmp_path / "x.bed.gz"
-    with gzip.open(bed, "wt") as fh:
-        fh.write("22\t0\t100\t0.9\n")
-    utils.require_matching_chr_style(str(bed), True, "mappability_bed")
-    with pytest.raises(ValueError):
-        utils.require_matching_chr_style(str(bed), False, "mappability_bed")
+def test_add_chr_prefix_is_per_row():
+    """A GTF can start on a scaffold, so the decision cannot be made per file."""
+    pd = pytest.importorskip("pandas")
+    got = utils.add_chr_prefix(pd.Series(["GL000009.2", "chr1", "2"]))
+    assert got.tolist() == ["chrGL000009.2", "chr1", "chr2"]

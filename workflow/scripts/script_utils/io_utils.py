@@ -304,7 +304,7 @@ def _read_gtf(gtf_file: str, feature_type: str) -> pd.DataFrame:
     gene_ids = gtf["attributes"].str.extract(r'gene_id "([^"]+)"', expand=False)
     return pd.DataFrame(
         {
-            "#CHR": gtf["seqname"].values,
+            "#CHR": add_chr_prefix(gtf["seqname"]).values,
             "START": gtf["start"].values - 1,  # GTF is 1-based → 0-based
             "END": gtf["end"].values,  # GTF end is inclusive → half-open
             "gene_id": gene_ids.values,

@@ -1,4 +1,3 @@
-import gzip
 import os
 import sys
 import logging
@@ -43,34 +42,15 @@ def strip_chr_prefix(name):
 
 
 def add_chr_prefix(series):
-    """Prepend ``chr`` to a chromosome Series that lacks it."""
+    """Prepend ``chr`` to every chromosome of a Series that lacks it."""
     series = series.astype(str)
-    if len(series) and series.iloc[0].lower().startswith("chr"):
-        return series
-    return "chr" + series
+    return series.where(series.str.lower().str.startswith("chr"), "chr" + series)
 
 
-def require_matching_chr_style(bed_file, input_nochr, key):
-    """Raise unless a BED names contigs the way genome_size does."""
-    opener = gzip.open if str(bed_file).endswith(".gz") else open
-    with opener(bed_file, "rt") as fh:
-        first = next(
-            (
-                ln
-                for ln in fh
-                if ln.strip() and not ln.startswith(("#", "track", "browser"))
-            ),
-            "",
-        )
-    if not first:
-        return
-    bed_nochr = not first.split()[0].lower().startswith("chr")
-    if bed_nochr != input_nochr:
-        raise ValueError(
-            f"{key} names contigs {'without' if bed_nochr else 'with'} a chr prefix "
-            f"({first.split()[0]!r}), but genome_size uses the other style; "
-            "bedtools resolves both against genome_size, so they must agree"
-        )
+def match_chr_style(name, input_nochr):
+    """Rename one contig to the convention ``genome_size`` declares."""
+    core = strip_chr_prefix(name)
+    return core if input_nochr else f"chr{core}"
 
 
 def chrom_sort_key(chrom):

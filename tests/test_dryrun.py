@@ -334,8 +334,22 @@ def test_chromosome_absent_from_genome_size_fails(workspace):
     assert "have no contig in" in out and "'99'" in out
 
 
-def test_species_defaults_and_reaches_parse_genetic_map(workspace):
-    """species is human by default and is what parse_genetic_map is given."""
+def test_config_species_required(workspace):
+    """An unset config species is an error, not a silent fallback to human."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_json"],
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=["species="],
+    )
+    assert proc.returncode != 0
+    assert "species is required" in proc.stdout + proc.stderr
+
+
+def test_species_reaches_parse_genetic_map(workspace):
+    """The shipped config says human, and that is what parse_genetic_map is given."""
     proc = dryrun(
         workspace, workspace["bulk_json"], "T1", "bulk_genotyping", ["bulkWGS"]
     )

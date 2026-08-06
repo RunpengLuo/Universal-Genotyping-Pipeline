@@ -51,13 +51,14 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 | `sample_file` | Yes | Path to `samples.json`. |
 | `chromosomes` | Yes | Chromosomes to run; default `[1..22]`. |
 | `remote_mode` | Optional | Remote input handling: `storage` (default; download whole file via Snakemake storage) or `stream` (read URLs directly, fetching only `chromosomes`). |
+| `species` | Yes | `human` (default) or `mouse`. |
 | `reference_version` | Yes | Reference version to select samples. See [Reference version](sample_sheet.md#reference-version). |
 | `reference` | Yes | Genome FASTA. |
-| `genome_size` | Yes | Two-column `chrom\tsize` file. |
+| `genome_size` | Yes | Two-column `chrom\tsize` genome size file. |
 | `region_bed` | Yes | Whitelist regions, arm-level (4th column = chromosome-arm `region_id`). Stays arm-level; for bulk `build_segment_bed` derives `aux/segment.bed` (region_id + seg_id) from it, and the bulk rules read that. |
-| `window_bed` | Optional (bulk) | Pre-built window BED (`#CHR START END region_id seg_id GC [MAP] [REPLI]`); pre-built at `resources/data/windows.1kbp.{hg19,hg38,chm13v2}.bed.gz`. When set (and no `breakpoint_bedpe`), `build_window_bed` is skipped entirely and the file is read directly by every bulk assay (`rd_correct` filters it to `chromosomes`, so a genome-wide file is fine). A `breakpoint_bedpe` re-tiles the arms, so `window_bed` is ignored and windows are built. A pre-built file is just `build_window_bed`'s genome-wide, no-BEDPE output (`seg_id == {region_id}#0`). |
+| `window_bed` | Optional | Pre-built window BED (`#CHR START END region_id seg_id GC [MAP] [REPLI]`); [pre-built](`resources/data/windows.1kbp.{hg19,hg38,chm13v2}.bed.gz`). override by workflow if `breakpoint_bedpe` is provided. |
 | `gtf_file` | Yes | Gene annotation GTF (gzipped). |
-| `mappability_bed` | Optional | BED mappability track (4th column = score); adds a `MAP` column to the built window BEDs. |
+| `mappability_bed` | Optional | BED mappability track (4th column = score). |
 | `blacklist_bed` | Optional | ENCODE-style blacklist; pre-built at `resources/data/hg38-blacklist.v2.bed.gz`. |
 | `gene_blacklist_file` | Optional | Genes to exclude from AnnData (single-cell). |
 | `snp_panel` | Genotyping | Population SNP VCF. |
@@ -71,6 +72,8 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 | `het_snp_vcf_phased` | Optional | Default `true`: the VCF is taken as phased, so phasing is skipped too. `false` phases it. Read only with `het_snp_vcf`. |
 | `bb_file` | copytyping_preprocess | Pre-computed BB block annotations TSV. |
 | `qc_genotype_snps` | Optional (bulk) | Default `true`: when genotyping runs, render `qc/genotype_snp_qc.pdf` (het vs hom-alt ref-AF diagnostic from the genotyped VCF). `false` skips it. |
+
+> [!NOTE] `genome_size` defines the chromosome names of `reference` and input alignments files. Internally, the workflow detects the chr-notation of input data and normalize the final output files with chr-prefix notation.
 
 ### Parameters
 
