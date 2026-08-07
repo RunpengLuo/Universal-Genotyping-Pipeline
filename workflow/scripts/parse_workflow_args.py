@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
-"""Parse and validate everything workflow/Snakefile needs before the DAG is built.
+"""Parse and validate Snakemake workflow configfile and sample sheet
 
 Runpeng Luo
-Last update: 2026-08-06
-
-Dependencies:
-  const.py (sample-file schema, 10x layout) and script_utils (get_chr_sizes,
-  strip_chr_prefix), both placed on sys.path by the Snakefile.
+Last update: 2026-08-07
 
 Inputs
-  config: the Snakemake config dict (keys: docs/reference.md)
-  sample file: JSON or TSV encoding (docs/sample_sheet.md)
+  config: the Snakemake configfile
+  sample file: JSON or TSV encoding
 Outputs:
-  parse_workflow -> dict of workflow globals (keys listed in its docstring)
-Notes/References:
-  Sample-file schema, remote inputs, validation rules: docs/sample_sheet.md
-  Config keys and output layout: docs/reference.md
+  parse_workflow -> dict of workflow globals
+References:
+  * docs/reference.md
+  * docs/sample_sheet.md
 """
 
 import csv
@@ -50,7 +46,7 @@ from const import (
     get_phasing_panel_path,
     is_url,
 )
-from io_utils import get_chr_sizes
+from io_utils import read_chrom_sizes
 from utils import logging_snakemake, strip_chr_prefix
 
 
@@ -244,7 +240,6 @@ def parse_workflow(config):
     sample_id = config["sample_id"]
     sample_file = config["sample_file"]
     records = read_sample_sheet(sample_file)
-    dataset_ids = {r["dataset_id"]: r for r in records}
 
     # === reference version ===
     raw_refver = config["reference_version"]
@@ -259,6 +254,7 @@ def parse_workflow(config):
         )
 
     records = parse_records(records, sample_id, reference_version, config_assay_types)
+    dataset_ids = {r["dataset_id"]: r for r in records}
     assay_types = list(dict.fromkeys(rec["assay_type"] for rec in records))
 
     # === chromosomes ===
@@ -268,7 +264,7 @@ def parse_workflow(config):
     genome_size = config["genome_size"]
     assert genome_size, "genome_size is required (two-column chrom<TAB>size file)"
     ref_chroms_nochr = {}
-    for name in get_chr_sizes(genome_size):
+    for name in read_chrom_sizes(genome_size):
         ref_chroms_nochr.setdefault(strip_chr_prefix(name), name)
 
     absent_chroms = [c for c in config_chroms_nochr if c not in ref_chroms_nochr]
@@ -280,7 +276,7 @@ def parse_workflow(config):
 
     first_chrom = ref_chroms_nochr[config_chroms_nochr[0]]
     input_nochr = not first_chrom.lower().startswith("chr")
-    logging_snakemake(f"input with chr-prefix={input_nochr}")
+    logging_snakemake(f"input has chr-prefix={not input_nochr}")
 
     # === remote input mode: whole-file storage() download vs direct URL streaming ===
     remote_mode = config["remote_mode"]
@@ -416,12 +412,13 @@ def parse_workflow(config):
 
     phaser = config["phaser"]
     phase_files = None
+    require_genetic_map = False
     get_genetic_map = None
     get_phasing_panel = None
     if run_phasing:
         assert phaser in PANEL_PHASER | LONGREAD_PHASER, f"unknown phaser: {phaser}"
-
         if phaser in PANEL_PHASER:
+            require_genetic_map = True
             gmap_path = config["gmap_path"]
             assert gmap_path, f"gmap_path is required for {phaser}"
             get_genetic_map = get_genetic_map_path(gmap_path)
@@ -509,10 +506,11 @@ def parse_workflow(config):
                 )
 
     # === min_snp_reads sweep (one MSR{msr}/ subdir per value) ===
-    msr = config["params_combine_counts"]["min_snp_reads"]
-    msr_list = [int(m) for m in (msr if isinstance(msr, list) else [msr])]
+    msr_raw = config["params_combine_counts"]["min_snp_reads"]
+    msr_list = [int(m) for m in (msr_raw if isinstance(msr_raw, list) else [msr_raw])]
 
-    # === per-assay lookups the rules consume (bulk ordered normal-first) ===
+    # === Snakemake rule's lookup tables ===
+    modalities = list(dict.fromkeys(rec["modality"] for rec in records))
     modality2files = {}
     for rec in records:
         modality2files.setdefault(rec["modality"], []).append(rec["files"])
@@ -522,14 +520,14 @@ def parse_workflow(config):
     assay2dataset_ids, assay2sample_types, assay2base_reps = {}, {}, {}
     for assay_type in ALLOWED_ASSAY_TYPES:
         rows = by_assay.get(assay_type, [])
-        if assay_type in BULK_ASSAYS:
-            rows = sorted(rows, key=lambda r: r["sample_type"] != "normal")
-        assay2dataset_ids[assay_type] = [r["dataset_id"] for r in rows]
-        assay2sample_types[assay_type] = [r["sample_type"] for r in rows]
-        assay2base_reps[assay_type] = [r.get("rdr_base_dataset_id", "") for r in rows]
-    get_data = {(r["assay_type"], r["dataset_id"]): r["files"] for r in records}
+        assay2dataset_ids[assay_type] = [rec["dataset_id"] for rec in rows]
+        assay2sample_types[assay_type] = [rec["sample_type"] for rec in rows]
+        assay2base_reps[assay_type] = [
+            rec.get("rdr_base_dataset_id", "") for rec in rows
+        ]
+    get_data = {(rec["assay_type"], rec["dataset_id"]): rec["files"] for rec in records}
 
-    # === final targets `rule all` requests for this mode ===
+    # === final targets  ===
     bb_dir = config["bb_dir"]
     if workflow_mode == "bulk_genotyping":
         final_targets = [
@@ -562,14 +560,14 @@ def parse_workflow(config):
         "chroms": chroms,
         "input_nochr": input_nochr,
         "assay_types": assay_types,
-        "modalities": list(dict.fromkeys(r["modality"] for r in records)),
+        "modalities": modalities,
         "msr_list": msr_list,
         "phaser": phaser,
         "run_genotyping": run_genotyping,
         "run_phasing": run_phasing,
         "het_snp_vcf": het_snp_vcf,
         "phased_snp_vcf": phased_snp_vcf,
-        "require_genetic_map": run_phasing and phaser in PANEL_PHASER,
+        "require_genetic_map": require_genetic_map,
         "final_targets": final_targets,
         "get_data": get_data,
         "modality2files": modality2files,

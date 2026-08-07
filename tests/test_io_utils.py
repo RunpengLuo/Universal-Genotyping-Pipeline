@@ -4,7 +4,7 @@
 Runpeng Luo
 Last update: 2026-08-06
 
-parse_workflow inlines the resolution itself from get_chr_sizes and
+parse_workflow inlines the resolution itself from read_chrom_sizes and
 strip_chr_prefix; its behaviour is covered end to end by tests/test_chrstyle.py
 and the absent-chromosome case in tests/test_dryrun.py.
 
@@ -46,7 +46,7 @@ def test_get_chr_sizes_keeps_file_names_and_order(tmp_path):
     """Names come back as the file spells them, in file order."""
     path = tmp_path / "genome_size.txt"
     path.write_text("chr2\t20\nchr1\t10\nchrX\t5\n")
-    sizes = io_utils.get_chr_sizes(str(path))
+    sizes = io_utils.read_chrom_sizes(str(path))
     assert list(sizes) == ["chr2", "chr1", "chrX"]
     assert sizes["chr1"] == 10
 
@@ -55,15 +55,15 @@ def test_bare_contig_size_file(tmp_path):
     """An Ensembl-style file has no chr prefix; the cores still match."""
     path = tmp_path / "genome_size.txt"
     path.write_text("1\t10\n2\t20\nX\t5\n")
-    sizes = io_utils.get_chr_sizes(str(path))
+    sizes = io_utils.read_chrom_sizes(str(path))
     assert list(sizes) == ["1", "2", "X"]
     assert [utils.strip_chr_prefix(c) for c in sizes] == ["1", "2", "X"]
 
 
 def test_bundled_size_files_cover_their_chromosomes():
     """The shipped size files hold the chromosome set each genome has."""
-    hg38 = io_utils.get_chr_sizes(HG38)
-    mm10 = io_utils.get_chr_sizes(MM10)
+    hg38 = io_utils.read_chrom_sizes(HG38)
+    mm10 = io_utils.read_chrom_sizes(MM10)
     assert {f"chr{c}" for c in list(range(1, 23)) + ["X", "Y"]} <= set(hg38)
     assert {f"chr{c}" for c in list(range(1, 20)) + ["X", "Y"]} <= set(mm10)
     assert "chr20" not in mm10

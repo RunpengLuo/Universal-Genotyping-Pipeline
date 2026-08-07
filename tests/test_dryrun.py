@@ -332,7 +332,7 @@ def test_chromosome_absent_from_genome_size_fails(workspace):
     )
     assert proc.returncode != 0
     out = proc.stdout + proc.stderr
-    assert "have no contig in" in out and "'99'" in out
+    assert "are not found in" in out and "'99'" in out
 
 
 def test_config_species_required(workspace):
@@ -410,13 +410,12 @@ def test_record_reference_version_alias_matches(workspace):
 
 
 def test_records_of_another_build_are_dropped(workspace):
-    """A record on a different build is not selected, and the error names the build."""
+    """A record on a different build is not selected, leaving nothing to run."""
     sheet = _sheet_with_refvers(workspace, "otherbuild.json", ["hg19", "hg19"])
     proc = dryrun(workspace, sheet, "T1", "bulk_genotyping", ["bulkWGS"])
     assert proc.returncode != 0
     out = proc.stdout + proc.stderr
-    assert "no datasets match config's reference version" in out
-    assert "chm13v2" in out
+    assert "no datasets exist after selection" in out
 
 
 def test_unrecognized_reference_version_still_selects(workspace):
@@ -442,7 +441,7 @@ def test_unknown_sample_id_fails(workspace):
         workspace, workspace["bulk_json"], "nope", "bulk_genotyping", ["bulkWGS"]
     )
     assert proc.returncode != 0
-    assert "no datasets have sample_id" in proc.stdout + proc.stderr
+    assert "no datasets exist after selection" in proc.stdout + proc.stderr
 
 
 @pytest.mark.parametrize("mode", ["bulk_genotyping", "single_cell_genotyping"])
@@ -511,3 +510,124 @@ def test_copytyping_requires_phased_vcf(workspace):
     )
     assert proc.returncode != 0
     assert "het_snp_vcf must be phased" in proc.stdout + proc.stderr
+
+
+def _longread_sheet(workspace, name):
+    """Bulk sheet with a short-read normal, a long-read normal and a long-read tumor."""
+    ref = workspace["ref"]
+
+    def files(stem):
+        return {
+            "alignment": f"{ref}/{stem}.bam",
+            "alignment_index": f"{ref}/{stem}.bam.bai",
+        }
+
+    doc = {
+        "version": 1,
+        "samples": [
+            {
+                "sample_id": "T1",
+                "dataset_id": "N1",
+                "assay_type": "bulkWGS",
+                "sample_type": "normal",
+                "reference_version": "chm13v2",
+                "files": files("normal"),
+            },
+            {
+                "sample_id": "T1",
+                "dataset_id": "L1",
+                "assay_type": "bulkWGS-lr",
+                "sample_type": "normal",
+                "reference_version": "chm13v2",
+                "files": files("normal"),
+            },
+            {
+                "sample_id": "T1",
+                "dataset_id": "D1",
+                "assay_type": "bulkWGS-lr",
+                "sample_type": "tumor",
+                "reference_version": "chm13v2",
+                "files": files("tumor"),
+            },
+        ],
+    }
+    sheet = os.path.join(workspace["root"], name)
+    with open(sheet, "w") as fh:
+        json.dump(doc, fh)
+    return sheet
+
+
+def test_longphase_auto_picks_the_long_read_normal(workspace):
+    """phaser=longphase with no phase_dataset_ids co-phases the long-read normal."""
+    sheet = _longread_sheet(workspace, "longread.json")
+    proc = dryrun(
+        workspace,
+        sheet,
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS", "bulkWGS-lr"],
+        extra=["phaser=longphase"],
+    )
+    assert proc.returncode == 0, proc.stderr[-1500:]
+    assert "phase_dataset_ids: ['L1']" in proc.stdout
+    counts = job_counts(proc.stdout)
+    assert "phase_snps_longphase" in counts
+    assert "phase_snps_eagle" not in counts and "parse_genetic_map" not in counts
+
+
+def test_phase_dataset_ids_must_be_long_read(workspace):
+    """A short-read dataset named in phase_dataset_ids is rejected, not silently kept."""
+    sheet = _longread_sheet(workspace, "longread_shortread.json")
+    proc = dryrun(
+        workspace,
+        sheet,
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS", "bulkWGS-lr"],
+        extra=["phaser=longphase", 'phase_dataset_ids=["N1"]'],
+    )
+    assert proc.returncode != 0
+    assert "needs long reads" in proc.stdout + proc.stderr
+
+
+def test_phase_dataset_ids_outside_selection_fails(workspace):
+    """An id in the sheet but dropped by assay_types is an error, not an auto-pick."""
+    sheet = _longread_sheet(workspace, "longread_selection.json")
+    proc = dryrun(
+        workspace,
+        sheet,
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS-lr"],
+        extra=["phaser=longphase", 'phase_dataset_ids=["N1"]'],
+    )
+    assert proc.returncode != 0
+    assert "phase_dataset_ids not found in the records" in proc.stdout + proc.stderr
+
+
+def test_genotype_dataset_ids_outside_selection_fails(workspace):
+    """bulkWES E1 is in the sheet but dropped by assay_types, so naming it fails."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_mixed_json"],
+        "MX",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=['genotype_dataset_ids=["E1"]'],
+    )
+    assert proc.returncode != 0
+    assert "genotype_dataset_ids not found in the records" in proc.stdout + proc.stderr
+
+
+def test_genotype_dataset_ids_in_selection_is_used(workspace):
+    """The same id check accepts a dataset the selection kept."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_mixed_json"],
+        "MX",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=['genotype_dataset_ids=["N1"]'],
+    )
+    assert proc.returncode == 0, proc.stderr[-1500:]
+    assert "genotype_dataset_ids: ['N1']" in proc.stdout

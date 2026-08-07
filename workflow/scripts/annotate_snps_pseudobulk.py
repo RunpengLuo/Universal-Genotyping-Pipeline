@@ -24,7 +24,7 @@ setup_logging(snakemake_handle.log[0])
 import numpy as np
 import pandas as pd
 
-from io_utils import read_VCF, get_chr_sizes
+from io_utils import read_VCF, read_chrom_sizes
 
 
 # inputs
@@ -148,7 +148,7 @@ base_snps["is_hom_ref"] = (base_snps["AD"] == 0) & (base_snps["DP"] >= min_hom_d
 base_snps["SAMPLE"] = base_snps.apply(get_genotype, axis=1)
 
 chrom_sizes = {
-    f"chr{strip_chr_prefix(k)}": v for k, v in get_chr_sizes(genome_size).items()
+    f"chr{strip_chr_prefix(k)}": v for k, v in read_chrom_sizes(genome_size).items()
 }
 
 keep_gts = ["0/1"]

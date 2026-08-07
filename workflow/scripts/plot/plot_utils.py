@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 from cnplot import GenomeAxis, read_bed, shade_regions
 
 from const import GT_ASSAY_ORD
-from io_utils import get_chr_sizes
+from io_utils import read_chrom_sizes
 
 
 # Full names for value-type abbreviations, used in figure titles only (ylabels keep
@@ -54,7 +54,7 @@ def _get_axis(genome_size, chroms):
     axis = _AXIS_CACHE.get(key)
     if axis is None:
         keep = set(chroms)
-        excluded = [c for c in get_chr_sizes(genome_size) if c not in keep]
+        excluded = [c for c in read_chrom_sizes(genome_size) if c not in keep]
         axis = GenomeAxis(
             None, genome_size, excluded_chroms=excluded, collapse_gaps=False
         )

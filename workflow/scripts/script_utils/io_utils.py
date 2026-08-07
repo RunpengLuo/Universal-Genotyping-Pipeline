@@ -7,7 +7,7 @@ from const import GTF_COLUMNS
 from utils import add_chr_prefix, sort_chroms, sort_df_chr
 
 
-def get_chr_sizes(sz_file: str):
+def read_chrom_sizes(sz_file: str):
     """Read a two-column chromosome-sizes file and return an OrderedDict mapping name to length.
 
     Parameters
