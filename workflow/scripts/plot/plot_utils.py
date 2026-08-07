@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 
 from cnplot import GenomeAxis, read_bed, shade_regions
 
+from const import GT_ASSAY_ORD
 from io_utils import get_chr_sizes
 
 
@@ -139,9 +140,6 @@ def _bold_chrnames(ax):
         t.set_fontweight("bold")
 
 
-_ASSAY_PLOT_RANK = {"bulkWGS": 0, "bulkWGS-lr": 1, "bulkWES": 2}
-
-
 def observation_order(assays, sample_types, dataset_ids):
     """Row order for stacked sample plots.
 
@@ -151,7 +149,7 @@ def observation_order(assays, sample_types, dataset_ids):
 
     def key(i):
         return (
-            _ASSAY_PLOT_RANK.get(assays[i], len(_ASSAY_PLOT_RANK)),
+            GT_ASSAY_ORD.get(assays[i], len(GT_ASSAY_ORD)),
             0 if sample_types[i] == "normal" else 1,
             str(dataset_ids[i]),
         )

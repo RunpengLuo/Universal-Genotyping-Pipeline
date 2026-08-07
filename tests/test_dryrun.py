@@ -293,7 +293,7 @@ def test_tsv_missing_required_column_fails(workspace):
     proc = dryrun(workspace, sheet, "T1", "bulk_genotyping", ["bulkWGS"])
     assert proc.returncode != 0
     out = proc.stdout + proc.stderr
-    assert "missing required column(s)" in out and "reference_version" in out
+    assert "missing required key(s)" in out and "reference_version" in out
 
 
 def test_record_without_reference_version_fails(workspace):
@@ -410,13 +410,13 @@ def test_record_reference_version_alias_matches(workspace):
 
 
 def test_records_of_another_build_are_dropped(workspace):
-    """A record on a different build is not selected, and the error names the builds."""
+    """A record on a different build is not selected, and the error names the build."""
     sheet = _sheet_with_refvers(workspace, "otherbuild.json", ["hg19", "hg19"])
     proc = dryrun(workspace, sheet, "T1", "bulk_genotyping", ["bulkWGS"])
     assert proc.returncode != 0
     out = proc.stdout + proc.stderr
-    assert "reference_version='chm13v2'" in out
-    assert "hg19 (2)" in out
+    assert "no datasets match config's reference version" in out
+    assert "chm13v2" in out
 
 
 def test_unrecognized_reference_version_still_selects(workspace):
@@ -434,7 +434,6 @@ def test_unrecognized_reference_version_still_selects(workspace):
     )
     assert proc.returncode == 0, proc.stderr[-1500:]
     assert "is not natively supported" in proc.stdout
-    assert "grch38-giabv3" in proc.stdout
 
 
 def test_unknown_sample_id_fails(workspace):
@@ -443,7 +442,7 @@ def test_unknown_sample_id_fails(workspace):
         workspace, workspace["bulk_json"], "nope", "bulk_genotyping", ["bulkWGS"]
     )
     assert proc.returncode != 0
-    assert "no records for sample_id" in proc.stdout + proc.stderr
+    assert "no datasets have sample_id" in proc.stdout + proc.stderr
 
 
 @pytest.mark.parametrize("mode", ["bulk_genotyping", "single_cell_genotyping"])

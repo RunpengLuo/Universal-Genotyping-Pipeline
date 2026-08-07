@@ -23,8 +23,8 @@ import json
 import os
 
 from const import (
-    ALIGNMENT_FILES,
     ALLOWED_ASSAY_TYPES,
+    GT_ASSAY_ORD,
     ASSAY_TYPE2MODALITY,
     BULK_ASSAYS,
     BULK_TARGETS,
@@ -54,247 +54,152 @@ from io_utils import get_chr_sizes
 from utils import logging_snakemake, strip_chr_prefix
 
 
-def parse_sample_file_json(path):
-    """Read the JSON sample file and return its records.
+def read_sample_sheet(path):
+    """Read the sample file, in either encoding, into records.
+
+    JSON is one object holding a ``samples`` list; a bare top-level array is not
+    accepted. The TSV is a flat encoding of the same schema, not a reduced one:
+    columns are the record keys, and each input is its own ``files.<key>`` column;
+    an empty cell omits the key. Each encoding only loads; the record checks
+    (non-empty, REQUIRED_RECORD_KEYS) run once on the loaded records, so nothing
+    downstream re-checks. Spec: docs/sample_sheet.md.
 
     Args:
-        path: Path to the JSON sample file.
+        path: Path to the sample file.
 
     Returns:
         List of record dicts, with scalar fields coerced to str.
 
     Raises:
-        AssertionError: The file is not a records object/list, or a record is not
-            an object.
+        AssertionError: The file has the wrong shape, or a record is malformed or
+            missing a required key.
     """
-    with open(path) as fh:
-        doc = json.load(fh)
-
-    if isinstance(doc, dict):
-        assert "samples" in doc, f"{path}: object must hold a 'samples' list"
-        records = doc["samples"]
-    else:
-        records = doc
-    assert isinstance(records, list), f"{path}: 'samples' must be a list"
-
-    out = []
-    for idx, rec in enumerate(records):
-        assert isinstance(rec, dict), f"{path}: record {idx} is not an object"
-        norm = dict(rec)
-        for key in SCALAR_RECORD_KEYS:
-            if key in norm and norm[key] is not None:
-                norm[key] = str(norm[key])
-        files = norm.get("files")
-        if isinstance(files, dict):
-            norm["files"] = {k: str(v) for k, v in files.items() if v is not None}
-        out.append(norm)
-    return out
-
-
-def parse_sample_file_tsv(path):
-    """Read a TSV sample sheet and return records in the JSON schema.
-
-    The TSV is a flat encoding of the same schema, not a reduced one: columns are
-    the record keys, and each input is its own ``files.<key>`` column. An empty cell
-    omits the key. Spec: docs/sample_sheet.md, "TSV".
-
-    Args:
-        path: Path to the TSV sample sheet.
-
-    Returns:
-        List of record dicts in the same schema as parse_sample_file_json.
-
-    Raises:
-        AssertionError: The file has no rows, or a required column is missing.
-    """
-    with open(path, newline="") as fh:
-        rows = list(csv.DictReader(fh, delimiter="\t"))
-    assert rows, f"{path}: no rows"
-
-    required_columns = [k for k in REQUIRED_RECORD_KEYS if k != "files"]
-    missing = [c for c in required_columns if c not in rows[0]]
-    assert not missing, f"{path}: missing required column(s) {missing}"
-    assert any(c.startswith(FILES_COLUMN_PREFIX) for c in rows[0]), (
-        f"{path}: no {FILES_COLUMN_PREFIX}* column"
+    ext = os.path.splitext(path)[1].lower()
+    allowed_exts = (".json", ".tsv", ".txt")
+    assert ext in allowed_exts, (
+        f"{path}: sample file must have extensions in {allowed_exts}, got {ext!r}"
     )
-
     records = []
-    for row in rows:
-        rec, files = {}, {}
-        for col, val in row.items():
-            val = (val or "").strip()
-            if not val or col is None:
-                continue
-            if col.startswith(FILES_COLUMN_PREFIX):
-                files[col[len(FILES_COLUMN_PREFIX) :]] = val
-            else:
-                rec[col] = val
-        rec["files"] = files
-        records.append(rec)
+    if ext == ".json":
+        with open(path) as fh:
+            doc = json.load(fh)
+        assert isinstance(doc, dict), f"{path}: sample file must be a JSON object"
+        samples = doc.get("samples")
+        assert isinstance(samples, list), f"{path}: 'samples' must be a list"
+        for idx, rec in enumerate(samples):
+            assert isinstance(rec, dict), f"{path}: record {idx} is not an object"
+            norm = dict(rec)
+            for key in SCALAR_RECORD_KEYS:
+                if key in norm and norm[key] is not None:
+                    norm[key] = str(norm[key])
+            files = norm.get("files")
+            assert isinstance(norm["files"], dict), "`files` must be an dict object"
+            if isinstance(files, dict):
+                norm["files"] = {k: str(v) for k, v in files.items() if v is not None}
+            records.append(norm)
+    else:
+        with open(path, newline="") as fh:
+            rows = list(csv.DictReader(fh, delimiter="\t"))
+        for row in rows:
+            rec, files = {}, {}
+            for col, val in row.items():
+                val = (val or "").strip()
+                if not val or col is None:
+                    continue
+                if col.startswith(FILES_COLUMN_PREFIX):
+                    files[col[len(FILES_COLUMN_PREFIX) :]] = val
+                else:
+                    rec[col] = val
+            rec["files"] = files
+            records.append(rec)
+
+    assert records, f"{path}: no records"
+    for idx, rec in enumerate(records):
+        missing = [k for k in REQUIRED_RECORD_KEYS if rec.get(k) in (None, "")]
+        assert not missing, f"{idx}th dataset: missing required key(s) {missing}"
     return records
 
 
-def select_records(records, sample_id, configured_assay_types, reference_version):
-    """This run's records: one sample_id, the configured assays, one genome build.
-
-    The single definition of "selected", used by both ``validate_records`` (whose
-    replicate rules must see exactly the run's records) and ``parse_workflow``.
+def parse_records(
+    records,
+    sample_id,
+    reference_version,
+    config_assay_types,
+):
+    """Select and parse sample records based on sample_id, reference build, and assay types.
 
     Args:
-        records: Records from parse_sample_file_{json,tsv}.
+        records: Records from read_sample_sheet.
         sample_id: The sample_id being processed.
-        configured_assay_types: Assay types enabled for this run.
-        reference_version: Canonical build to keep; records of any other are dropped.
+        reference_version: canonical reference version.
+        config_assay_types: Assay types enabled for this run.
 
     Returns:
-        The matching records, in file order.
+        The selected records, in file order.
+
+    Raises:
+        AssertionError: The selection is empty, or a record violates the spec or a
+            replicate rule.
     """
-    return [
-        r
-        for r in records
-        if r["sample_id"] == sample_id
-        and r["assay_type"] in configured_assay_types
-        and canonical_refver(r["reference_version"]) == reference_version
-    ]
-
-
-def _anchor(path, idx, rec):
-    """Error prefix naming the offending record."""
-    return (
-        f"{path}: record {idx} (sample_id={rec.get('sample_id')!r}, "
-        f"dataset_id={rec.get('dataset_id')!r}, assay_type={rec.get('assay_type')!r})"
-    )
-
-
-def _refver_counts(records, sample_id):
-    """`refver (n)` summary of one sample_id's records, for error messages."""
-    present = {}
+    parsed_records = []
     for rec in records:
-        if rec["sample_id"] == sample_id:
-            refver = canonical_refver(rec["reference_version"])
-            present[refver] = present.get(refver, 0) + 1
-    return ", ".join(f"{rv} ({n})" for rv, n in sorted(present.items())) or "no records"
-
-
-def require_record_keys(records, path):
-    """Every record carries every REQUIRED_RECORD_KEYS entry.
-
-    Runs before anything reads a record by key, so a malformed sample file fails
-    naming the record rather than with a bare KeyError from a later subset.
-
-    Args:
-        records: Records from parse_sample_file_{json,tsv}.
-        path: Sample file path, for error messages.
-
-    Raises:
-        AssertionError: A record is missing a required key or leaves it empty.
-    """
-    for idx, rec in enumerate(records):
-        missing = [k for k in REQUIRED_RECORD_KEYS if rec.get(k) in (None, "")]
-        assert not missing, (
-            f"{_anchor(path, idx, rec)}: missing required key(s) {missing}"
-        )
-
-
-def validate_records(
-    records, path, workflow_mode, sample_id, configured_assay_types, reference_version
-):
-    """Validate records against the spec, then the subset selected for this run.
-
-    Mutates each record's ``files`` map in place to keep only the keys the assay
-    reads. Shared by ``parse_workflow`` (DAG build) and the standalone
-    ``resources/scripts/validate_sample_file.py``.
-
-    Args:
-        records: Records from parse_sample_file_{json,tsv}.
-        path: Sample file path, for error messages.
-        workflow_mode: bulk_genotyping | single_cell_genotyping | copytyping_preprocess.
-        sample_id: The sample_id being processed.
-        configured_assay_types: Assay types enabled for this run.
-        reference_version: Canonical build to keep; records of any other are dropped.
-
-    Raises:
-        AssertionError: Any record violates the spec, or the selected records violate
-            a mode/replicate rule.
-    """
-    require_record_keys(records, path)
-    single_cell = workflow_mode in ("single_cell_genotyping", "copytyping_preprocess")
-
-    for idx, rec in enumerate(records):
-        at = _anchor(path, idx, rec)
+        if rec["sample_id"] != sample_id:
+            continue
+        rec_refver = rec["reference_version"]
+        if canonical_refver(rec_refver) != reference_version:
+            continue
         assay_type = rec["assay_type"]
-        assert assay_type in ALLOWED_ASSAY_TYPES, (
-            f"{at}: assay_type must be one of {sorted(ALLOWED_ASSAY_TYPES)}"
+        if assay_type not in config_assay_types:
+            continue
+        dataset_id = rec["dataset_id"]
+        assert dataset_id and all((c.isalnum() or c in "_-") for c in dataset_id), (
+            f"dataset_id must match [A-Za-z0-9_-], got {dataset_id!r}"
         )
+        sample_type = rec["sample_type"]
         assert rec["sample_type"] in ("normal", "tumor"), (
-            f"{at}: sample_type must be 'normal' or 'tumor'"
+            f"{dataset_id}: sample_type must be 'normal' or 'tumor', got {sample_type}"
         )
-        did = rec["dataset_id"]
-        assert did and all(c.isalnum() or c in "_-" for c in did), (
-            f"{at}: dataset_id must match [A-Za-z0-9_-], got {did!r}"
-        )
-        assert isinstance(rec["files"], dict), f"{at}: files must be an object"
-
+        files = rec["files"]
         readable = REQUIRED_FILES[assay_type] | OPTIONAL_FILES.get(assay_type, set())
-        files = {k: v for k, v in rec["files"].items() if k in readable}
-        ignored = set(rec["files"]) - set(files)
-        if ignored:
-            logging_snakemake(
-                f"NOTE: {at}: ignoring files key(s) {sorted(ignored)}; "
-                f"{assay_type} reads {sorted(readable)}",
+        files = {k: v for k, v in files.items() if k in readable}
+        for key in sorted(REQUIRED_FILES[assay_type]):
+            assert files.get(key), (
+                f"{dataset_id}: files.{key} is required for {assay_type}"
             )
         rec["files"] = files
+        rec["modality"] = ASSAY_TYPE2MODALITY[assay_type]
+        logging_snakemake(f"selected: {dataset_id}\t{rec_refver}\t{assay_type}")
 
-        required_files = REQUIRED_FILES[assay_type] if single_cell else ALIGNMENT_FILES
-        for key in sorted(required_files):
-            assert files.get(key), f"{at}: files.{key} is required for {assay_type}"
+        parsed_records.append(rec)
 
-    selected = select_records(
-        records, sample_id, configured_assay_types, reference_version
-    )
-    assert selected, (
-        f"{path}: no records for sample_id={sample_id!r} with assay_type in "
-        f"{sorted(configured_assay_types)} and reference_version={reference_version!r}; "
-        f"sample_id has: {_refver_counts(records, sample_id)}"
-    )
-
-    seen = set()
-    for idx, rec in enumerate(selected):
-        key = (rec["dataset_id"], rec["assay_type"])
-        assert key not in seen, (
-            f"{_anchor(path, idx, rec)}: duplicate (dataset_id, assay_type) {key}"
-        )
-        seen.add(key)
+    assert parsed_records, "no datasets exist after selection."
 
     dataset2assays = {}
-    for rec in selected:
+    for rec in parsed_records:
         dataset2assays.setdefault(rec["dataset_id"], []).append(rec["assay_type"])
     for dataset_id, assays in dataset2assays.items():
         if len(assays) == 1:
             continue
-        assert not any(a in BULK_ASSAYS for a in assays), (
-            f"{path}: dataset_id={dataset_id!r} is reused across bulk assays {assays}"
-        )
         assert len(assays) == 2 and set(assays) == {"scRNA", "scATAC"}, (
-            f"{path}: dataset_id={dataset_id!r} has assays {assays}; only an "
+            f"dataset_id={dataset_id!r} has assays {assays}; only an "
             "scRNA + scATAC pair may share one"
         )
 
-    dataset_ids = {r["dataset_id"] for r in selected}
-    for idx, rec in enumerate(selected):
-        base = rec.get("rdr_base_dataset_id")
-        if not base:
-            continue
-        at = _anchor(path, idx, rec)
-        assert rec["sample_type"] == "tumor", (
-            f"{at}: rdr_base_dataset_id is set on a non-tumor record"
-        )
-        assert base != rec["dataset_id"], (
-            f"{at}: rdr_base_dataset_id={base!r} is the record itself"
-        )
-        assert base in dataset_ids, (
-            f"{at}: rdr_base_dataset_id={base!r} is not a dataset_id of {sample_id!r}"
-        )
+    dataset_ids = {rec["dataset_id"] for rec in parsed_records}
+    for rec in parsed_records:
+        rdr_base_id = rec.get("rdr_base_dataset_id")
+        if rdr_base_id:
+            dataset_id = rec["dataset_id"]
+            assert rec["sample_type"] == "tumor", (
+                f"{dataset_id}: rdr_base_dataset_id cannot set on a non-tumor record"
+            )
+            assert rdr_base_id != dataset_id, (
+                f"{dataset_id}: rdr_base_dataset_id cannot set to itself"
+            )
+            assert rdr_base_id in dataset_ids, (
+                f"{dataset_id}: rdr_base_dataset_id={rdr_base_id!r} is not in the sample sheet"
+            )
+    return parsed_records
 
 
 def parse_workflow(config):
@@ -304,96 +209,44 @@ def parse_workflow(config):
         config: The Snakemake config dict.
 
     Returns:
-        Dict of the names workflow/Snakefile unpacks and the rules then read:
-          workflow_mode, sample_id, remote_mode, reference_version, species,
-          assay_types, modalities, msr_list, phaser,
-          run_genotyping, run_phasing, het_snp_vcf, phased_snp_vcf,
-          require_genetic_map, final_targets, get_data, modality2files,
-          assay2dataset_ids, assay2sample_types, assay2base_reps, genotype_files,
-          phase_files, get_genetic_map, get_phasing_panel, segment_bed, bedpe_files,
-          has_breakpoints, use_prebuilt_windows, do_repliseq, window_size.
+        Dict: parsed configurations
 
     Raises:
-        AssertionError: The mode, assay types, sample file, or phaser is invalid.
+        AssertionError: Invalid configuration.
     """
 
-    def select_datasets(records, dataset_ids, config_key):
-        """Records named by a config dataset_id list, in that order."""
-        assert len(set(dataset_ids)) == len(dataset_ids), (
-            f"{config_key} has duplicate dataset_ids: {dataset_ids}"
-        )
-        by_id = {r["dataset_id"]: r for r in records}
-        missing = [d for d in dataset_ids if d not in by_id]
-        assert not missing, (
-            f"{config_key}={missing} not a dataset_id of sample_id={sample_id!r}; "
-            f"available: {sorted(by_id)}"
-        )
-        return [by_id[d] for d in dataset_ids]
+    def require_per_chrom(get_path, label):
+        """Every configured chromosome has its file."""
+        missing = [c for c in config["chromosomes"] if not os.path.exists(get_path(c))]
+        assert not missing, f"{label} not found for chromosomes: {missing[:3]}"
 
-    # === workflow mode + sample_id ===
-    sample_file = config["sample_file"]
+    # === workflow mode ===
     workflow_mode = config["workflow_mode"]
     assert workflow_mode in WORKFLOW_MODES, (
         f"workflow_mode must be one of {list(WORKFLOW_MODES)}"
     )
-    sample_id = config["sample_id"]
 
-    # === remote input mode: whole-file storage() download vs direct URL streaming ===
-    remote_mode = config["remote_mode"]
-    assert remote_mode in ("storage", "stream"), (
-        f"remote_mode must be 'storage' or 'stream', got {remote_mode!r}"
-    )
-    assert remote_mode == "storage" or workflow_mode == "bulk_genotyping", (
-        "remote_mode='stream' is only supported for bulk_genotyping"
-    )
-
-    # === assay_types requested: validate against the schema, keep this mode's ===
+    # === assay_types in configfile ===
     config_assay_types = config["assay_types"]
-    invalid = [a for a in config_assay_types if a not in ALLOWED_ASSAY_TYPES]
-    assert not invalid, (
-        f"invalid assay_types={invalid}; allowed: {sorted(ALLOWED_ASSAY_TYPES)}"
+    invalid_assay_types = [
+        a for a in config_assay_types if a not in ALLOWED_ASSAY_TYPES
+    ]
+    assert not invalid_assay_types, (
+        f"assay_types invalid: {invalid_assay_types}; allowed: {sorted(ALLOWED_ASSAY_TYPES)}"
     )
     allowed = BULK_ASSAYS if workflow_mode == "bulk_genotyping" else NONBULK_ASSAYS
     config_assay_types = [a for a in config_assay_types if a in allowed]
-
-    # === load the sample file (json or legacy tsv) ===
-    ext = os.path.splitext(sample_file)[1].lower()
-    assert ext in (".json", ".tsv", ".txt"), (
-        f"{sample_file}: sample file must be .json or .tsv, got {ext!r}"
-    )
-    records = (
-        parse_sample_file_json(sample_file)
-        if ext == ".json"
-        else parse_sample_file_tsv(sample_file)
+    assert len(config_assay_types) > 0, (
+        f"no assay types valid for workflow_mode={workflow_mode}"
     )
 
-    require_record_keys(records, sample_file)
+    # === sample_file ===
+    sample_id = config["sample_id"]
+    sample_file = config["sample_file"]
+    records = read_sample_sheet(sample_file)
+    dataset_ids = {r["dataset_id"]: r for r in records}
 
-    # === chromosomes: must exist in genome_size ===
-    genome_size = config["genome_size"]
-    assert genome_size, "genome_size is required (two-column chrom<TAB>size file)"
-    by_core = {}
-    for name in get_chr_sizes(genome_size):
-        by_core.setdefault(strip_chr_prefix(name), name)
-    wanted = [strip_chr_prefix(c) for c in config["chromosomes"]]
-    assert wanted, "chromosomes is empty"
-    absent_chroms = [c for c in wanted if c not in by_core]
-    assert not absent_chroms, (
-        f"chromosomes {absent_chroms} have no contig in {genome_size}"
-    )
-    chroms = [f"chr{c}" for c in wanted]
-    input_nochr = not by_core[wanted[0]].lower().startswith("chr")
-    logging_snakemake(f"chromosomes: {chroms[:3]}... input_nochr={input_nochr}")
-
-    # === species ===
-    species = config["species"]
-    assert species, f"species is required in the config; one of {list(SPECIES)}"
-    if species not in SPECIES:
-        logging_snakemake(
-            f"WARNING: species={species!r} is not natively supported ({list(SPECIES)})."
-        )
-
-    # === reference version: canonicalize, then filter ===
+    # === reference version ===
     raw_refver = config["reference_version"]
     assert raw_refver, (
         f"reference_version is required in the config; one of {REFVERS} (or an alias)"
@@ -404,245 +257,260 @@ def parse_workflow(config):
             f"WARNING: reference_version={raw_refver!r} is not natively supported "
             f"({REFVERS})."
         )
-    matched = {}
-    for rec in records:
-        if canonical_refver(rec["reference_version"]) != reference_version:
-            continue
-        spelling = rec["reference_version"]
-        n, ids = matched.get(spelling, (0, set()))
-        matched[spelling] = (n + 1, ids | {rec["sample_id"]})
-    logging_snakemake(
-        f"reference_version: config={raw_refver!r} -> {reference_version}"
+
+    records = parse_records(records, sample_id, reference_version, config_assay_types)
+    assay_types = list(dict.fromkeys(rec["assay_type"] for rec in records))
+
+    # === chromosomes ===
+    config_chroms_nochr = [strip_chr_prefix(c) for c in config["chromosomes"]]
+    assert config_chroms_nochr, "chromosomes is empty"
+
+    genome_size = config["genome_size"]
+    assert genome_size, "genome_size is required (two-column chrom<TAB>size file)"
+    ref_chroms_nochr = {}
+    for name in get_chr_sizes(genome_size):
+        ref_chroms_nochr.setdefault(strip_chr_prefix(name), name)
+
+    absent_chroms = [c for c in config_chroms_nochr if c not in ref_chroms_nochr]
+    assert not absent_chroms, (
+        f"chromosomes {absent_chroms} are not found in {genome_size}"
     )
-    for spelling, (n_rec, ids) in sorted(matched.items()):
-        logging_snakemake(
-            f"  {spelling:<20} {n_rec:5d} record(s) {len(ids):4d} sample_id(s)"
+    chroms = [f"chr{c}" for c in config_chroms_nochr]
+    logging_snakemake(f"chromosomes: {chroms}")
+
+    first_chrom = ref_chroms_nochr[config_chroms_nochr[0]]
+    input_nochr = not first_chrom.lower().startswith("chr")
+    logging_snakemake(f"input with chr-prefix={input_nochr}")
+
+    # === remote input mode: whole-file storage() download vs direct URL streaming ===
+    remote_mode = config["remote_mode"]
+    assert remote_mode in ("storage", "stream"), (
+        f"remote_mode must be 'storage' or 'stream', got {remote_mode!r}"
+    )
+    if remote_mode == "stream":
+        assert workflow_mode == "bulk_genotyping", (
+            "remote_mode='stream' is only supported for bulk_genotyping"
         )
 
-    # === assay_types supplied: this sample_id's records on this build ===
-    sample_sheet_assay_types = list(
+    # === species ===
+    species = config["species"]
+    assert species, f"species is required in the config; one of {list(SPECIES)}"
+    if species not in SPECIES:
+        logging_snakemake(
+            f"WARNING: species={species!r} is not natively supported ({list(SPECIES)})."
+        )
+
+    # === gtf_file ===
+    assert config["gtf_file"], "gtf_file is required (gene/exon annotation GTF)"
+
+    # === segment BED: bulk splits arms at breakpoints, else the region BED ===
+    is_bulk = workflow_mode == "bulk_genotyping"
+    segment_bed = (
+        config["aux_dir"] + "/segment.bed" if is_bulk else config["region_bed"]
+    )
+    bedpe_files = list(
         dict.fromkeys(
-            r["assay_type"]
-            for r in records
-            if r["sample_id"] == sample_id
-            and canonical_refver(r["reference_version"]) == reference_version
+            rec["files"]["breakpoint_bedpe"]
+            for rec in records
+            if "breakpoint_bedpe" in rec["files"]
         )
     )
+    has_breakpoints = len(bedpe_files) > 0
 
-    # === validate against the spec + selection rules (mutates files in place) ===
-    validate_records(
-        records,
-        sample_file,
-        workflow_mode,
-        sample_id,
-        config_assay_types,
-        reference_version,
-    )
-
-    # === select this run's records + add modality ===
-    records = [
-        {**rec, "modality": ASSAY_TYPE2MODALITY[rec["assay_type"]]}
-        for rec in select_records(
-            records, sample_id, config_assay_types, reference_version
+    # === window BED (bulk): pre-built unless breakpoints re-tile the arms ===
+    do_repliseq = reference_version in REPLISEQ_REFVERS
+    window_size = int(config["params_build_windows"]["window_size"])
+    window_bed = config["window_bed"]
+    use_prebuilt_windows = False
+    if is_bulk and window_bed is not None:
+        assert is_url(window_bed) or os.path.exists(window_bed), (
+            f"window_bed path is invalid: {window_bed}"
         )
-    ]
-
-    # === assay_types this run processes: requested and supplied ===
-    assay_types = list(dict.fromkeys(r["assay_type"] for r in records))
-    logging_snakemake(
-        f"assay_types: config={config_assay_types} "
-        f"sample_sheet={sample_sheet_assay_types} -> run={assay_types}"
-    )
-
-    # === RDR normalization policy: drop/keep each bulk tumor's rdr_base ===
-    rdr_normalization = config["params_combine_counts"]["rdr_normalization"]
-    assert rdr_normalization in RDR_NORMALIZATIONS, (
-        f"rdr_normalization must be one of {list(RDR_NORMALIZATIONS)}, "
-        f"got {rdr_normalization!r}"
-    )
-    unbased, ignored = [], []
-    for i, rec in enumerate(records):
-        is_bulk_tumor = (
-            rec["assay_type"] in BULK_ASSAYS and rec["sample_type"] == "tumor"
-        )
-        base = rec.get("rdr_base_dataset_id")
-        if is_bulk_tumor:
-            if rdr_normalization == "median" and base:
-                ignored.append(rec["dataset_id"])
-                records[i] = {
-                    k: v for k, v in rec.items() if k != "rdr_base_dataset_id"
-                }
-            elif rdr_normalization != "median" and not base:
-                unbased.append(rec["dataset_id"])
-    assert not (rdr_normalization == "normal" and unbased), (
-        f"rdr_normalization='normal' requires rdr_base_dataset_id on every bulk "
-        f"tumor, missing on: {sorted(unbased)}"
-    )
-    if ignored:
+        use_prebuilt_windows = not has_breakpoints
+        if has_breakpoints:
+            logging_snakemake(
+                f"NOTE: window_bed ignored ({window_bed}); {len(bedpe_files)} "
+                "breakpoint_bedpe file(s) re-tile the arms"
+            )
+    if is_bulk:
         logging_snakemake(
-            f"NOTE: rdr_normalization='median' -> ignoring rdr_base_dataset_id on "
-            f"{len(ignored)} tumor(s): {sorted(ignored)}"
+            f"NOTE: bulk segment BED={segment_bed} (region_id=arm, seg_id=chunk), "
+            f"{len(bedpe_files)} breakpoint_bedpe file(s), "
+            f"windows={'pre-built' if use_prebuilt_windows else 'built'}"
         )
-    if unbased:
-        logging_snakemake(
-            f"NOTE: {len(unbased)} tumor(s) have no rdr_base_dataset_id; RDR uses "
-            f"median normalization: {sorted(unbased)}"
+
+    # === pre-built files ===
+    het_snp_vcf = config["het_snp_vcf"]
+    het_snp_vcf_phased = bool(config["het_snp_vcf_phased"])
+    bb_file = config["bb_file"]
+    if het_snp_vcf is not None:
+        assert os.path.exists(het_snp_vcf), (
+            f"het_snp_vcf path is invalid: {het_snp_vcf}"
         )
 
     # === copytyping_preprocess requirements ===
     if workflow_mode == "copytyping_preprocess":
-        assert config["het_snp_vcf"] is not None, (
+        assert het_snp_vcf is not None, (
             "het_snp_vcf is required for copytyping_preprocess"
         )
-        assert config["het_snp_vcf_phased"], (
+        assert het_snp_vcf_phased, (
             "het_snp_vcf must be phased for copytyping_preprocess"
         )
-        assert config["bb_file"] is not None, (
-            "bb_file is required for copytyping_preprocess"
-        )
+        assert bb_file is not None, "bb_file is required for copytyping_preprocess"
 
-    # === gtf_file is a required reference input (gene/exon annotation) ===
-    assert config["gtf_file"], "gtf_file is required (gene/exon annotation GTF)"
+    # === genotyping check ===
+    run_genotyping = True
+    if het_snp_vcf is not None:
+        logging_snakemake(f"run_genotyping is skipped, use input {het_snp_vcf}")
+        run_genotyping = False
+
+    genotype_files = None
+    if run_genotyping:
+        genotype_dataset_ids = config["genotype_dataset_ids"]
+        genotype_records = []
+        if genotype_dataset_ids:
+            assert len(set(genotype_dataset_ids)) == len(genotype_dataset_ids), (
+                f"genotype_dataset_ids has duplicate dataset_ids: {genotype_dataset_ids}"
+            )
+            missing = [d for d in genotype_dataset_ids if d not in dataset_ids]
+            assert not missing, (
+                f"genotype_dataset_ids not found in the records: {missing}"
+            )
+            genotype_records = [
+                rec for rec in records if rec["dataset_id"] in set(genotype_dataset_ids)
+            ]
+        if len(genotype_records) == 0:
+            # selects first normal bulkWGS dataset to genotype.
+            genotype_records = sorted(
+                records,
+                key=lambda r: (
+                    r["sample_type"] != "normal",
+                    GT_ASSAY_ORD.get(r["assay_type"], len(GT_ASSAY_ORD)),
+                ),
+            )
+            assert len(genotype_records) > 0, (
+                "failed to set dataset_ids for bulk gHET genotyping"
+            )
+            genotype_records = genotype_records[:1]
+        genotype_dataset_ids = [rec["dataset_id"] for rec in genotype_records]
+        logging_snakemake(f"genotype_dataset_ids: {genotype_dataset_ids}")
+        non_normal = [
+            rec["dataset_id"]
+            for rec in genotype_records
+            if rec["sample_type"] != "normal"
+        ]
+        if non_normal:
+            logging_snakemake(
+                f"WARN: genotype_dataset_ids includes non-normal dataset(s) "
+                f"{non_normal}; germline SNPs may carry somatic signal"
+            )
+        genotype_files = [rec["files"] for rec in genotype_records]
+
+    # === phasing check ===
+    run_phasing = True
+    phased_snp_vcf = config["phase_dir"] + "/phased_het_snps.vcf.gz"
+    if het_snp_vcf is not None and het_snp_vcf_phased:
+        phased_snp_vcf = het_snp_vcf
+        logging_snakemake(f"run_phasing is skipped, use input {het_snp_vcf}")
+        run_phasing = False
+
+    phaser = config["phaser"]
+    phase_files = None
+    get_genetic_map = None
+    get_phasing_panel = None
+    if run_phasing:
+        assert phaser in PANEL_PHASER | LONGREAD_PHASER, f"unknown phaser: {phaser}"
+
+        if phaser in PANEL_PHASER:
+            gmap_path = config["gmap_path"]
+            assert gmap_path, f"gmap_path is required for {phaser}"
+            get_genetic_map = get_genetic_map_path(gmap_path)
+            require_per_chrom(get_genetic_map, "gmap file")
+
+            phasing_panel = config["phasing_panel"]
+            assert phasing_panel and os.path.isdir(phasing_panel), (
+                f"phasing_panel is not a directory: {phasing_panel}"
+            )
+            get_phasing_panel = get_phasing_panel_path(phasing_panel)
+            require_per_chrom(get_phasing_panel, "panel file")
+            logging_snakemake(
+                f"phaser={phaser}, gmap={gmap_path}, panel={phasing_panel}"
+            )
+
+        if phaser in LONGREAD_PHASER:
+            phase_dataset_ids = config["phase_dataset_ids"]
+            phase_records = []
+            if phase_dataset_ids:
+                assert len(set(phase_dataset_ids)) == len(phase_dataset_ids), (
+                    f"phase_dataset_ids has duplicate dataset_ids: {phase_dataset_ids}"
+                )
+                missing = [d for d in phase_dataset_ids if d not in dataset_ids]
+                assert not missing, (
+                    f"phase_dataset_ids not found in the records: {missing}"
+                )
+                phase_records = [
+                    rec
+                    for rec in records
+                    if rec["dataset_id"] in set(phase_dataset_ids)
+                ]
+            if len(phase_records) == 0:
+                # co-phases all long-read normals, else all long-read tumors
+                lr_records = [r for r in records if r["assay_type"] in LONGREAD_ASSAYS]
+                normals = [r for r in lr_records if r["sample_type"] == "normal"]
+                phase_records = normals or lr_records
+            assert phase_records, (
+                f"{phaser} requires a long-read assay ({sorted(LONGREAD_ASSAYS)})"
+            )
+            short_read = [
+                rec["dataset_id"]
+                for rec in phase_records
+                if rec["assay_type"] not in LONGREAD_ASSAYS
+            ]
+            assert not short_read, f"{phaser} needs long reads, got: {short_read}"
+            phase_dataset_ids = [rec["dataset_id"] for rec in phase_records]
+            logging_snakemake(f"phase_dataset_ids: {phase_dataset_ids}")
+            non_normal = [
+                rec["dataset_id"]
+                for rec in phase_records
+                if rec["sample_type"] != "normal"
+            ]
+            if non_normal:
+                logging_snakemake(
+                    f"WARN: phase_dataset_ids includes non-normal dataset(s) "
+                    f"{non_normal}; phasing from tumor reads"
+                )
+            phase_files = [rec["files"] for rec in phase_records]
+
+    # === RDR normalization mode ===
+    if workflow_mode == "bulk_genotyping":
+        rdr_normalization = config["params_combine_counts"]["rdr_normalization"]
+        assert rdr_normalization in RDR_NORMALIZATIONS, (
+            f"rdr_normalization must be one of {list(RDR_NORMALIZATIONS)}, "
+            f"got {rdr_normalization!r}"
+        )
+        for rec in records:
+            if rec["sample_type"] != "tumor":
+                continue
+            dataset_id = rec["dataset_id"]
+            base = rec.get("rdr_base_dataset_id")
+            if rdr_normalization == "median" and base:
+                rec.pop("rdr_base_dataset_id")
+                logging_snakemake(
+                    f"NOTE: {dataset_id}: rdr_normalization='median' -> "
+                    f"ignoring rdr_base_dataset_id={base}"
+                )
+            elif rdr_normalization == "normal":
+                assert base, (
+                    f"{dataset_id}: rdr_normalization='normal' requires rdr_base_dataset_id"
+                )
+            elif rdr_normalization == "auto" and not base:
+                logging_snakemake(
+                    f"NOTE: {dataset_id}: no rdr_base_dataset_id, RDR median-normalized"
+                )
 
     # === min_snp_reads sweep (one MSR{msr}/ subdir per value) ===
     msr = config["params_combine_counts"]["min_snp_reads"]
     msr_list = [int(m) for m in (msr if isinstance(msr, list) else [msr])]
-
-    # === segment BED + bin BED build (one bin set for every bulk assay: WGS/WGS-lr/WES) ===
-    bedpe_files = list(
-        dict.fromkeys(
-            r["files"]["breakpoint_bedpe"]
-            for r in records
-            if "breakpoint_bedpe" in r["files"]
-        )
-    )
-    has_breakpoints = len(bedpe_files) > 0
-    is_bulk = workflow_mode == "bulk_genotyping"
-    do_repliseq = reference_version in REPLISEQ_REFVERS
-    window_size = int(config["params_build_windows"]["window_size"])
-
-    # skip window build if pre-built window bed is provided & no breakpoints
-    window_bed = config["window_bed"]
-    if window_bed is not None and not is_url(window_bed):
-        assert os.path.exists(window_bed), f"window_bed does not exist: {window_bed}"
-    use_prebuilt_windows = is_bulk and window_bed is not None and not has_breakpoints
-    if is_bulk and window_bed is not None and has_breakpoints:
-        logging_snakemake(
-            f"NOTE: window_bed ignored ({window_bed}); {len(bedpe_files)} "
-            "breakpoint_bedpe file(s) re-tile the arms, so windows are built"
-        )
-    segment_bed = (
-        config["aux_dir"] + "/segment.bed" if is_bulk else config["region_bed"]
-    )
-    if is_bulk:
-        logging_snakemake(
-            f"NOTE: bulk -> segment BED ({segment_bed}); "
-            f"{len(bedpe_files)} breakpoint_bedpe file(s), region_id=arm, seg_id=chunk; "
-            f"windows: {'pre-built ' + window_bed if use_prebuilt_windows else 'built'}"
-        )
-
-    # === genotyping / phasing switches (a het_snp_vcf short-circuits the front) ===
-    het_snp_vcf = config["het_snp_vcf"]
-    run_genotyping = het_snp_vcf is None
-    run_phasing = True
-    phased_snp_vcf = config["phase_dir"] + "/phased_het_snps.vcf.gz"
-    if het_snp_vcf is not None:
-        assert os.path.exists(het_snp_vcf), f"het_snp_vcf does not exist: {het_snp_vcf}"
-        # het_snp_vcf_phased=true -> the VCF is taken as phased, phasing skipped
-        run_phasing = not bool(config["het_snp_vcf_phased"])
-        if not run_phasing:
-            phased_snp_vcf = het_snp_vcf
-
-    # === phaser reference inputs (genotype + phase record selection) ===
-    phaser = config["phaser"]
-    genotype_files = None
-    phase_files = None
-    get_genetic_map = None
-    get_phasing_panel = None
-    if run_genotyping:
-        named = config["genotype_dataset_ids"]
-        if named:
-            chosen = select_datasets(records, named, "genotype_dataset_ids")
-            non_normal = [
-                r["dataset_id"] for r in chosen if r["sample_type"] != "normal"
-            ]
-            if non_normal:
-                logging_snakemake(
-                    f"WARN: genotype_dataset_ids includes non-normal dataset(s) "
-                    f"{non_normal}; germline SNPs may carry somatic signal"
-                )
-        else:
-            chosen = sorted(
-                records,
-                key=lambda r: (
-                    r["sample_type"] != "normal",
-                    r["assay_type"] in LONGREAD_ASSAYS,
-                ),
-            )[:1]
-            assert chosen, f"no records to genotype for sample_id={sample_id!r}"
-            r0 = chosen[0]
-            logging_snakemake(
-                f"NOTE: genotype_dataset_ids unset; genotyping {r0['dataset_id']!r} "
-                f"({r0['sample_type']}, {r0['assay_type']})"
-            )
-        genotype_files = [r["files"] for r in chosen]
-    if run_phasing:
-        assert phaser in PANEL_PHASER or phaser in LONGREAD_PHASER, (
-            f"unknown phaser: {phaser}"
-        )
-        if phaser in PANEL_PHASER:
-            gmap_path = config["gmap_path"]
-            assert gmap_path, f"gmap_path required for {phaser}"
-            get_genetic_map = get_genetic_map_path(gmap_path)
-            missing_gmaps = [
-                get_genetic_map(c)
-                for c in config["chromosomes"]
-                if not os.path.exists(get_genetic_map(c))
-            ]
-            assert not missing_gmaps, (
-                f"failed to locate gmap files: {missing_gmaps[:3]}"
-            )
-
-            phasing_panel = config["phasing_panel"]
-            assert os.path.isdir(phasing_panel), (
-                f"failed to locate phasing panel: {phasing_panel}"
-            )
-            get_phasing_panel = get_phasing_panel_path(phasing_panel)
-            missing_panels = [
-                get_phasing_panel(c)
-                for c in config["chromosomes"]
-                if not os.path.exists(get_phasing_panel(c))
-            ]
-            assert not missing_panels, (
-                f"failed to locate panel files: {missing_panels[:3]}"
-            )
-        else:
-            named = config["phase_dataset_ids"]
-            if named:
-                chosen = select_datasets(records, named, "phase_dataset_ids")
-                short = [
-                    r["dataset_id"]
-                    for r in chosen
-                    if r["assay_type"] not in LONGREAD_ASSAYS
-                ]
-                assert not short, (
-                    f"phase_dataset_ids={short} are not long-read assays "
-                    f"({sorted(LONGREAD_ASSAYS)})"
-                )
-            else:
-                lr = [r for r in records if r["assay_type"] in LONGREAD_ASSAYS]
-                assert lr, (
-                    f"{phaser} requires a long-read assay "
-                    f"({sorted(LONGREAD_ASSAYS)}) for sample_id={sample_id!r}"
-                )
-                normals = [r for r in lr if r["sample_type"] == "normal"]
-                chosen = normals or lr
-                kind = "normal" if normals else "tumor (no normal)"
-                logging_snakemake(
-                    f"NOTE: phase_dataset_ids unset; longphase co-phases "
-                    f"{[r['dataset_id'] for r in chosen]} ({kind})"
-                )
-            phase_files = [r["files"] for r in chosen]
 
     # === per-assay lookups the rules consume (bulk ordered normal-first) ===
     modality2files = {}

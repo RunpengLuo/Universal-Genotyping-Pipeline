@@ -58,12 +58,7 @@ sys.path.insert(0, os.path.join(REPO, "workflow", "scripts"))
 sys.path.insert(0, os.path.join(REPO, "workflow", "scripts", "script_utils"))
 
 from const import BULK_ASSAYS, NONBULK_ASSAYS, canonical_refver, is_url  # noqa: E402
-from parse_workflow_args import (  # noqa: E402
-    parse_sample_file_json,
-    parse_sample_file_tsv,
-    require_record_keys,
-    validate_records,
-)
+from parse_workflow_args import parse_records, read_sample_sheet  # noqa: E402
 
 # a mode can only run the assay types it supports
 MODE_ASSAYS = {
@@ -142,16 +137,7 @@ def main():
     args = ap.parse_args()
 
     try:
-        ext = os.path.splitext(args.sample_file)[1].lower()
-        assert ext in (".json", ".tsv", ".txt"), (
-            f"{args.sample_file}: sample file must be .json or .tsv, got {ext!r}"
-        )
-        records = (
-            parse_sample_file_json(args.sample_file)
-            if ext == ".json"
-            else parse_sample_file_tsv(args.sample_file)
-        )
-        require_record_keys(records, args.sample_file)
+        records = read_sample_sheet(args.sample_file)
     except (AssertionError, OSError) as e:
         print(f"FAIL parse: {e}")
         return 1
@@ -178,21 +164,16 @@ def main():
     for sample_id in sample_ids:
         for mode in modes:
             for refver in refvers:
-                present = sorted(
-                    {
-                        r["assay_type"]
-                        for r in records
-                        if r["sample_id"] == sample_id
-                        and r["assay_type"] in MODE_ASSAYS[mode]
-                        and canonical_refver(r["reference_version"]) == refver
-                    }
-                )
-                if not present:
+                # parse_records asserts on an empty selection; skip those combos
+                if not any(
+                    r["sample_id"] == sample_id
+                    and r["assay_type"] in MODE_ASSAYS[mode]
+                    and canonical_refver(r["reference_version"]) == refver
+                    for r in records
+                ):
                     continue
                 try:
-                    validate_records(
-                        records, args.sample_file, mode, sample_id, present, refver
-                    )
+                    parse_records(records, sample_id, refver, MODE_ASSAYS[mode])
                     ok += 1
                 except AssertionError as e:
                     failed += 1

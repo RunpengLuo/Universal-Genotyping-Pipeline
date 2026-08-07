@@ -66,6 +66,9 @@ NONBULK_ASSAYS = {"scATAC", "scRNA", "VISIUM", "VISIUM3prime"}
 SPATIAL_ASSAYS = {"VISIUM", "VISIUM3prime"}
 ALLOWED_ASSAY_TYPES = list(BULK_ASSAYS) + list(NONBULK_ASSAYS)
 
+# bulk-genotyping assay preference
+GT_ASSAY_ORD = {"bulkWGS": 0, "bulkWGS-lr": 1, "bulkWES": 2}
+
 ASSAY_TYPE2MODALITY = {
     "bulkWGS": "DNA",
     "bulkWGS-lr": "DNA",
