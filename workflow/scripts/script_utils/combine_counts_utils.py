@@ -1,6 +1,12 @@
-"""Utility functions for SNP/allele processing, phasing, and filtering.
+"""Allele/SNP helpers shared by phase_and_concat and combine_counts.
 
-Used by phase_and_concat_{bulk,single_cell}.py, combine_counts.py, and combine_counts_nonbulk.py.
+Five groups, in pipeline order:
+
+1. allele matrices - per-replicate counts onto the parent SNP set, then stacked
+2. observations    - which matrix column belongs to which replicate/assay
+3. SNP set         - the union SNP table and the per-SNP range split
+4. SNP filters     - one bool mask each, combined by ``apply_masks_to_df``
+5. depth and RDR   - fixed-bin depth onto bbs, then the RDR ratio
 """
 
 import logging
@@ -8,75 +14,19 @@ import logging
 import numpy as np
 import pandas as pd
 
-from scipy.io import mmread
 from scipy.sparse import csr_matrix, hstack
 from scipy.stats import beta
 
-from range_utils import assign_pos_to_range, assign_range_to_range
-from io_utils import read_VCF
+from io_utils import read_BED
+from range_utils import assign_pos_to_range, assign_range_to_range, overlaps_any_range
 from utils import sort_df_chr
 
 
-def canon_mat_from_files(
-    parent_keys: pd.Index,
-    vcf_file: str,
-    tot_mtx_file: str,
-    ad_mtx_file: str,
-    ncells: int,
-):
-    """Read a replicate's cellSNP-format files, then canonicalize onto the parent SNP set.
-
-    Thin file-reading wrapper over ``canon_mat_one_replicate`` for the cellsnp-lite path
-    (single-cell). Bulk builds the DataFrame/matrices from bcftools counts instead.
-    """
-    child_snps = read_VCF(vcf_file, addkey=True)
-    tot_mtx = mmread(tot_mtx_file).tocsr()
-    ad_mtx = mmread(ad_mtx_file).tocsr()
-    return canon_mat_one_replicate(parent_keys, child_snps, tot_mtx, ad_mtx, ncells)
+##################################################
+# allele matrices: per-replicate counts -> one joint matrix
 
 
-def bcftools_counts_to_child_mats(bcf_df: pd.DataFrame, parent_alt_by_key: dict):
-    """Convert a bcftools counts DataFrame into ``(child_snps, tot_mtx, ad_mtx)`` for canon.
-
-    ``ALT`` per locus is the depth of the *parent* ALT allele (matched against the bcftools
-    ALT list; 0 when the parent ALT was not observed), ``DP = ref + alt`` (usable het depth,
-    so downstream ``REF = DP - ALT`` is exact). Rows follow ``bcf_df`` order.
-
-    Args:
-        bcf_df: output of ``read_bcftools_counts`` (KEY, ALT list, AD list, RAW_SNP_DF_IDX).
-        parent_alt_by_key: parent ALT allele keyed by ``#CHROM_POS``.
-
-    Returns:
-        ``(child_snps, tot_mtx, ad_mtx)``: child_snps has KEY + RAW_SNP_DF_IDX; matrices are
-        ``(len(bcf_df), 1)`` csr.
-    """
-    n = len(bcf_df)
-    keys = bcf_df["KEY"].to_numpy()
-    alt_lists = bcf_df["ALT"].to_numpy()
-    ad_lists = bcf_df["AD"].to_numpy()
-    tot = np.zeros(n, dtype=np.int64)
-    ad = np.zeros(n, dtype=np.int64)
-    for i in range(n):
-        adv = ad_lists[i]
-        ref_cnt = adv[0] if len(adv) else 0
-        palt = parent_alt_by_key.get(keys[i])
-        alts = alt_lists[i]
-        alt_cnt = (
-            adv[1 + alts.index(palt)] if (palt is not None and palt in alts) else 0
-        )
-        ad[i] = alt_cnt
-        tot[i] = ref_cnt + alt_cnt
-    child_snps = pd.DataFrame({"KEY": keys, "RAW_SNP_DF_IDX": np.arange(n)})
-    tr = np.flatnonzero(tot)
-    ar = np.flatnonzero(ad)
-    tot_mtx = csr_matrix(
-        (tot[tr], (tr, np.zeros(len(tr), dtype=np.int64))), shape=(n, 1)
-    )
-    ad_mtx = csr_matrix((ad[ar], (ar, np.zeros(len(ar), dtype=np.int64))), shape=(n, 1))
-    return child_snps, tot_mtx, ad_mtx
-
-
-def canon_mat_one_replicate(
+def map_allele_mat_to_snps(
     parent_keys: pd.Index,
     child_snps: pd.DataFrame,
     tot_mtx: csr_matrix,
@@ -149,18 +99,6 @@ def canon_mat_one_replicate(
     return tot_canon, ad_canon
 
 
-def observation_cluster_ids(rep2bc: pd.DataFrame, dataset_ids):
-    """Cluster id per observation: REP_ID,BARCODE -> int64 index into dataset_ids.
-
-    Categorical mapping with explicit ``dataset_ids`` order ensures the codes
-    align with the position of each rep in the caller's dataset_ids list.
-    """
-    cats = pd.Categorical(rep2bc["REP_ID"], categories=list(dataset_ids))
-    codes = np.asarray(cats.codes, dtype=np.int64)
-    assert (codes >= 0).all(), "barcodes.full, REP_ID values outside dataset_ids"
-    return codes
-
-
 def hstack_replicate_mats(tot_list: list, ad_list: list):
     """Horizontally stack per-replicate total and alt-count matrices.
 
@@ -187,7 +125,48 @@ def hstack_replicate_mats(tot_list: list, ad_list: list):
 
 
 ##################################################
-# combine_counts: SNP parsing, clustering, and bulk depth/RDR aggregation
+# observations: which matrix column is which replicate/assay
+
+
+def observation_cluster_ids(rep2bc: pd.DataFrame, dataset_ids):
+    """Cluster id per observation: REP_ID,BARCODE -> int64 index into dataset_ids.
+
+    Categorical mapping with explicit ``dataset_ids`` order ensures the codes
+    align with the position of each rep in the caller's dataset_ids list.
+    """
+    cats = pd.Categorical(rep2bc["REP_ID"], categories=list(dataset_ids))
+    codes = np.asarray(cats.codes, dtype=np.int64)
+    assert (codes >= 0).all(), "barcodes.full, REP_ID values outside dataset_ids"
+    return codes
+
+
+def build_assay_obs_clusters(sample_df, bulk_assays):
+    """Cluster the joint observations by assay into per-assay descriptors.
+
+    Each cluster records the assay's observation ``offset``, size ``n``, and
+    ``tumor_obs``. Returns ``(assay_obs_clusters, tumor_obs_all)``.
+    """
+    obs_assay = sample_df["assay_type"].tolist()
+    obs_stype = sample_df["sample_type"].tolist()
+    assay_obs_clusters = []
+    for at in bulk_assays:
+        obs = [i for i, a in enumerate(obs_assay) if a == at]
+        assert obs, f"joint sample sheet, no sample for assay {at}"
+        stypes = [obs_stype[i] for i in obs]
+        assay_obs_clusters.append(
+            {
+                "assay": at,
+                "offset": obs[0],
+                "n": len(obs),
+                "tumor_obs": [obs[i] for i, st in enumerate(stypes) if st == "tumor"],
+            }
+        )
+    tumor_obs_all = [o for c in assay_obs_clusters for o in c["tumor_obs"]]
+    return assay_obs_clusters, tumor_obs_all
+
+
+##################################################
+# SNP set: the union table and the per-SNP range split
 
 
 def build_union_snps(snps_list):
@@ -216,61 +195,160 @@ def build_union_snps(snps_list):
     return snps, has_ps, has_feature
 
 
-def build_assay_obs_clusters(sample_df, bulk_assays):
-    """Cluster the joint observations by assay into per-assay descriptors.
+def build_pos_ranges(snps: pd.DataFrame, regions: pd.DataFrame, colname="region_id"):
+    """Split each region into one ``[START, END)`` range per position it contains.
 
-    Each cluster records the assay's observation ``offset``, size ``n``, and
-    ``tumor_obs``. Returns ``(assay_obs_clusters, tumor_obs_all)``.
+    A position owns the span between the midpoints of its neighbours, bounded by the
+    region edges; a lone position owns the whole region. Positions outside every region
+    keep ``START = END = 0`` and an empty ``region_id``. Membership is by 0-based
+    ``POS0``, like every other range operation.
+
+    Args:
+        snps: Positions with ``#CHR``, ``POS0``, sorted genomically.
+        regions: Ranges with ``#CHR``, ``START``, ``END``, ``region_id`` and
+            optionally ``seg_id``.
+        colname: Column to write the region identifier into.
+
+    Returns:
+        *snps* with ``START``, ``END``, ``BLOCKSIZE``, *colname* (and ``seg_id``).
     """
-    obs_assay = sample_df["assay_type"].tolist()
-    obs_stype = sample_df["sample_type"].tolist()
-    assay_obs_clusters = []
-    for at in bulk_assays:
-        obs = [i for i, a in enumerate(obs_assay) if a == at]
-        assert obs, f"joint sample sheet, no sample for assay {at}"
-        stypes = [obs_stype[i] for i in obs]
-        assay_obs_clusters.append(
-            {
-                "assay": at,
-                "offset": obs[0],
-                "n": len(obs),
-                "tumor_obs": [obs[i] for i, st in enumerate(stypes) if st == "tumor"],
-            }
-        )
-    tumor_obs_all = [o for c in assay_obs_clusters for o in c["tumor_obs"]]
-    return assay_obs_clusters, tumor_obs_all
+    has_seg = "seg_id" in regions.columns
+    regions = regions.reset_index(drop=True)
+    regions["_reg_id"] = np.arange(len(regions))
+
+    snps, _ = assign_pos_to_range(snps, regions, ref_id="_reg_id", pos_col="POS0")
+    snps["START"] = 0
+    snps["END"] = 0
+    snps[colname] = ""
+    if has_seg:
+        snps["seg_id"] = ""
+
+    inside = snps["_reg_id"].notna()
+    n_out = int((~inside).sum())
+    if n_out:
+        logging.info(f"SNP ranges: {n_out}/{len(snps)} SNPs outside every region")
+
+    reg_start = regions["START"].to_numpy()
+    reg_end = regions["END"].to_numpy()
+    for reg_id, grp in snps.loc[inside].groupby("_reg_id", sort=False):
+        idx = grp.index.to_numpy()
+        r = int(reg_id)
+        snps.loc[idx, colname] = regions.at[r, "region_id"]
+        if has_seg:
+            snps.loc[idx, "seg_id"] = regions.at[r, "seg_id"]
+        pos0 = grp["POS0"].to_numpy()
+        if len(idx) == 1:
+            bounds = np.array([reg_start[r], reg_end[r]])
+        else:
+            mids = np.ceil((pos0[:-1] + pos0[1:]) / 2).astype(np.uint32)
+            bounds = np.concatenate([[reg_start[r]], mids, [reg_end[r]]])
+        snps.loc[idx, "START"] = bounds[:-1]
+        snps.loc[idx, "END"] = bounds[1:]
+
+    snps.drop(columns="_reg_id", inplace=True)
+    snps["BLOCKSIZE"] = snps["END"] - snps["START"]
+    return snps
 
 
-def build_rdr_base_map(sample_df):
-    """Map each tumor observation to its RDR base (denominator) observation.
+##################################################
+# SNP filters: one bool mask each, combined by apply_masks_to_df
 
-    A tumor row's optional ``RDR_BASE_REP_ID`` names the ``REP_ID`` of the
-    sample used as its RDR baseline. Returns ``{tumor_obs: base_obs}``; a tumor
-    with an unset ``RDR_BASE_REP_ID`` is omitted (median-normalized downstream).
+
+def apply_masks_to_df(df: pd.DataFrame, *masks):
+    """Keep the rows of *df* that every mask keeps, reindexed from 0.
+
+    Args:
+        df: Frame to filter. Copied, not modified.
+        *masks: One or more bool arrays of length ``len(df)``.
+
+    Returns:
+        The surviving rows of *df*, ``reset_index(drop=True)``.
     """
-    obs_repid = sample_df["REP_ID"].tolist()
-    obs_stype = sample_df["sample_type"].tolist()
-    repid_to_obs = {rid: i for i, rid in enumerate(obs_repid)}
+    assert masks, "apply_masks_to_df, no mask given"
+    keep = np.logical_and.reduce([np.asarray(m, dtype=bool) for m in masks])
+    assert len(keep) == len(df), f"mask length {len(keep)} != {len(df)} rows"
+    return df.loc[keep].reset_index(drop=True)
 
-    has_col = "RDR_BASE_REP_ID" in sample_df.columns
-    obs_base_rep = (
-        sample_df["RDR_BASE_REP_ID"].tolist() if has_col else [None] * len(obs_repid)
+
+def get_mask_by_region(snps: pd.DataFrame, regions: pd.DataFrame):
+    """Keep SNPs inside any region."""
+    mask = overlaps_any_range(snps, regions)
+    logging.info(f"filter by region, #passed SNPs={np.sum(mask)}/{len(snps)}")
+    return mask
+
+
+def get_mask_by_blacklist(snps: pd.DataFrame, blacklist_bed):
+    """Drop SNPs inside any blacklisted range; all-True when no blacklist is given."""
+    if blacklist_bed is None:
+        return np.ones(len(snps), dtype=bool)
+    hit = overlaps_any_range(snps, read_BED(blacklist_bed))
+    num_passes = len(snps) - np.sum(hit)
+    logging.info(f"filter by blacklist, #passed SNPs={num_passes}/{len(snps)}")
+    return ~hit
+
+
+def get_mask_by_exon(snps: pd.DataFrame):
+    """Keep only exonic SNPs.
+
+    Reads the ``feature_type`` column that ``feature_utils.annotate_feature_type`` writes.
+    The caller gates the filter on the ``exon_only`` config key.
+    """
+    is_exon = (snps["feature_type"] == "exon").to_numpy()
+    logging.info(f"filter by exon, #passed SNPs={np.sum(is_exon)}/{len(snps)}")
+    return is_exon
+
+
+def get_mask_by_depth(snps: pd.DataFrame, tot_mtx: csr_matrix, min_dp=1):
+    """Return a boolean mask keeping SNPs where every sample meets the minimum depth.
+
+    Parameters
+    ----------
+    snps : pd.DataFrame
+        SNP info DataFrame (used only for logging).
+    tot_mtx : csr_matrix
+        Total depth matrix (SNPs x samples).
+    min_dp : int
+        Minimum depth threshold per sample.
+
+    Returns
+    -------
+    np.ndarray
+        Boolean mask of length ``len(snps)``.
+    """
+    mask = np.all(tot_mtx >= min_dp, axis=1)
+    logging.info(
+        f"filter by depth, min_dp={min_dp}, #passed SNPs={np.sum(mask)}/{len(snps)}"
     )
+    return mask
 
-    base_map = {}
-    for i in range(len(obs_repid)):
-        if obs_stype[i] != "tumor":
-            continue
-        brep = obs_base_rep[i]
-        if has_col and pd.notna(brep) and str(brep) != "":
-            assert brep in repid_to_obs, (
-                f"{obs_repid[i]}: RDR_BASE_REP_ID {brep!r} is not a REP_ID"
-            )
-            assert repid_to_obs[brep] != i, (
-                f"{obs_repid[i]}: RDR_BASE_REP_ID {brep!r} is itself"
-            )
-            base_map[i] = repid_to_obs[brep]
-    return base_map
+
+def get_mask_by_het_balanced(
+    snps: pd.DataFrame,
+    ref_mtx: csr_matrix,
+    alt_mtx: csr_matrix,
+    gamma: float,
+    normal_idx=0,
+):
+    """
+    mask SNPs if normal sample failed beta-posterior credible interval test with beta(1, 1) prior.
+    """
+    p_lower = gamma / 2.0
+    p_upper = 1.0 - p_lower
+    q = np.array([p_lower, p_upper])
+    het_cred_ints = beta.ppf(
+        q[None, :],
+        ref_mtx[:, normal_idx][:, None] + 1,
+        alt_mtx[:, normal_idx][:, None] + 1,
+    )
+    mask = (het_cred_ints[:, 0] <= 0.5) & (0.5 <= het_cred_ints[:, 1])
+    logging.info(
+        f"filter by balanced Het-SNPs on normal sample, gamma={gamma}, #passed SNPs={np.sum(mask)}/{len(snps)}"
+    )
+    return mask
+
+
+##################################################
+# bulk read depth and RDR
 
 
 def aggregate_bin_depth_to_bbs(
@@ -321,6 +399,38 @@ def aggregate_bin_depth_to_bbs(
             with np.errstate(invalid="ignore"):
                 bb_dp[:, clu["offset"] + s] = weighted_sums / total_len_per_bb
     return bb_dp, bb_bases
+
+
+def build_rdr_base_map(sample_df):
+    """Map each tumor observation to its RDR base (denominator) observation.
+
+    A tumor row's optional ``RDR_BASE_REP_ID`` names the ``REP_ID`` of the
+    sample used as its RDR baseline. Returns ``{tumor_obs: base_obs}``; a tumor
+    with an unset ``RDR_BASE_REP_ID`` is omitted (median-normalized downstream).
+    """
+    obs_repid = sample_df["REP_ID"].tolist()
+    obs_stype = sample_df["sample_type"].tolist()
+    repid_to_obs = {rid: i for i, rid in enumerate(obs_repid)}
+
+    has_col = "RDR_BASE_REP_ID" in sample_df.columns
+    obs_base_rep = (
+        sample_df["RDR_BASE_REP_ID"].tolist() if has_col else [None] * len(obs_repid)
+    )
+
+    base_map = {}
+    for i in range(len(obs_repid)):
+        if obs_stype[i] != "tumor":
+            continue
+        brep = obs_base_rep[i]
+        if has_col and pd.notna(brep) and str(brep) != "":
+            assert brep in repid_to_obs, (
+                f"{obs_repid[i]}: RDR_BASE_REP_ID {brep!r} is not a REP_ID"
+            )
+            assert repid_to_obs[brep] != i, (
+                f"{obs_repid[i]}: RDR_BASE_REP_ID {brep!r} is itself"
+            )
+            base_map[i] = repid_to_obs[brep]
+    return base_map
 
 
 def compute_bb_rdr(
@@ -381,109 +491,3 @@ def compute_bb_rdr(
         )
         bb_rdr[bb_rdr > rdr_upper] = np.nan
     return bb_rdr
-
-
-##################################################
-def get_mask_by_depth(snps: pd.DataFrame, tot_mtx: csr_matrix, min_dp=1):
-    """Return a boolean mask keeping SNPs where every sample meets the minimum depth.
-
-    Parameters
-    ----------
-    snps : pd.DataFrame
-        SNP info DataFrame (used only for logging).
-    tot_mtx : csr_matrix
-        Total depth matrix (SNPs x samples).
-    min_dp : int
-        Minimum depth threshold per sample.
-
-    Returns
-    -------
-    np.ndarray
-        Boolean mask of length ``len(snps)``.
-    """
-    mask = np.all(tot_mtx >= min_dp, axis=1)
-    logging.info(
-        f"filter by depth, min_dp={min_dp}, #passed SNPs={np.sum(mask)}/{len(snps)}"
-    )
-    return mask
-
-
-def get_mask_by_het_balanced(
-    snps: pd.DataFrame,
-    ref_mtx: csr_matrix,
-    alt_mtx: csr_matrix,
-    gamma: float,
-    normal_idx=0,
-):
-    """
-    mask SNPs if normal sample failed beta-posterior credible interval test with beta(1, 1) prior.
-    """
-    p_lower = gamma / 2.0
-    p_upper = 1.0 - p_lower
-    q = np.array([p_lower, p_upper])
-    het_cred_ints = beta.ppf(
-        q[None, :],
-        ref_mtx[:, normal_idx][:, None] + 1,
-        alt_mtx[:, normal_idx][:, None] + 1,
-    )
-    mask = (het_cred_ints[:, 0] <= 0.5) & (0.5 <= het_cred_ints[:, 1])
-    logging.info(
-        f"filter by balanced Het-SNPs on normal sample, gamma={gamma}, #passed SNPs={np.sum(mask)}/{len(snps)}"
-    )
-    return mask
-
-
-##################################################
-def build_pos_ranges(snps: pd.DataFrame, regions: pd.DataFrame, colname="region_id"):
-    """Split each region into one ``[START, END)`` range per position it contains.
-
-    A position owns the span between the midpoints of its neighbours, bounded by the
-    region edges; a lone position owns the whole region. Positions outside every region
-    keep ``START = END = 0`` and an empty ``region_id``. Membership is by 0-based
-    ``POS0``, like every other range operation.
-
-    Args:
-        snps: Positions with ``#CHR``, ``POS0``, sorted genomically.
-        regions: Ranges with ``#CHR``, ``START``, ``END``, ``region_id`` and
-            optionally ``seg_id``.
-        colname: Column to write the region identifier into.
-
-    Returns:
-        *snps* with ``START``, ``END``, ``BLOCKSIZE``, *colname* (and ``seg_id``).
-    """
-    has_seg = "seg_id" in regions.columns
-    regions = regions.reset_index(drop=True)
-    regions["_reg_id"] = np.arange(len(regions))
-
-    snps, _ = assign_pos_to_range(snps, regions, ref_id="_reg_id", pos_col="POS0")
-    snps["START"] = 0
-    snps["END"] = 0
-    snps[colname] = ""
-    if has_seg:
-        snps["seg_id"] = ""
-
-    inside = snps["_reg_id"].notna()
-    n_out = int((~inside).sum())
-    if n_out:
-        logging.info(f"SNP ranges: {n_out}/{len(snps)} SNPs outside every region")
-
-    reg_start = regions["START"].to_numpy()
-    reg_end = regions["END"].to_numpy()
-    for reg_id, grp in snps.loc[inside].groupby("_reg_id", sort=False):
-        idx = grp.index.to_numpy()
-        r = int(reg_id)
-        snps.loc[idx, colname] = regions.at[r, "region_id"]
-        if has_seg:
-            snps.loc[idx, "seg_id"] = regions.at[r, "seg_id"]
-        pos0 = grp["POS0"].to_numpy()
-        if len(idx) == 1:
-            bounds = np.array([reg_start[r], reg_end[r]])
-        else:
-            mids = np.ceil((pos0[:-1] + pos0[1:]) / 2).astype(np.uint32)
-            bounds = np.concatenate([[reg_start[r]], mids, [reg_end[r]]])
-        snps.loc[idx, "START"] = bounds[:-1]
-        snps.loc[idx, "END"] = bounds[1:]
-
-    snps.drop(columns="_reg_id", inplace=True)
-    snps["BLOCKSIZE"] = snps["END"] - snps["START"]
-    return snps

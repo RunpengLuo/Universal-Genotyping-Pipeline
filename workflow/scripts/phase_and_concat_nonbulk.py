@@ -18,21 +18,25 @@ setup_logging(snakemake_handle.log[0])
 import numpy as np
 import pandas as pd
 import scanpy as sc
+from scipy.io import mmread
 from scipy.sparse import save_npz
 
 from const import ASSAY_TYPE2MODALITY
-from io_utils import read_VCF
+from io_utils import read_BED, read_VCF
 from range_utils import overlaps_any_range
 from combine_counts_utils import (
+    apply_masks_to_df,
     build_pos_ranges,
-    canon_mat_from_files,
+    get_mask_by_blacklist,
+    get_mask_by_exon,
+    get_mask_by_region,
     hstack_replicate_mats,
+    map_allele_mat_to_snps,
 )
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_alleles import plot_allele_freqs, plot_snp_depth
 from phasing_utils import apply_phase_to_mat
-from aggregation_utils import apply_region_blacklist_masks
-from feature_utils import annotate_feature_type, apply_exon_only_mask
+from feature_utils import annotate_feature_type
 
 
 ##################################################
@@ -87,11 +91,12 @@ for idx, dataset_id in enumerate(dataset_ids):
     barcodes = pd.read_table(sample_tsvs[idx], sep="\t", header=None, names=["BARCODE"])
     barcodes["BARCODE"] = barcodes["BARCODE"].astype(str) + f"_{dataset_id}"
     barcodes_list.append(barcodes)
-    tot_canon, ad_canon = canon_mat_from_files(
+    # cellsnp-lite emits one VCF + two MatrixMarket files per replicate
+    tot_canon, ad_canon = map_allele_mat_to_snps(
         parent_keys,
-        vcf_files[idx],
-        tot_mtx_files[idx],
-        ad_mtx_files[idx],
+        read_VCF(vcf_files[idx], addkey=True),
+        mmread(tot_mtx_files[idx]).tocsr(),
+        mmread(ad_mtx_files[idx]).tocsr(),
         len(barcodes),
     )
     tot_mtx_list.append(tot_canon)
@@ -113,29 +118,30 @@ a_mtx, b_mtx = apply_phase_to_mat(tot_mtx, ref_mtx, alt_mtx, snps["PHASE"].to_nu
 
 ##################################################
 num_snps_before = len(snps)
-
-snp_mask = np.ones(len(snps), dtype=bool)
-snp_mask, regions = apply_region_blacklist_masks(
-    snps, snp_mask, region_bed, blacklist_bed
-)
+regions = read_BED(region_bed)
 
 # feature_id (;-joined GTF genes) + feature_type, uniform across all assays
 snps = annotate_feature_type(snps, gtf_file)
 
+masks = [
+    get_mask_by_region(snps, regions),
+    get_mask_by_blacklist(snps, blacklist_bed),
+]
+if exon_only:
+    masks.append(get_mask_by_exon(snps))
 if is_rna_assay:
     # coverage filter only: RNA reads cover expressed genes, so drop SNPs outside
     # the h5ad feature set (feature_id itself stays GTF-derived from above)
     adata: sc.AnnData = sc.read_h5ad(h5ad_file)
     cov_mask = overlaps_any_range(snps, adata.var)
-    snp_mask &= cov_mask
     logging.info(
         f"{assay_type} feature overlap: {np.sum(cov_mask)}/{len(snps)} "
         f"({np.sum(cov_mask) / len(snps):.3%})"
     )
+    masks.append(cov_mask)
+snp_mask = np.logical_and.reduce(masks)
 
-snp_mask = apply_exon_only_mask(snps, snp_mask, exon_only)
-
-snps = snps.loc[snp_mask, :].reset_index(drop=True)
+snps = apply_masks_to_df(snps, snp_mask)
 snps["START"] = snps["POS0"]
 snps["END"] = snps["POS"]
 

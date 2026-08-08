@@ -1,7 +1,7 @@
 """Joint phase-and-concat for ALL bulk assays on one shared SNP set.
 
 Every bulk replicate (across every bulk assay) is piled up against the same phased
-het-SNP VCF, so ``canon_mat_one_replicate`` aligns them all to ONE shared parent SNP
+het-SNP VCF, so ``map_allele_mat_to_snps`` aligns them all to ONE shared parent SNP
 set. We therefore build a single dense matrix directly (one pseudobulk column per
 replicate, ordered assay-by-assay) instead of per-assay matrices that combine_counts
 would have to re-union.
@@ -23,18 +23,20 @@ setup_logging(snakemake_handle.log[0])
 import numpy as np
 import pandas as pd
 
-from io_utils import read_VCF, read_bcftools_counts
+from io_utils import read_BED, read_VCF, read_bcftools_pileup_counts
 from combine_counts_utils import (
+    apply_masks_to_df,
     build_pos_ranges,
-    bcftools_counts_to_child_mats,
-    canon_mat_one_replicate,
+    get_mask_by_blacklist,
     get_mask_by_depth,
+    get_mask_by_exon,
     get_mask_by_het_balanced,
+    get_mask_by_region,
     hstack_replicate_mats,
+    map_allele_mat_to_snps,
 )
 from phasing_utils import apply_phase_to_mat
-from aggregation_utils import apply_region_blacklist_masks
-from feature_utils import annotate_feature_type, apply_exon_only_mask
+from feature_utils import annotate_feature_type
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_alleles import plot_allele_freqs, plot_snp_depth
 from plot_utils import observation_order
@@ -101,11 +103,10 @@ parent_alt_by_key = dict(zip(snps["KEY"], snps["ALT"]))
 tot_mtx_list = []
 ad_mtx_list = []
 for idx in range(n_samples):
-    bcf_df = read_bcftools_counts(counts_files[idx])
-    child_snps, tot_child, ad_child = bcftools_counts_to_child_mats(
-        bcf_df, parent_alt_by_key
+    child_snps, tot_child, ad_child = read_bcftools_pileup_counts(
+        counts_files[idx], parent_alt_by_key
     )
-    tot_canon, ad_canon = canon_mat_one_replicate(
+    tot_canon, ad_canon = map_allele_mat_to_snps(
         parent_keys, child_snps, tot_child, ad_child, 1
     )
     tot_mtx_list.append(tot_canon)
@@ -129,20 +130,23 @@ for nc in normal_obs:
 
 ##################################################
 num_snps_before = len(snps)
-snp_mask = np.ones(len(snps), dtype=bool)
-snp_mask, regions = apply_region_blacklist_masks(
-    snps, snp_mask, region_bed, blacklist_bed
-)
-
+regions = read_BED(region_bed)
 snps = annotate_feature_type(snps, gtf_file)
 
-snp_mask &= get_mask_by_depth(snps, tot_mtx, min_dp=max(min_depth, 1))
-for nc in normal_obs:
-    snp_mask &= get_mask_by_het_balanced(snps, ref_mtx, alt_mtx, gamma, normal_idx=nc)
+masks = [
+    get_mask_by_region(snps, regions),
+    get_mask_by_blacklist(snps, blacklist_bed),
+    get_mask_by_depth(snps, tot_mtx, min_dp=max(min_depth, 1)),
+    *(
+        get_mask_by_het_balanced(snps, ref_mtx, alt_mtx, gamma, normal_idx=nc)
+        for nc in normal_obs
+    ),
+]
+if exon_only:
+    masks.append(get_mask_by_exon(snps))
+snp_mask = np.logical_and.reduce(masks)
 
-snp_mask = apply_exon_only_mask(snps, snp_mask, exon_only)
-
-snps = snps.loc[snp_mask, :].reset_index(drop=True)
+snps = apply_masks_to_df(snps, snp_mask)
 snps = build_pos_ranges(snps, regions, colname="region_id")
 
 logging.info(f"#SNPs={np.sum(snp_mask)}/{num_snps_before} after filtering")

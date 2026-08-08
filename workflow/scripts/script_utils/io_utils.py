@@ -127,21 +127,28 @@ def read_VCF(
     return snps
 
 
-def read_bcftools_counts(tsv_file: str):
-    """Read a bcftools per-locus AD table into a DataFrame.
+def read_bcftools_pileup_counts(tsv_file: str, parent_alt_by_key: dict):
+    """Read a bcftools per-locus AD table as pseudobulk depth/alt count matrices.
 
     Input is the output of ``pileup_snps_bulk_bcftools``: tab-separated
-    ``#CHROM POS REF ALT AD`` where ALT is a comma-list (e.g. ``C,<*>``) and AD is a
+    ``#CHROM POS REF ALT AD``, where ALT is a comma-list (e.g. ``C,<*>``) and AD is a
     comma-list of allele depths (``ref,alt1,...``), one row per het locus with reads.
+
+    Only the PARENT ALT allele is counted: its depth is looked up in the locus's own ALT
+    list and is 0 when that allele was not observed. ``DP = ref + alt`` is therefore the
+    usable het depth, so a downstream ``REF = DP - ALT`` is exact.
 
     Args:
         tsv_file: Path to the (optionally gzipped) counts TSV.
+        parent_alt_by_key: Parent ALT allele keyed by ``#CHROM_POS``.
 
     Returns:
-        DataFrame with columns ``#CHROM``, ``POS``, ``REF``, ``ALT`` (list[str]),
-        ``AD`` (list[int]), ``KEY`` (``#CHROM_POS``, matching ``read_VCF``), and
-        ``RAW_SNP_DF_IDX`` (file row order). Empty DataFrame if the file has no records.
+        ``(snps, tot_mtx, ad_mtx)``: *snps* carries ``KEY`` (matching ``read_VCF``) and
+        ``RAW_SNP_DF_IDX`` (file row order); the matrices are ``(len(snps), 1)`` csr,
+        shaped for ``map_allele_mat_to_snps``.
     """
+    from scipy.sparse import csr_matrix  # scipy is not a runner-env dependency
+
     df = pd.read_csv(
         tsv_file,
         sep="\t",
@@ -149,17 +156,25 @@ def read_bcftools_counts(tsv_file: str):
         names=["#CHROM", "POS", "REF", "ALT", "AD"],
         dtype={"#CHROM": "string", "REF": "string", "ALT": "string", "AD": "string"},
     )
-    if df.empty:
-        return df
-    df["POS"] = df["POS"].astype(np.int64)
-    if not str(df["#CHROM"].iloc[0]).startswith("chr"):
-        df["#CHROM"] = "chr" + df["#CHROM"].astype(str)
-    df["#CHROM"] = df["#CHROM"].str.replace("^chrMT$", "chrM", regex=True)
-    df["KEY"] = df["#CHROM"].astype(str) + "_" + df["POS"].astype(str)
-    df["RAW_SNP_DF_IDX"] = np.arange(len(df))
-    df["ALT"] = df["ALT"].str.split(",")
-    df["AD"] = df["AD"].str.split(",").apply(lambda xs: [int(x) for x in xs])
-    return df
+    chrom = add_chr_prefix(df["#CHROM"]).str.replace("^chrMT$", "chrM", regex=True)
+    keys = chrom + "_" + df["POS"].astype(np.int64).astype(str)
+    alt_lists = df["ALT"].str.split(",")
+    ad_lists = df["AD"].str.split(",").apply(lambda xs: [int(x) for x in xs])
+    parent_alts = keys.map(parent_alt_by_key)
+
+    ref = np.array([ad[0] if ad else 0 for ad in ad_lists], dtype=np.int64)
+    alt = np.array(
+        [
+            ad[1 + alts.index(pa)] if pa in alts else 0
+            for ad, alts, pa in zip(ad_lists, alt_lists, parent_alts)
+        ],
+        dtype=np.int64,
+    )
+    snps = pd.DataFrame({"KEY": keys.to_numpy(), "RAW_SNP_DF_IDX": np.arange(len(df))})
+    # a csr built from a dense column drops the zeros itself
+    tot_mtx = csr_matrix((ref + alt).reshape(-1, 1))
+    ad_mtx = csr_matrix(alt.reshape(-1, 1))
+    return snps, tot_mtx, ad_mtx
 
 
 def read_snp_mats_bulk(snp_info_file, tot_file, a_file, b_file):

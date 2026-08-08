@@ -2,10 +2,10 @@
 
 A feature here is a GTF entity, a gene or an exon. Two groups:
 
-- annotation - stamp SNPs with the genes they sit in (``annotate_feature_type``), filter on
-  the result (``apply_exon_only_mask``), collapse ``feature_id`` strings
-  (``merge_feature_ids``), and glue each gene's span of fixed bins into one cluster so no
-  bb splits a gene (``stamp_gene_clusters``).
+- annotation - stamp SNPs with the genes they sit in (``annotate_feature_type``), collapse
+  ``feature_id`` strings (``merge_feature_ids``), and glue each gene's span of fixed bins
+  into one cluster so no bb splits a gene (``stamp_gene_clusters``). The filter on the
+  result is ``combine_counts_utils.get_mask_by_exon``, next to the other SNP masks.
 - counting - turn an assay's raw records into a ``(bin, cell)`` count matrix:
   ``sum_umis_to_bins`` for the scRNA/VISIUM h5ad, ``sum_atac_fragments_to_bins`` for 10x
   fragment files. ``assign_features_to_ranges`` is the gene-to-range mapping both the RNA
@@ -66,19 +66,6 @@ def annotate_feature_type(snps, gtf_file):
     snps.loc[in_gene, "feature_type"] = "intron"
     snps.loc[in_exon, "feature_type"] = "exon"
     return snps
-
-
-def apply_exon_only_mask(snps, snp_mask, exon_only):
-    """Log exonic SNP count and, if exon_only, AND snp_mask with the exon mask."""
-    n_exon = int((snps["feature_type"] == "exon").sum())
-    logging.info(
-        f"#exonic SNPs: {n_exon}/{len(snps)} ({n_exon / max(len(snps), 1):.3%})"
-    )
-    if exon_only:
-        exon_mask = (snps["feature_type"] == "exon").to_numpy()
-        logging.info(f"exon filter: {np.sum(exon_mask)}/{len(snps)} SNPs passed")
-        snp_mask &= exon_mask
-    return snp_mask
 
 
 def stamp_gene_clusters(bin_df, snps_binned):

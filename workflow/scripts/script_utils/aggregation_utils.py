@@ -18,8 +18,7 @@ import numba
 
 from scipy.sparse import issparse
 
-from range_utils import assign_pos_to_range, overlaps_any_range
-from io_utils import read_BED
+from range_utils import assign_pos_to_range
 from matrix_utils import cluster_sum
 
 
@@ -337,23 +336,3 @@ def build_adaptive_bins(
     )
 
     return bbs, snps
-
-
-def apply_region_blacklist_masks(snps, snp_mask, region_bed, blacklist_bed):
-    """AND snp_mask with region inclusion and (optional) blacklist exclusion.
-
-    Returns the updated mask and the parsed regions (reused for the SNP ranges).
-    """
-    regions = read_BED(region_bed)
-    region_mask = overlaps_any_range(snps, regions)
-    logging.info(f"region filter: {np.sum(region_mask)}/{len(snps)} SNPs passed")
-    snp_mask &= region_mask
-
-    if blacklist_bed is not None:
-        bl_regions = read_BED(blacklist_bed)
-        bl_mask = overlaps_any_range(snps, bl_regions)
-        logging.info(
-            f"blacklist filter: {np.sum(bl_mask)}/{len(snps)} SNPs in blacklist"
-        )
-        snp_mask &= ~bl_mask
-    return snp_mask, regions

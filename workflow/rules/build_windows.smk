@@ -151,7 +151,7 @@ if build_windows:
         assay of the run.
         """
         input:
-            region_bed=segment_bed,
+            segment_bed=segment_bed,
             reference=config["reference"] if _rd_covariates else [],
             genome_size=config["genome_size"],
             mappability_bed=(

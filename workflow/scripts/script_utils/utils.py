@@ -140,12 +140,6 @@ def sort_chroms(chroms: list):
     return sorted((str(c) for c in chroms), key=chrom_sort_key)
 
 
-def is_canonical_chrom(chrom):
-    """True for autosomes and X/Y (the contigs kept in a window BED)."""
-    core = strip_chr_prefix(chrom)
-    return core.isdigit() or core.upper() in ("X", "Y")
-
-
 def sort_df_chr(df, ch="#CHR", pos="POS"):
     """Sort a DataFrame by chromosome (genomic order) then by position, in-place.
 

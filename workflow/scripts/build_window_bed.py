@@ -18,7 +18,6 @@ snakemake_handle = snakemake  # noqa: F821
 from utils import (
     set_omp_threads,
     setup_logging,
-    is_canonical_chrom,
     match_chr_style,
     maybe_path,
     sort_df_chr,
@@ -55,11 +54,11 @@ def _to_genome_style(feature):
     return feature
 
 
-def generate_wgs_windows(window_size, chroms, regions):
+def generate_wgs_windows(window_size, chroms, segments):
     """Tile fixed-size windows within the segment BED (already blacklist-subtracted)."""
 
-    def _tile_region(chrom, start, end, window_size):
-        """Tile a region into fixed-size windows, merging an undersized last bin."""
+    def _tile_segment(chrom, start, end, window_size):
+        """Tile one segment into fixed-size windows, merging an undersized last bin."""
         rows = []
         pos = start
         while pos < end:
@@ -71,54 +70,44 @@ def generate_wgs_windows(window_size, chroms, regions):
             rows.pop()
         return rows
 
-    reg_df = regions[regions["#CHR"].isin(chroms)].reset_index(drop=True)
+    seg_df = segments[segments["#CHR"].isin(chroms)].reset_index(drop=True)
     rows = []
-    for _, r in reg_df.iterrows():
-        rows.extend(_tile_region(r["#CHR"], r["START"], r["END"], window_size))
+    for _, r in seg_df.iterrows():
+        rows.extend(_tile_segment(r["#CHR"], r["START"], r["END"], window_size))
     return pd.DataFrame(rows, columns=["#CHR", "START", "END"])
 
 
-region_bed = inp["region_bed"]
+segment_bed = inp["segment_bed"]
 genome_size = inp["genome_size"]
 chroms = list(p["chroms"])
 input_nochr = p["input_nochr"]
 logging.info(f"build_window_bed: window_size={p['window_size']}, {len(chroms)} chroms")
 
-regions = read_BED(region_bed)
-regions["#CHR"] = regions["#CHR"].astype(str)
-regions[["START", "END"]] = regions[["START", "END"]].astype(np.int64)
+segments = read_BED(segment_bed)
+segments["#CHR"] = segments["#CHR"].astype(str)
+segments[["START", "END"]] = segments[["START", "END"]].astype(np.int64)
 
-# tile the segment BED (one bin set for every bulk assay: WGS/WGS-lr/WES)
-windows = generate_wgs_windows(int(p["window_size"]), chroms, regions)
-n_tiled = len(windows)
-logging.info(f"tiled {n_tiled} windows")
-
-# region_id (arm) + seg_id (segment) per window by midpoint; drop windows off-segment
-windows, _ = assign_range_to_range(windows, regions, "region_id", rule="midpoint")
+# tile the segment BED (one bin set for every bulk assay: WGS/WGS-lr/WES), then stamp
+# region_id (arm) + seg_id by midpoint. Every window lies inside the segment row it was
+# tiled from, so dropna only guards that invariant.
+windows = generate_wgs_windows(int(p["window_size"]), chroms, segments)
+windows, _ = assign_range_to_range(windows, segments, "region_id", rule="midpoint")
 windows, _ = assign_range_to_range(
-    windows, regions, "seg_id", rule="midpoint", dropna=True
+    windows, segments, "seg_id", rule="midpoint", dropna=True
 )
-logging.info(
-    f"region_id/seg_id: kept {len(windows)}/{n_tiled} windows (dropped off-segment)"
-)
-
-# drop non-canonical contigs, then sort genomically
-n_pre = len(windows)
-windows = windows[windows["#CHR"].map(is_canonical_chrom)].copy()
 windows = sort_df_chr(windows, ch="#CHR", pos="START")
-logging.info(
-    f"sorted {len(windows)} windows on {windows['#CHR'].nunique()} chroms "
-    f"(dropped {n_pre - len(windows)} non-canonical)"
-)
+logging.info(f"tiled {len(windows)} windows on {windows['#CHR'].nunique()} chroms")
 
-# bedtools resolves contigs against the reference FASTA and genome_size, so the
-# intervals it receives carry the genome's naming; results map back by row order/_df_idx
-bed_windows = windows[["#CHR", "START", "END"]].copy()
-if input_nochr:
-    bed_windows["#CHR"] = bed_windows["#CHR"].map(strip_chr_prefix)
+reference = maybe_path(inp["reference"])
+mappability_bed = maybe_path(inp["mappability_bed"])
+if reference or mappability_bed:
+    # bedtools resolves contigs against the reference FASTA and genome_size, so the
+    # intervals it gets carry the genome's naming; results map back by row order/_df_idx
+    bed_windows = windows[["#CHR", "START", "END"]].copy()
+    if input_nochr:
+        bed_windows["#CHR"] = bed_windows["#CHR"].map(strip_chr_prefix)
 
 # GC (optional): per-window GC fraction via pybedtools nucleotide_content
-reference = maybe_path(inp["reference"])
 if reference:
     bt = BedTool.from_dataframe(bed_windows)
     nuc = bt.nucleotide_content(fi=reference).to_dataframe(disable_auto_names=True)
@@ -128,7 +117,6 @@ else:
     logging.info("no reference; GC skipped")
 
 # MAP (optional): per-window mean mappability via pybedtools map
-mappability_bed = maybe_path(inp["mappability_bed"])
 if mappability_bed:
     n_windows = len(windows)
     win_bed = bed_windows.copy()
@@ -198,7 +186,7 @@ logging.info(
 )
 
 # QC: segment-length (segment.bed) and window-length distributions
-seg_len_kbp = (regions["END"] - regions["START"]).to_numpy() / 1000.0
+seg_len_kbp = (segments["END"] - segments["START"]).to_numpy() / 1000.0
 win_len = (windows["END"] - windows["START"]).to_numpy()
 fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(10, 4))
 _hist_with_stats(
