@@ -59,8 +59,8 @@ def plot_segmentation_qc(
         One row per count-matrix column (per REP_ID), with ``REP_ID``, ``assay_type``,
         ``sample_type`` and a sample-name column (``SAMPLE_NAME`` or ``SAMPLE``). Row
         order must match the columns of the count matrices.
-    x_count_mat, b_count_mat, tot_count_mat : ndarray or sparse, (n_seg, n_rep)
-        Native, B-allele, and total-allele counts per segment per rep; columns aligned
+    x_count_mat, b_count_mat, tot_count_mat : ndarray or sparse, (n_seg, n_datasets)
+        Native, B-allele, and total-allele counts per segment per dataset_id; columns aligned
         to *sample_df* rows.
     gene_count : array-like (n_seg,) or None
         Optional explicit per-segment gene count (overrides derivation from *seg_df*).
@@ -69,7 +69,7 @@ def plot_segmentation_qc(
     logging.info("QC analysis - plot segmentation QC histograms")
 
     name_col = "SAMPLE_NAME" if "SAMPLE_NAME" in sample_df.columns else "SAMPLE"
-    n_rep = len(sample_df)
+    n_datasets = len(sample_df)
 
     _own_pdf = pdf is None
     pdf_pages = PdfPages(out_file) if _own_pdf else pdf
@@ -113,11 +113,14 @@ def plot_segmentation_qc(
     pdf_pages.savefig(fig1, dpi=dpi)
     plt.close(fig1)
 
-    # ---- page 2: per-rep count histograms ----
+    # ---- page 2: per-dataset_id count histograms ----
     fig2, axes = plt.subplots(
-        nrows=max(n_rep, 1), ncols=3, figsize=(15, 3 * max(n_rep, 1)), squeeze=False
+        nrows=max(n_datasets, 1),
+        ncols=3,
+        figsize=(15, 3 * max(n_datasets, 1)),
+        squeeze=False,
     )
-    for ri in range(n_rep):
+    for ri in range(n_datasets):
         row = sample_df.iloc[ri]
         assay = str(row.get("assay_type", ""))
         # 2-line sample label, shown once per row as a bold vertical "row super-title"

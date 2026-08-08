@@ -132,7 +132,7 @@ def observation_cluster_ids(rep2bc: pd.DataFrame, dataset_ids):
     """Cluster id per observation: REP_ID,BARCODE -> int64 index into dataset_ids.
 
     Categorical mapping with explicit ``dataset_ids`` order ensures the codes
-    align with the position of each rep in the caller's dataset_ids list.
+    align with the position of each dataset_id in the caller's dataset_ids list.
     """
     cats = pd.Categorical(rep2bc["REP_ID"], categories=list(dataset_ids))
     codes = np.asarray(cats.codes, dtype=np.int64)
@@ -262,12 +262,14 @@ def apply_masks_to_df(df: pd.DataFrame, *masks):
         *masks: One or more bool arrays of length ``len(df)``.
 
     Returns:
-        The surviving rows of *df*, ``reset_index(drop=True)``.
+        ``(df, keep)`` - the surviving rows, ``reset_index(drop=True)``, and the
+        combined mask over the INPUT rows, for subsetting a parallel matrix the
+        same way.
     """
     assert masks, "apply_masks_to_df, no mask given"
     keep = np.logical_and.reduce([np.asarray(m, dtype=bool) for m in masks])
     assert len(keep) == len(df), f"mask length {len(keep)} != {len(df)} rows"
-    return df.loc[keep].reset_index(drop=True)
+    return df.loc[keep].reset_index(drop=True), keep
 
 
 def get_mask_by_region(snps: pd.DataFrame, regions: pd.DataFrame):
@@ -408,28 +410,30 @@ def build_rdr_base_map(sample_df):
     sample used as its RDR baseline. Returns ``{tumor_obs: base_obs}``; a tumor
     with an unset ``RDR_BASE_REP_ID`` is omitted (median-normalized downstream).
     """
-    obs_repid = sample_df["REP_ID"].tolist()
+    obs_dataset_id = sample_df["REP_ID"].tolist()
     obs_stype = sample_df["sample_type"].tolist()
-    repid_to_obs = {rid: i for i, rid in enumerate(obs_repid)}
+    dataset_id_to_obs = {rid: i for i, rid in enumerate(obs_dataset_id)}
 
     has_col = "RDR_BASE_REP_ID" in sample_df.columns
-    obs_base_rep = (
-        sample_df["RDR_BASE_REP_ID"].tolist() if has_col else [None] * len(obs_repid)
+    obs_base_dataset_id = (
+        sample_df["RDR_BASE_REP_ID"].tolist()
+        if has_col
+        else [None] * len(obs_dataset_id)
     )
 
     base_map = {}
-    for i in range(len(obs_repid)):
+    for i in range(len(obs_dataset_id)):
         if obs_stype[i] != "tumor":
             continue
-        brep = obs_base_rep[i]
-        if has_col and pd.notna(brep) and str(brep) != "":
-            assert brep in repid_to_obs, (
-                f"{obs_repid[i]}: RDR_BASE_REP_ID {brep!r} is not a REP_ID"
+        base_dataset_id = obs_base_dataset_id[i]
+        if has_col and pd.notna(base_dataset_id) and str(base_dataset_id) != "":
+            assert base_dataset_id in dataset_id_to_obs, (
+                f"{obs_dataset_id[i]}: RDR_BASE_REP_ID {base_dataset_id!r} is not a REP_ID"
             )
-            assert repid_to_obs[brep] != i, (
-                f"{obs_repid[i]}: RDR_BASE_REP_ID {brep!r} is itself"
+            assert dataset_id_to_obs[base_dataset_id] != i, (
+                f"{obs_dataset_id[i]}: RDR_BASE_REP_ID {base_dataset_id!r} is itself"
             )
-            base_map[i] = repid_to_obs[brep]
+            base_map[i] = dataset_id_to_obs[base_dataset_id]
     return base_map
 
 
@@ -441,7 +445,7 @@ def compute_bb_rdr(
     tumor_obs_all,
     base_map,
     rdr_outlier_quantile,
-    obs_repid,
+    obs_dataset_id,
 ):
     """Per-bb RDR for every tumor observation.
 
@@ -469,7 +473,7 @@ def compute_bb_rdr(
         if m is not None:
             lib = obs_total_bases[m] / obs_total_bases[o]
             logging.info(
-                f"  bb RDR {obs_repid[o]} / base {obs_repid[m]}: library factor={lib:.4f}"
+                f"  bb RDR {obs_dataset_id[o]} / base {obs_dataset_id[m]}: library factor={lib:.4f}"
             )
             with np.errstate(invalid="ignore", divide="ignore"):
                 bb_rdr[:, rdr_pos[o]] = bb_dp[:, o] / bb_dp[:, m] * lib
@@ -478,7 +482,9 @@ def compute_bb_rdr(
             valid_i = np.isfinite(vals) & (vals > 0)
             if valid_i.any():
                 med = np.median(vals[valid_i])
-                logging.info(f"  bb median-centering {obs_repid[o]}: median={med:.4f}")
+                logging.info(
+                    f"  bb median-centering {obs_dataset_id[o]}: median={med:.4f}"
+                )
                 with np.errstate(invalid="ignore", divide="ignore"):
                     bb_rdr[valid_i, rdr_pos[o]] = vals[valid_i] / med
 

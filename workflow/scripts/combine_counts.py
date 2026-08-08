@@ -106,7 +106,7 @@ logging.info(
 )
 
 obs_assay = sample_df["assay_type"].tolist()
-obs_repid = sample_df["REP_ID"].tolist()
+obs_dataset_id = sample_df["REP_ID"].tolist()
 assay_obs_clusters, tumor_obs_all = build_assay_obs_clusters(sample_df, bulk_assays)
 base_map = build_rdr_base_map(sample_df)
 logging.info(f"{total_samples} bulk samples, {len(tumor_obs_all)} tumor columns")
@@ -160,7 +160,7 @@ if phase_flip_test:
 if gene_aware_binning:
     stamp_gene_clusters(bin_df, snps_binned)
 
-sample_labels = [f"{obs_assay[i]}:{obs_repid[i]}" for i in range(total_samples)]
+sample_labels = [f"{obs_assay[i]}:{obs_dataset_id[i]}" for i in range(total_samples)]
 tumor_labels = [sample_labels[c] for c in tumor_obs_all]
 genetic_map = pd.read_table(gmap_file, sep="\t") if gmap_file is not None else None
 
@@ -224,7 +224,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         tumor_obs_all,
         base_map,
         rdr_outlier_quantile,
-        obs_repid,
+        obs_dataset_id,
     )
 
     rdr_ylim = (np.round(np.nanquantile(bb_rdr, 0.99)).astype(int) + 1) * 1.1
@@ -250,11 +250,11 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     depth_normal = np.full_like(depth_tumor, np.nan, dtype=float)
     rdr_titles, rdr_norm_labels = [], []
     for j, c in enumerate(tumor_obs_all):
-        title = f"{sample_id} ({obs_assay[c]}) {obs_repid[c]} (T)"
+        title = f"{sample_id} ({obs_assay[c]}) {obs_dataset_id[c]} (T)"
         if c in base_map:
             depth_normal[:, j] = bb_dp[:, base_map[c]]
             rdr_norm_labels.append("normal")
-            rdr_titles.append(f"{title} & {obs_repid[base_map[c]]} (N)")
+            rdr_titles.append(f"{title} & {obs_dataset_id[base_map[c]]} (N)")
         else:
             rdr_norm_labels.append("median")
             rdr_titles.append(title)
@@ -263,7 +263,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     t_order = observation_order(
         [obs_assay[c] for c in tumor_obs_all],
         ["tumor"] * len(tumor_obs_all),
-        [obs_repid[c] for c in tumor_obs_all],
+        [obs_dataset_id[c] for c in tumor_obs_all],
     )
     baf_tumor = baf_mtx_bb[:, tumor_obs_all]
 

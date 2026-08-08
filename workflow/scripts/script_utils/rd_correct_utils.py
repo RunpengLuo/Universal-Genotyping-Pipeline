@@ -331,7 +331,7 @@ def compute_gc_rd_stats(mat, gc_vals, labels, n_gc_bins=100):
     gc_vals : np.ndarray
         Per-bin GC fraction (same length as mat rows).
     labels : list[str]
-        Column labels (sample/rep IDs).
+        Column labels (sample/dataset_id IDs).
     n_gc_bins : int
         Number of equal-width GC bins in [0, 1].
 

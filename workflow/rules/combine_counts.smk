@@ -213,7 +213,7 @@ elif workflow_mode == "single_cell_genotyping":
         params:
             qc_dir=config["qc_dir"],
             nonbulk_assays=assay_types,
-            frag_reps=assay2dataset_ids["scATAC"],
+            frag_dataset_ids=assay2dataset_ids["scATAC"],
             h5ad_assays=[at for at in assay_types if ASSAY_TYPE2MODALITY[at] == "RNA"],
             chroms=chroms,
             nu=config["params_combine_counts"]["nu"],

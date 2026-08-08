@@ -64,14 +64,15 @@ exon_only = snakemake_handle.params["exon_only"]
 run_id = snakemake_handle.params["run_id"]
 
 # outputs
-snp_info = snakemake_handle.output["snp_info"]
-tot_mtx_snp = snakemake_handle.output["tot_mtx_snp"]
-a_mtx_snp = snakemake_handle.output["a_mtx_snp"]
-b_mtx_snp = snakemake_handle.output["b_mtx_snp"]
-unique_snp_ids = snakemake_handle.output["unique_snp_ids"]
+out_snp_info = snakemake_handle.output["snp_info"]
+out_tot_mtx_snp = snakemake_handle.output["tot_mtx_snp"]
+out_a_mtx_snp = snakemake_handle.output["a_mtx_snp"]
+out_b_mtx_snp = snakemake_handle.output["b_mtx_snp"]
+out_unique_snp_ids = snakemake_handle.output["unique_snp_ids"]
 out_all_barcodes = snakemake_handle.output["all_barcodes"]
 out_barcodes_full = snakemake_handle.output["barcodes_full"]
-sample_file = snakemake_handle.output["sample_file"]
+out_sample_file = snakemake_handle.output["sample_file"]
+out_qc_pdf = snakemake_handle.output["qc_pdf"]
 
 is_rna_assay = ASSAY_TYPE2MODALITY[assay_type] == "RNA"
 
@@ -103,13 +104,13 @@ for idx, dataset_id in enumerate(dataset_ids):
     ad_mtx_list.append(ad_canon)
 
 all_barcodes = pd.concat(barcodes_list, axis=0, ignore_index=True)
-cell_rep_ids = np.repeat(
+cell_dataset_ids = np.repeat(
     np.arange(len(dataset_ids), dtype=np.int64),
     [len(b) for b in barcodes_list],
 )
 barcodes_full = pd.DataFrame(
     {
-        "REP_ID": np.array(dataset_ids, dtype=str)[cell_rep_ids],
+        "REP_ID": np.array(dataset_ids, dtype=str)[cell_dataset_ids],
         "BARCODE": all_barcodes["BARCODE"].to_numpy(),
     }
 )
@@ -139,12 +140,8 @@ if is_rna_assay:
         f"({np.sum(cov_mask) / len(snps):.3%})"
     )
     masks.append(cov_mask)
-snp_mask = np.logical_and.reduce(masks)
 
-snps = apply_masks_to_df(snps, snp_mask)
-snps["START"] = snps["POS0"]
-snps["END"] = snps["POS"]
-
+snps, snp_mask = apply_masks_to_df(snps, *masks)
 snps = build_pos_ranges(snps, regions, colname="region_id")
 
 logging.info(f"#SNPs={np.sum(snp_mask)}/{num_snps_before} after filtering")
@@ -154,8 +151,7 @@ ref_mtx = ref_mtx[snp_mask, :]
 a_mtx = a_mtx[snp_mask, :]
 b_mtx = b_mtx[snp_mask, :]
 
-af_pdf_path = snakemake_handle.output["qc_pdf"]
-with PdfPages(af_pdf_path) as pdf:
+with PdfPages(out_qc_pdf) as pdf:
     plot_snp_depth(
         tot_mtx,
         dataset_ids,
@@ -164,7 +160,7 @@ with PdfPages(af_pdf_path) as pdf:
         ref_mtx=ref_mtx,
         b_mtx=b_mtx,
         is_bulk=False,
-        cell_rep_ids=cell_rep_ids,
+        cell_dataset_ids=cell_dataset_ids,
         name_prefix="phase_and_concat",
         pdf=pdf,
         sample_id=sample_id,
@@ -185,7 +181,7 @@ with PdfPages(af_pdf_path) as pdf:
         run_id=run_id,
         sample_id=sample_id,
         pdf=pdf,
-        cell_rep_ids=cell_rep_ids,
+        cell_dataset_ids=cell_dataset_ids,
     )
     plot_allele_freqs(
         snps,
@@ -203,7 +199,7 @@ with PdfPages(af_pdf_path) as pdf:
         run_id=run_id,
         sample_id=sample_id,
         pdf=pdf,
-        cell_rep_ids=cell_rep_ids,
+        cell_dataset_ids=cell_dataset_ids,
     )
 
 ##################################################
@@ -221,12 +217,12 @@ _snp_cols = [
 if "seg_id" in snps.columns:
     _snp_cols.append("seg_id")
 _snp_cols += ["feature_id", "feature_type"]
-snps[_snp_cols].to_csv(snp_info, sep="\t", header=True, index=False)
-save_npz(tot_mtx_snp, tot_mtx)
-save_npz(a_mtx_snp, a_mtx)
-save_npz(b_mtx_snp, b_mtx)
+snps[_snp_cols].to_csv(out_snp_info, sep="\t", header=True, index=False)
+save_npz(out_tot_mtx_snp, tot_mtx)
+save_npz(out_a_mtx_snp, a_mtx)
+save_npz(out_b_mtx_snp, b_mtx)
 snp_ids = snps["#CHR"].astype(str) + "_" + snps["POS"].astype(str)
-np.save(unique_snp_ids, snp_ids.to_numpy())
+np.save(out_unique_snp_ids, snp_ids.to_numpy())
 all_barcodes.to_csv(out_all_barcodes, sep="\t", header=False, index=False)
 barcodes_full.to_csv(out_barcodes_full, sep="\t", header=True, index=False)
 sample_df = pd.DataFrame(
@@ -235,5 +231,5 @@ sample_df = pd.DataFrame(
 sample_df["SAMPLE_NAME"] = sample_id
 sample_df["REP_ID"] = dataset_ids
 sample_df["sample_type"] = sample_types
-sample_df.to_csv(sample_file, sep="\t", header=True, index=False)
+sample_df.to_csv(out_sample_file, sep="\t", header=True, index=False)
 logging.info("finished.")

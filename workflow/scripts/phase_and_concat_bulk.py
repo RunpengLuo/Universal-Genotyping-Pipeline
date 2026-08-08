@@ -15,7 +15,7 @@ import logging
 
 snakemake_handle = snakemake
 
-from utils import set_omp_threads, setup_logging, maybe_path
+from utils import set_omp_threads, setup_logging, log_hist, maybe_path
 
 set_omp_threads(snakemake_handle)
 setup_logging(snakemake_handle.log[0])
@@ -42,21 +42,6 @@ from plot_alleles import plot_allele_freqs, plot_snp_depth
 from plot_utils import observation_order
 
 
-def log_ref_mapping_bias(ref_counts, alt_counts, label=""):
-    """Log REF/(REF+ALT) summary stats to detect reference mapping bias."""
-    total = ref_counts + alt_counts
-    pos = total > 0
-    n_pos = int(np.sum(pos))
-    logging.info(f"{label}: {n_pos}/{len(total)} SNPs with total > 0")
-    if n_pos > 0:
-        ratio = ref_counts[pos] / total[pos]
-        logging.info(
-            f"{label} REF/(REF+ALT) stats: "
-            f"min={np.min(ratio):.4f}, max={np.max(ratio):.4f}, "
-            f"median={np.median(ratio):.4f}, mean={np.mean(ratio):.4f}"
-        )
-
-
 ##################################################
 logging.info("joint phase and concat for bulk assays")
 
@@ -72,22 +57,23 @@ blacklist_bed = maybe_path(snakemake_handle.input["blacklist_bed"])
 qc_dir = snakemake_handle.params["qc_dir"]
 sample_id = snakemake_handle.params["sample_id"]
 obs_assays = list(snakemake_handle.params["obs_assays"])
-obs_reps = list(snakemake_handle.params["obs_reps"])
+obs_dataset_ids = list(snakemake_handle.params["obs_dataset_ids"])
 obs_sample_types = list(snakemake_handle.params["obs_sample_types"])
-obs_base_reps = list(snakemake_handle.params["obs_base_reps"])
+obs_base_dataset_ids = list(snakemake_handle.params["obs_base_dataset_ids"])
 min_depth = int(snakemake_handle.params["min_depth"])
 gamma = float(snakemake_handle.params["gamma"])
 exon_only = snakemake_handle.params["exon_only"]
 run_id = snakemake_handle.params["run_id"]
 
 # outputs
-snp_info = snakemake_handle.output["snp_info"]
+out_snp_info = snakemake_handle.output["snp_info"]
 out_tot_mtx_snp = snakemake_handle.output["tot_mtx_snp"]
 out_a_mtx_snp = snakemake_handle.output["a_mtx_snp"]
 out_b_mtx_snp = snakemake_handle.output["b_mtx_snp"]
 out_sample_file = snakemake_handle.output["sample_file"]
+out_qc_pdf = snakemake_handle.output["qc_pdf"]
 
-n_samples = len(obs_reps)
+n_samples = len(obs_dataset_ids)
 normal_obs = [k for k, st in enumerate(obs_sample_types) if st == "normal"]
 logging.info(
     f"sample_id={sample_id}, {n_samples} bulk samples across assays={obs_assays}, "
@@ -121,11 +107,13 @@ alt_mtx = alt_mtx.toarray()
 a_mtx = a_mtx.toarray()
 b_mtx = b_mtx.toarray()
 
+# REF/(REF+ALT) per normal: mass sitting off 0.5 is reference mapping bias
 for nc in normal_obs:
-    log_ref_mapping_bias(
-        ref_mtx[:, nc].astype(float),
-        alt_mtx[:, nc].astype(float),
-        label=f"Normal[{obs_assays[nc]}:{obs_reps[nc]}]",
+    total = (ref_mtx[:, nc] + alt_mtx[:, nc]).astype(float)
+    covered = total > 0
+    log_hist(
+        ref_mtx[covered, nc] / total[covered],
+        f"Normal[{obs_assays[nc]}:{obs_dataset_ids[nc]}] REF/(REF+ALT) over {len(total)} SNPs",
     )
 
 ##################################################
@@ -144,9 +132,8 @@ masks = [
 ]
 if exon_only:
     masks.append(get_mask_by_exon(snps))
-snp_mask = np.logical_and.reduce(masks)
 
-snps = apply_masks_to_df(snps, snp_mask)
+snps, snp_mask = apply_masks_to_df(snps, *masks)
 snps = build_pos_ranges(snps, regions, colname="region_id")
 
 logging.info(f"#SNPs={np.sum(snp_mask)}/{num_snps_before} after filtering")
@@ -157,11 +144,10 @@ a_mtx = a_mtx[snp_mask, :]
 b_mtx = b_mtx[snp_mask, :]
 
 ##################################################
-sample_labels = [f"{obs_assays[k]}:{obs_reps[k]}" for k in range(n_samples)]
-obs_order = observation_order(obs_assays, obs_sample_types, obs_reps)
+sample_labels = [f"{obs_assays[k]}:{obs_dataset_ids[k]}" for k in range(n_samples)]
+obs_order = observation_order(obs_assays, obs_sample_types, obs_dataset_ids)
 
-af_pdf_path = snakemake_handle.output["qc_pdf"]
-with PdfPages(af_pdf_path) as pdf:
+with PdfPages(out_qc_pdf) as pdf:
     plot_snp_depth(
         tot_mtx,
         sample_labels,
@@ -170,7 +156,7 @@ with PdfPages(af_pdf_path) as pdf:
         ref_mtx=ref_mtx,
         b_mtx=b_mtx,
         is_bulk=True,
-        cell_rep_ids=None,
+        cell_dataset_ids=None,
         name_prefix="phase_and_concat",
         pdf=pdf,
         obs_order=obs_order,
@@ -222,7 +208,7 @@ out_cols += ["region_id"]
 if "seg_id" in snps.columns:
     out_cols.append("seg_id")
 out_cols += ["feature_id", "feature_type"]
-snps[out_cols].to_csv(snp_info, sep="\t", header=True, index=False)
+snps[out_cols].to_csv(out_snp_info, sep="\t", header=True, index=False)
 
 np.savez_compressed(out_tot_mtx_snp, mat=tot_mtx)
 np.savez_compressed(out_a_mtx_snp, mat=a_mtx)
@@ -230,12 +216,12 @@ np.savez_compressed(out_b_mtx_snp, mat=b_mtx)
 
 sample_df = pd.DataFrame(
     {
-        "SAMPLE": [f"{sample_id}_{rep}" for rep in obs_reps],
+        "SAMPLE": [f"{sample_id}_{dataset_id}" for dataset_id in obs_dataset_ids],
         "SAMPLE_NAME": sample_id,
-        "REP_ID": obs_reps,
+        "REP_ID": obs_dataset_ids,
         "sample_type": obs_sample_types,
         "assay_type": obs_assays,
-        "RDR_BASE_REP_ID": obs_base_reps,
+        "RDR_BASE_REP_ID": obs_base_dataset_ids,
     }
 )
 sample_df.to_csv(out_sample_file, sep="\t", header=True, index=False)

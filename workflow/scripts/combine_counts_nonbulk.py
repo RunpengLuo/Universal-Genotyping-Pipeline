@@ -3,7 +3,7 @@
 All non-bulk assays present in the sample (e.g. scRNA + scATAC for multiome) are segmented
 onto ONE shared set of bbs. Each (replicate x assay) is pseudobulked into one observation;
 ``build_adaptive_bins`` then requires ``min_snp_reads`` in EVERY observation, so bbs jointly
-satisfy every (rep, assay) -- exactly the bulk multi-sample pattern (see combine_counts.py),
+satisfy every (dataset_id, assay) -- exactly the bulk multi-sample pattern (see combine_counts.py),
 but with single cells pseudobulked per replicate first.
 
 The fixed bins are the window BED, the same grid bulk bins on: windows exist where no SNP
@@ -83,7 +83,9 @@ window_bed = snakemake_handle.input["window_bed"]
 genome_size = snakemake_handle.input["genome_size"]
 
 # parameters
-frag_reps = list(snakemake_handle.params["frag_reps"])  # parallel to frag_files
+frag_dataset_ids = list(
+    snakemake_handle.params["frag_dataset_ids"]
+)  # parallel to frag_files
 h5ad_assays = list(
     snakemake_handle.params["h5ad_assays"]
 )  # parallel to h5ad_files (RNA-family)
@@ -123,9 +125,9 @@ snps_list = [pd.read_table(f, sep="\t") for f in snp_info_files]
 tot_mtx_snp_list = [load_npz(f) for f in tot_mtx_snp_files]
 a_mtx_snp_list = [load_npz(f) for f in a_mtx_snp_files]
 b_mtx_snp_list = [load_npz(f) for f in b_mtx_snp_files]
-rep_ids_list = [s["REP_ID"].tolist() for s in sample_ids_list]
-cell_rep_idx_list = [
-    observation_cluster_ids(read_full_barcodes(bc_full), rep_ids_list[k])
+dataset_ids_list = [s["REP_ID"].tolist() for s in sample_ids_list]
+cell_dataset_idx_list = [
+    observation_cluster_ids(read_full_barcodes(bc_full), dataset_ids_list[k])
     for k, bc_full in enumerate(barcode_full_files)
 ]
 
@@ -149,15 +151,15 @@ logging.info(f"gene_aware_binning={gene_aware_binning}")
 
 ##################################################
 # 2. per-(replicate x assay) pseudobulk scattered onto the shared SNP set
-total_cols = sum(len(r) for r in rep_ids_list)
+total_cols = sum(len(r) for r in dataset_ids_list)
 tot_pb = np.zeros((n_snps, total_cols), dtype=np.float64)
-tot_pb_list = []  # per-assay (n_snps_k x n_reps_k) pseudobulk, in that assay's SNP order
-obs_assay, obs_repid, obs_offsets = [], [], []
+tot_pb_list = []  # per-assay (n_snps_k x n_datasets_k) pseudobulk, in that assay's SNP order
+obs_assay, obs_dataset_id, obs_offsets = [], [], []
 offset = 0
 for k in range(n_assays):
-    n_reps_k = len(rep_ids_list[k])
+    n_datasets_k = len(dataset_ids_list[k])
     tot_pb_k = sum_observations_to_pseudobulk(
-        tot_mtx_snp_list[k], cell_rep_idx_list[k], n_reps_k
+        tot_mtx_snp_list[k], cell_dataset_idx_list[k], n_datasets_k
     )
     tot_pb_list.append(tot_pb_k)
     shared_snp_ids = (
@@ -169,10 +171,10 @@ for k in range(n_assays):
         .astype(np.int64)
     )
     tot_pb[shared_snp_ids, offset : offset + tot_pb_k.shape[1]] = tot_pb_k
-    obs_assay += [nonbulk_assays[k]] * n_reps_k
-    obs_repid += rep_ids_list[k]
+    obs_assay += [nonbulk_assays[k]] * n_datasets_k
+    obs_dataset_id += dataset_ids_list[k]
     obs_offsets.append(offset)
-    offset += n_reps_k
+    offset += n_datasets_k
 logging.info(f"binning on {total_cols} (replicate x assay) pseudobulk observations")
 
 ##################################################
@@ -330,7 +332,7 @@ for j, min_snp_reads in enumerate(msr_list):
         if assay == "scATAC":
             x_count = sum_atac_fragments_to_bins(
                 frag_files,
-                frag_reps,
+                frag_dataset_ids,
                 read_full_barcodes(barcode_full_files[k]),
                 window_bb_ranges,
                 num_bbs,
@@ -355,13 +357,13 @@ for j, min_snp_reads in enumerate(msr_list):
         pdf = PdfPages(out_qc_pdf[idx])
         plot_allele_freqs(
             bbs,
-            rep_ids_list[k],
+            dataset_ids_list[k],
             tot_bb,
             b_bb,
             genome_size,
             qc_dir,
             apply_pseudobulk=True,
-            cell_rep_ids=cell_rep_idx_list[k],
+            cell_dataset_ids=cell_dataset_idx_list[k],
             allele="B",
             feature_label="bb",
             run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
@@ -377,13 +379,13 @@ for j, min_snp_reads in enumerate(msr_list):
         save_npz(out_b_mtx_multi[idx], mc["b"])
         plot_allele_freqs(
             mc["df"],
-            rep_ids_list[k],
+            dataset_ids_list[k],
             mc["tot"],
             mc["b"],
             genome_size,
             qc_dir,
             apply_pseudobulk=True,
-            cell_rep_ids=cell_rep_idx_list[k],
+            cell_dataset_ids=cell_dataset_idx_list[k],
             allele="B",
             feature_label="multi-snp",
             run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",

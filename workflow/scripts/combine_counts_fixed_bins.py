@@ -82,7 +82,7 @@ assert assay_type not in BULK_ASSAYS, (
     f"copytyping_preprocess, bulk assay unsupported: {assay_type}"
 )
 
-cell_rep_ids = observation_cluster_ids(
+cell_dataset_ids = observation_cluster_ids(
     read_full_barcodes(barcodes_full_path), dataset_ids
 )
 
@@ -148,7 +148,7 @@ with PdfPages(pdf_path) as pdf:
         genome_size,
         qc_dir,
         apply_pseudobulk=True,
-        cell_rep_ids=cell_rep_ids,
+        cell_dataset_ids=cell_dataset_ids,
         allele="cnv-B",
         feature_label="snp",
         suffix=f"_{assay_type}",
@@ -164,7 +164,7 @@ with PdfPages(pdf_path) as pdf:
         genome_size,
         qc_dir,
         apply_pseudobulk=True,
-        cell_rep_ids=cell_rep_ids,
+        cell_dataset_ids=cell_dataset_ids,
         allele="cnv-B",
         feature_label="bb",
         suffix=f"_{assay_type}",

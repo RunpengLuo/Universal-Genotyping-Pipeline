@@ -167,7 +167,7 @@ def sum_umis_to_bins(h5ad_file, barcodes, bb_df, num_bbs, assay_type):
     h5ad_file : str
         AnnData (cells x genes) with ``var`` carrying ``#CHR``, ``START``, ``END``.
     barcodes : sequence of str
-        Cell barcodes (``"{raw}_{rep}"``) in matrix-observation order (that assay's
+        Cell barcodes (``"{raw}_{dataset_id}"``) in matrix-observation order (that assay's
         allele observations).
     bb_df : pd.DataFrame
         bbs with ``#CHR``, ``START``, ``END`` (0-based half-open) and ``bb_id``.
@@ -193,7 +193,7 @@ def sum_umis_to_bins(h5ad_file, barcodes, bb_df, num_bbs, assay_type):
 
 
 def sum_atac_fragments_to_bins(
-    frag_files, reps, barcodes_full, bb_ranges, num_bbs, chunksize=5_000_000
+    frag_files, dataset_ids, barcodes_full, bb_ranges, num_bbs, chunksize=5_000_000
 ):
     """Count deduped ATAC fragments per bb per cell from 10x fragment files.
 
@@ -204,10 +204,10 @@ def sum_atac_fragments_to_bins(
 
     Parameters
     ----------
-    frag_files, reps : parallel lists
-        ``frag_files[i]`` is the fragment file for replicate ``reps[i]``.
+    frag_files, dataset_ids : parallel lists
+        ``frag_files[i]`` is the fragment file for replicate ``dataset_ids[i]``.
     barcodes_full : pd.DataFrame
-        Columns ``REP_ID``, ``BARCODE`` (``BARCODE`` = ``"{raw}_{rep}"``) giving the observation
+        Columns ``REP_ID``, ``BARCODE`` (``BARCODE`` = ``"{raw}_{dataset_id}"``) giving the observation
         order (identical to that assay's ``bb.*allele.npz`` observations).
     bb_ranges : pd.DataFrame
         Non-overlapping ``#CHR``, ``START``, ``END`` (0-based half-open) ranges carrying
@@ -222,25 +222,25 @@ def sum_atac_fragments_to_bins(
     scipy.sparse.csr_matrix, shape ``(num_bbs, n_cells)``, dtype int32.
     """
     n_cells = len(barcodes_full)
-    bc_rep = barcodes_full["REP_ID"].to_numpy().astype(str)
+    bc_dataset = barcodes_full["REP_ID"].to_numpy().astype(str)
     bc_full = barcodes_full["BARCODE"].to_numpy().astype(str)
-    # global observation index keyed by (rep, raw_barcode); strip the "_{rep}" suffix
+    # global observation index keyed by (dataset_id, raw_barcode); strip the "_{dataset_id}" suffix
     obs_of = {}
     for i in range(n_cells):
-        rep, raw = bc_rep[i], bc_full[i]
-        sfx = "_" + rep
+        dataset_id, raw = bc_dataset[i], bc_full[i]
+        sfx = "_" + dataset_id
         if raw.endswith(sfx):
             raw = raw[: -len(sfx)]
-        obs_of[(rep, raw)] = i
+        obs_of[(dataset_id, raw)] = i
 
     bb_all, obs_all = [], []
-    for frag_file, rep in zip(frag_files, reps):
-        rep_map = {raw: c for (r, raw), c in obs_of.items() if r == rep}
-        if not rep_map or frag_file is None:
+    for frag_file, dataset_id in zip(frag_files, dataset_ids):
+        dataset_map = {raw: c for (r, raw), c in obs_of.items() if r == dataset_id}
+        if not dataset_map or frag_file is None:
             continue
         n_frag = n_seen = 0
         for chunk in read_chunks_from_atac_fragments(frag_file, chunksize=chunksize):
-            obs_vals = chunk["BC"].map(rep_map).to_numpy()
+            obs_vals = chunk["BC"].map(dataset_map).to_numpy()
             m = ~pd.isna(obs_vals)
             if not m.any():
                 continue
@@ -262,7 +262,7 @@ def sum_atac_fragments_to_bins(
             n_seen += int(m.sum())
         pct = 100.0 * n_frag / n_seen if n_seen else 0.0
         logging.info(
-            f"  ATAC {rep}: {n_frag}/{n_seen} ({pct:.1f}%) fragments counted; "
+            f"  ATAC {dataset_id}: {n_frag}/{n_seen} ({pct:.1f}%) fragments counted; "
             "the rest fall outside every bin (blacklist holes, off-segment)"
         )
 

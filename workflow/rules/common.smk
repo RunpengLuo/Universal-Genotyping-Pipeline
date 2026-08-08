@@ -79,12 +79,12 @@ def download_slots(files):
 
 
 def spatial_layout(assay_type, dataset_ids):
-    """Space Ranger `spatial/` members of each rep, for staging before squidpy.
+    """Space Ranger `spatial/` members of each dataset_id, for staging before squidpy.
 
     squidpy.read.visium() takes a directory, so process_rna_anndata stages each
-    rep's files under <tmp>/spatial/ using their canonical Space Ranger names
+    dataset_id's files under <tmp>/spatial/ using their canonical Space Ranger names
     (RANGER_LAYOUT, const.py). Returns (names, paths): names[i] lists the spatial/
-    filenames of rep i, and paths is those files flattened in the same order, so a
+    filenames of dataset_id i, and paths is those files flattened in the same order, so a
     rule can pass paths as an input list and names as a param and still pair them up.
     """
     names, paths = [], []
