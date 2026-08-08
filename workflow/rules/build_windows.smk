@@ -1,7 +1,9 @@
 ##################################################
 # Segment BED + window BED, both built in EVERY mode.
 # Bulk counts the windows (mosdepth -> rd_correct); single-cell uses them as the
-# fixed-bin skeleton for binning. Only bulk needs the GC/MAP/REPLI covariates.
+# fixed-bin skeleton for binning. The build is identical in both: GC and MAP are
+# annotated whenever their config input is set. Only the Repli-seq FETCH is bulk-only,
+# because do_repliseq gates it.
 # Rule flow (downloads/tool calls are Snakemake rules, only binning is Python):
 #
 #   . build_segment_bed                [always, every mode]
@@ -10,7 +12,7 @@
 #            phase_and_concat (SNP region/seg assignment), rd_correct + combine_counts
 #            (QC region overlay) -- so it runs even when windows are pre-built.
 #
-# The window BED is EITHER built from the segments OR consumed pre-built and verified:
+# The window BED is EITHER built from the segments OR consumed pre-built as-is:
 #
 #   build_windows [no window_bed]:
 #     . repliseq_bigwig_to_bedgraph    [do_repliseq (bulk only), per bigWig {name}]
@@ -19,39 +21,22 @@
 #         in : {name}.hg19.bedGraph + chain URL (storage)
 #         out: {name}.hg38.bedGraph (cached under aux); hg19 runs skip this
 #     . build_window_bed              [one bin set for every assay of the run]
-#         in : segment_bed + genome_size, and (bulk only) reference, mappability_bed,
-#              {reference_version} bedgraphs
+#         in : segment_bed + genome_size + reference + mappability_bed
+#              + {reference_version} bedgraphs
 #         out: windows.bed.gz  (#CHR START END region_id seg_id [GC] [MAP] [REPLI])
-#              + qc_pdf (segment- and window-length histograms)
+#              segment- and window-length histograms are logged, not plotted
 #         Tiling is per segment row, so no window spans two segments.
 #
-#   else [window_bed set]:
-#     . verify_window_bed             [gates the RD path]
-#         in : config["window_bed"] + segment_bed
-#         out: aux/window_bed.checked -- fails when a window crosses a segment bound.
-#         The file itself is read directly by the consumers (window_bed_path); its
-#         region_id/seg_id are assumed to be the segment_bed ids. rd_correct filters
-#         it to config["chromosomes"], so extra contigs are harmless.
+#   else [window_bed set]: no rule at all. The configured file is read directly by the
+#   consumers; its region_id/seg_id are assumed to be the segment_bed ids, and
+#   rd_correct filters it to config["chromosomes"], so extra contigs are harmless.
 #
 #   . window_bed_to_3bed               [one shared file for every bulk assay]
 #       in : windows.bed.gz           out: aux/windows.3col.bed.gz (mosdepth --by)
 #
-# Globals from parse_workflow: segment_bed, build_windows, do_repliseq, window_size.
+# Globals from parse_workflow: segment_bed, window_bed (built or configured),
+# build_windows, do_repliseq, window_size.
 ##################################################
-
-# GC/MAP/REPLI are inputs to rd_correct, which only bulk runs; a non-bulk window BED
-# carries just the intervals + region_id/seg_id.
-_rd_covariates = workflow_mode == "bulk_genotyping"
-
-# One window BED for every assay of the run (they share the segment.bed tiling).
-window_bed_path = (
-    config["aux_dir"] + "/windows.bed.gz" if build_windows else config["window_bed"]
-)
-# gate on verify_window_bed when the window BED is supplied rather than built
-window_bed_checked = (
-    [] if build_windows else config["aux_dir"] + "/window_bed.checked"
-)
-
 
 rule build_segment_bed:
     """Segment BED: region_id (arm) + seg_id (the configured segment).
@@ -75,10 +60,9 @@ rule build_segment_bed:
         "../scripts/build_segment_bed.py"
 
 
-
 # ------------------------------------------------------------------------
-# Window BED: EITHER built from the segments, OR supplied and verified against
-# them (window_bed_path). The Repli-seq fetch/convert only feeds build_window_bed.
+# Window BED: EITHER built from the segments, OR supplied and used as-is.
+# The Repli-seq fetch/convert only feeds build_window_bed.
 # ------------------------------------------------------------------------
 if build_windows:
     if do_repliseq:
@@ -142,21 +126,18 @@ if build_windows:
                     "{output.unmapped} 2> {log}"
 
     rule build_window_bed:
-        """Build the window BED in one pass -> config["aux_dir"]/windows.bed.gz.
+        """Build the window BED in one pass -> aux_dir/windows.bed.gz.
 
         Tiles segment_bed and assigns region_id + seg_id, then annotates the
-        bias-correction covariates GC / MAP / REPLI. Every covariate is gated on its
-        input being non-empty, and they are all fed only in bulk: rd_correct is their
-        one consumer, so a non-bulk run gets the plain intervals. One bin set for every
-        assay of the run.
+        bias-correction covariates GC / MAP / REPLI. Each is gated on its own config
+        input being non-empty, the same way in every mode. One bin set for every assay
+        of the run; rd_correct (bulk) is the only consumer of the covariates.
         """
         input:
             segment_bed=segment_bed,
-            reference=config["reference"] if _rd_covariates else [],
+            reference=config["reference"],
             genome_size=config["genome_size"],
-            mappability_bed=(
-                (config.get("mappability_bed") or []) if _rd_covariates else []
-            ),
+            mappability_bed=config["mappability_bed"] or [],
             bedgraphs=(
                 [
                     _repli_cache + f"/{n}.{_repli_target}.bedGraph"
@@ -166,12 +147,7 @@ if build_windows:
                 else []
             ),
         output:
-            window_bed=config["aux_dir"] + "/windows.bed.gz",
-            qc_pdf=report(
-                config["qc_dir"] + "/build_window_bed.pdf",
-                category="QC plots",
-                subcategory="window build",
-            ),
+            window_bed=window_bed,
         log:
             config["log_dir"] + f"/build_window_bed/build_window_bed.{_run_id}.log",
         benchmark:
@@ -186,33 +162,12 @@ if build_windows:
         script:
             "../scripts/build_window_bed.py"
 
-else:
-
-    rule verify_window_bed:
-        """Fail unless every supplied window sits inside one segment_bed segment."""
-        input:
-            window_bed=config["window_bed"],
-            segment_bed=segment_bed,
-        output:
-            checked=config["aux_dir"] + "/window_bed.checked",
-        log:
-            config["log_dir"] + f"/verify_window_bed/verify_window_bed.{_run_id}.log",
-        benchmark:
-            config["bench_dir"]
-            + f"/verify_window_bed/verify_window_bed.{_run_id}.tsv"
-        conda:
-            "../envs/base.yaml"
-        params:
-            chroms=chroms,
-        script:
-            "../scripts/verify_window_bed.py"
 
 
 rule window_bed_to_3bed:
     """Headerless 3-column BED (#CHR/START/END) for mosdepth --by; one bin set, all bulk assays."""
     input:
-        window_bed=window_bed_path,
-        checked=window_bed_checked,
+        window_bed=window_bed,
     output:
         mosdepth_bed=temp(config["aux_dir"] + "/windows.3col.bed.gz"),
     log:

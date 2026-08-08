@@ -228,6 +228,35 @@ def read_BED(bed_file: str, addchr=True, extra_columns=("region_id", "seg_id")):
     return df
 
 
+def read_bedgraph(bg_file: str, chroms=None):
+    """Read a bedGraph track: ``chrom start end value``, 0-based half-open.
+
+    Contig names are chr-normalized on ingest, like every other reader here, so a
+    track that spells its contigs bare still matches *chroms*.
+
+    Args:
+        bg_file: Path to the (optionally gzipped) bedGraph.
+        chroms: Keep only these contigs; ``None`` keeps every row.
+
+    Returns:
+        DataFrame with ``#CHR``, ``START``, ``END``, ``signal``, reindexed from 0.
+
+    Notes/References:
+        Format: https://genome.ucsc.edu/goldenPath/help/bedgraph.html
+    """
+    df = pd.read_csv(
+        bg_file,
+        sep="\t",
+        header=None,
+        names=["#CHR", "START", "END", "signal"],
+        dtype={"#CHR": str, "START": np.int64, "END": np.int64, "signal": np.float64},
+    )
+    df["#CHR"] = add_chr_prefix(df["#CHR"])
+    if chroms is not None:
+        df = df[df["#CHR"].isin(chroms)]
+    return df.reset_index(drop=True)
+
+
 def read_barcodes(bc_file: str):
     """Read a barcode file (one barcode per line) and return as a list of strings.
 

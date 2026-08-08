@@ -1,13 +1,14 @@
 """Build the window BED, in one pass.
 
-Tiles segment_bed per segment row (so no window spans two segments), assigns region_id
-(arm) + seg_id (segment) by window midpoint, then annotates each bias-correction
+Tiles segment_bed per segment row (so no window spans two segments and each window
+inherits its row's region_id + seg_id), then annotates each bias-correction
 covariate whose input is non-empty: GC (reference FASTA), MAP (mappability_bed), REPLI
 (Repli-seq bedGraphs). Output columns: #CHR START END region_id seg_id [GC] [MAP]
-[REPLI] -- one bin set for every assay of the run. Bulk feeds all three covariates and
-counts the windows with mosdepth -> rd_correct; single-cell feeds none of them and uses
-the intervals as its fixed-bin skeleton. The Repli-seq bigWig fetch + bigWigToBedGraph +
-liftOver are Snakemake rules; this script only bins the resulting bedGraphs.
+[REPLI] -- one bin set for every assay of the run. Each covariate is annotated when its
+input is non-empty, the same way in every mode; rd_correct (bulk) is their only consumer,
+and single-cell additionally uses the intervals as its fixed-bin skeleton. The Repli-seq
+bigWig fetch + bigWigToBedGraph + liftOver are Snakemake rules; this script only bins the
+resulting bedGraphs.
 """
 
 import logging
@@ -18,7 +19,7 @@ snakemake_handle = snakemake  # noqa: F821
 from utils import (
     set_omp_threads,
     setup_logging,
-    match_chr_style,
+    log_hist,
     maybe_path,
     sort_df_chr,
     strip_chr_prefix,
@@ -31,93 +32,55 @@ import numpy as np
 import pandas as pd
 from pybedtools import BedTool
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
-
-from io_utils import read_BED
-from plot_utils import _hist_with_stats
+from aggregation_utils import build_fixedwidth_bins
+from io_utils import read_BED, read_bedgraph
 from range_utils import assign_range_to_range
 
 
 inp = snakemake_handle.input
 p = snakemake_handle.params
 out_bed = snakemake_handle.output["window_bed"]
-qc_pdf = snakemake_handle.output["qc_pdf"]
-
-
-def _to_genome_style(feature):
-    """Rename one pybedtools interval to the genome's naming."""
-    feature.chrom = match_chr_style(feature.chrom, input_nochr)
-    return feature
-
-
-def generate_wgs_windows(window_size, chroms, segments):
-    """Tile fixed-size windows within the segment BED (already blacklist-subtracted)."""
-
-    def _tile_segment(chrom, start, end, window_size):
-        """Tile one segment into fixed-size windows, merging an undersized last bin."""
-        rows = []
-        pos = start
-        while pos < end:
-            w_end = min(pos + window_size, end)
-            rows.append([chrom, pos, w_end])
-            pos = w_end
-        if len(rows) > 1 and (rows[-1][2] - rows[-1][1]) < window_size // 2:
-            rows[-2][2] = rows[-1][2]
-            rows.pop()
-        return rows
-
-    seg_df = segments[segments["#CHR"].isin(chroms)].reset_index(drop=True)
-    rows = []
-    for _, r in seg_df.iterrows():
-        rows.extend(_tile_segment(r["#CHR"], r["START"], r["END"], window_size))
-    return pd.DataFrame(rows, columns=["#CHR", "START", "END"])
 
 
 segment_bed = inp["segment_bed"]
 genome_size = inp["genome_size"]
+reference = inp["reference"]
 chroms = list(p["chroms"])
 input_nochr = p["input_nochr"]
 logging.info(f"build_window_bed: window_size={p['window_size']}, {len(chroms)} chroms")
 
-segments = read_BED(segment_bed)
+segments = read_BED(segment_bed)[["#CHR", "START", "END", "region_id", "seg_id"]].copy()
 segments["#CHR"] = segments["#CHR"].astype(str)
 segments[["START", "END"]] = segments[["START", "END"]].astype(np.int64)
+segments = segments[segments["#CHR"].isin(chroms)].reset_index(drop=True)
 
-# tile the segment BED (one bin set for every bulk assay: WGS/WGS-lr/WES), then stamp
-# region_id (arm) + seg_id by midpoint. Every window lies inside the segment row it was
-# tiled from, so dropna only guards that invariant.
-windows = generate_wgs_windows(int(p["window_size"]), chroms, segments)
-windows, _ = assign_range_to_range(windows, segments, "region_id", rule="midpoint")
-windows, _ = assign_range_to_range(
-    windows, segments, "seg_id", rule="midpoint", dropna=True
-)
+windows = build_fixedwidth_bins(segments, int(p["window_size"]))
 windows = sort_df_chr(windows, ch="#CHR", pos="START")
 logging.info(f"tiled {len(windows)} windows on {windows['#CHR'].nunique()} chroms")
 
-reference = maybe_path(inp["reference"])
+bed_windows = windows[["#CHR", "START", "END"]].copy()
+if input_nochr:
+    bed_windows["#CHR"] = bed_windows["#CHR"].map(strip_chr_prefix)
+
+# GC: per-window GC fraction via pybedtools nucleotide_content
+bt = BedTool.from_dataframe(bed_windows)
+nuc = bt.nucleotide_content(fi=reference).to_dataframe(disable_auto_names=True)
+assert len(nuc) == len(windows), (
+    f"bedtools nuc, got {len(nuc)} rows, expected {len(windows)}"
+)
+windows["GC"] = nuc["5_pct_gc"].values
+logging.info("annotated GC")
+
+# MAP: per-window mean mappability via pybedtools map
 mappability_bed = maybe_path(inp["mappability_bed"])
-if reference or mappability_bed:
-    # bedtools resolves contigs against the reference FASTA and genome_size, so the
-    # intervals it gets carry the genome's naming; results map back by row order/_df_idx
-    bed_windows = windows[["#CHR", "START", "END"]].copy()
-    if input_nochr:
-        bed_windows["#CHR"] = bed_windows["#CHR"].map(strip_chr_prefix)
-
-# GC (optional): per-window GC fraction via pybedtools nucleotide_content
-if reference:
-    bt = BedTool.from_dataframe(bed_windows)
-    nuc = bt.nucleotide_content(fi=reference).to_dataframe(disable_auto_names=True)
-    windows["GC"] = nuc["5_pct_gc"].values
-    logging.info("annotated GC")
-else:
-    logging.info("no reference; GC skipped")
-
-# MAP (optional): per-window mean mappability via pybedtools map
 if mappability_bed:
+
+    def _to_genome_style(feature):
+        """Rename one pybedtools interval to the genome's naming."""
+        nochr_chrom = strip_chr_prefix(feature.chrom)
+        feature.chrom = nochr_chrom if input_nochr else f"chr{nochr_chrom}"
+        return feature
+
     n_windows = len(windows)
     win_bed = bed_windows.copy()
     win_bed["_df_idx"] = np.arange(n_windows)
@@ -144,7 +107,7 @@ if mappability_bed:
 else:
     logging.info("no mappability_bed; MAP skipped")
 
-# REPLI (optional): bin each Repli-seq bedGraph by midpoint, average across tracks
+# REPLI: bin each Repli-seq bedGraph by midpoint, average across tracks
 bedgraphs = list(inp["bedgraphs"])
 if bedgraphs:
     n_win = len(windows)
@@ -152,19 +115,7 @@ if bedgraphs:
     signal_count = np.zeros(n_win, dtype=np.int64)
     win_ranges = windows[["#CHR", "START", "END"]].assign(_win=np.arange(n_win))
     for lf in bedgraphs:
-        bg = pd.read_csv(
-            lf,
-            sep="\t",
-            header=None,
-            names=["#CHR", "START", "END", "signal"],
-            dtype={
-                "#CHR": str,
-                "START": np.int64,
-                "END": np.int64,
-                "signal": np.float64,
-            },
-        )
-        bg = bg[bg["#CHR"].isin(chroms)].reset_index(drop=True)
+        bg = read_bedgraph(lf, chroms=chroms)
         bg, _ = assign_range_to_range(
             bg, win_ranges, "_win", rule="midpoint", dropna=True
         )
@@ -185,22 +136,4 @@ logging.info(
     f"wrote {len(windows)} windows [{', '.join(windows.columns)}] -> {out_bed}"
 )
 
-# QC: segment-length (segment.bed) and window-length distributions
-seg_len_kbp = (segments["END"] - segments["START"]).to_numpy() / 1000.0
-win_len = (windows["END"] - windows["START"]).to_numpy()
-fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(10, 4))
-_hist_with_stats(
-    ax0, seg_len_kbp, "segment length (kbp)", header="segment.bed", ylabel="# segments"
-)
-_hist_with_stats(
-    ax1,
-    win_len,
-    "window length (bp)",
-    header=f"{p['window_size']} bp windows",
-    ylabel="# windows",
-)
-fig.tight_layout()
-with PdfPages(qc_pdf) as pdf:
-    pdf.savefig(fig)
-plt.close(fig)
-logging.info(f"wrote QC length histograms -> {qc_pdf}")
+log_hist(windows["END"] - windows["START"], "window length (bp)")

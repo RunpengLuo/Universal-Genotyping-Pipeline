@@ -22,6 +22,54 @@ from range_utils import assign_pos_to_range
 from matrix_utils import cluster_sum
 
 
+def build_fixedwidth_bins(segments, bin_size, chroms=None):
+    """Tile every segment into fixed-width bins, so no bin spans two segments.
+
+    Each segment ``[START, END)`` is cut into *bin_size* pieces; the trailing remainder
+    becomes one shorter bin, unless it is under half a bin, in which case it is absorbed
+    by its predecessor. Every column of *segments* beyond the coordinates (``region_id``,
+    ``seg_id``, ...) is carried onto the bins it produced, so the ids need no separate
+    assignment pass.
+
+    Fully vectorized: bin counts come from one ``divmod`` over the segments and the rows
+    from one ``repeat``, so cost is O(#bins) in numpy rather than a Python loop per bin.
+
+    Args:
+        segments: Segments with ``#CHR``, ``START``, ``END``, plus any id columns.
+        bin_size: Bin width in bp.
+        chroms: Keep only segments on these contigs; ``None`` keeps every segment.
+
+    Returns:
+        DataFrame with ``#CHR``, ``START``, ``END`` and the carried columns, in segment
+        order.
+    """
+    if chroms is not None:
+        segments = segments[segments["#CHR"].isin(chroms)]
+    starts = segments["START"].to_numpy(dtype=np.int64)
+    ends = segments["END"].to_numpy(dtype=np.int64)
+
+    n_full, rem = np.divmod(ends - starts, bin_size)
+    # a trailing piece under half a bin joins its predecessor instead of standing alone
+    stands_alone = (rem > 0) & ~((n_full >= 1) & (rem < bin_size // 2))
+    n_bins = n_full + stands_alone
+
+    seg_idx = np.repeat(np.arange(len(segments)), n_bins)
+    # index of each bin within its own segment
+    k = np.arange(len(seg_idx)) - np.repeat(np.cumsum(n_bins) - n_bins, n_bins)
+
+    bin_starts = starts[seg_idx] + k * bin_size
+    # the last bin of a segment always closes on the segment's own END, whether it is
+    # short (remainder) or long (absorbed remainder)
+    bin_ends = np.where(k == n_bins[seg_idx] - 1, ends[seg_idx], bin_starts + bin_size)
+
+    out = {"#CHR": segments["#CHR"].to_numpy()[seg_idx]}
+    out["START"], out["END"] = bin_starts, bin_ends
+    for col in segments.columns:
+        if col not in ("#CHR", "START", "END"):
+            out[col] = segments[col].to_numpy()[seg_idx]
+    return pd.DataFrame(out)
+
+
 def stamp_bin_label(bin_df, snps_binned, col, default):
     """Carry a per-SNP label onto the fixed bins as a never-null cluster key.
 

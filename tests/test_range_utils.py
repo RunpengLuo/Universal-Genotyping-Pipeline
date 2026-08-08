@@ -19,7 +19,7 @@ Notes/References:
   Callers: feature_utils (annotate_feature_type, assign_features_to_ranges,
   sum_atac_fragments_to_bins), aggregation_utils (build_adaptive_bins),
   combine_counts_utils (build_pos_ranges, aggregate_bin_depth_to_bbs),
-  build_segment_bed / verify_window_bed / build_window_bed.
+  build_segment_bed / build_window_bed.
 """
 
 import os
@@ -187,8 +187,7 @@ def test_pos_out_col_names_the_added_column():
 def test_contained_needs_both_ends_in_one_id(start, end, expect):
     """rule="contained" yields an id only when both ends land in the same one.
 
-    build_segment_bed (segment inside one arm) and verify_window_bed (window inside
-    one segment) both rely on this.
+    build_segment_bed relies on this to assert each segment sits inside one arm.
     """
     qry = pd.DataFrame({"#CHR": ["chr1"], "START": [start], "END": [end]})
     got, na_idx = iv.assign_range_to_range(qry, DISJOINT, "rid", rule="contained")
@@ -337,3 +336,101 @@ def test_unknown_rule_is_rejected():
     qry = pd.DataFrame({"#CHR": ["chr1"], "START": [0], "END": [5]})
     with pytest.raises(AssertionError):
         iv.assign_range_to_range(qry, DISJOINT, "rid", rule="nearest")
+
+
+# --- trim_range_by_range: interval difference ------------------------------------
+
+
+def _q(rows, extra=None):
+    """Query ranges from (chrom, start, end) tuples, with one carried id column."""
+    df = pd.DataFrame(rows, columns=["#CHR", "START", "END"])
+    df["qid"] = extra if extra is not None else [f"q{i}" for i in range(len(df))]
+    return df
+
+
+@pytest.mark.parametrize(
+    "qry,ref,want",
+    [
+        # no overlap: passes through
+        ([("chr1", 0, 100)], [("chr1", 200, 300)], [(0, 100)]),
+        # a bite out of the middle splits it in two
+        ([("chr1", 0, 100)], [("chr1", 40, 60)], [(0, 40), (60, 100)]),
+        # overlapping the left edge trims the start
+        ([("chr1", 0, 100)], [("chr1", 0, 40)], [(40, 100)]),
+        # overlapping the right edge trims the end
+        ([("chr1", 0, 100)], [("chr1", 60, 100)], [(0, 60)]),
+        # fully covered: the range disappears
+        ([("chr1", 0, 100)], [("chr1", 0, 100)], []),
+        # ref wider than qry on both sides: also disappears
+        ([("chr1", 10, 90)], [("chr1", 0, 100)], []),
+        # abutting, not overlapping: half-open means no cut
+        ([("chr1", 0, 100)], [("chr1", 100, 200)], [(0, 100)]),
+        # two bites -> three pieces
+        (
+            [("chr1", 0, 100)],
+            [("chr1", 20, 30), ("chr1", 60, 70)],
+            [(0, 20), (30, 60), (70, 100)],
+        ),
+        # OVERLAPPING refs are merged first, so one gap not two
+        (
+            [("chr1", 0, 100)],
+            [("chr1", 20, 50), ("chr1", 40, 70)],
+            [(0, 20), (70, 100)],
+        ),
+        # NESTED refs likewise
+        (
+            [("chr1", 0, 100)],
+            [("chr1", 20, 70), ("chr1", 30, 40)],
+            [(0, 20), (70, 100)],
+        ),
+    ],
+)
+def test_trim_range_cases(qry, ref, want):
+    """Interval difference, including the overlapping/nested reference cases."""
+    out = iv.trim_range_by_range(_q(qry), _q(ref)[["#CHR", "START", "END"]])
+    assert list(zip(out["START"], out["END"])) == want
+
+
+def test_trim_range_carries_every_column_and_order():
+    """Any non-coordinate column rides along onto each surviving piece."""
+    q = pd.DataFrame(
+        {
+            "#CHR": ["chr1"],
+            "START": [0],
+            "END": [100],
+            "gene": ["A"],
+            "score": [1.5],
+        }
+    )
+    ref = pd.DataFrame({"#CHR": ["chr1"], "START": [40], "END": [60]})
+    out = iv.trim_range_by_range(q, ref)
+    assert list(out.columns) == list(q.columns)
+    assert out["gene"].tolist() == ["A", "A"]
+    assert out["score"].tolist() == [1.5, 1.5]
+
+
+def test_trim_range_untouched_chromosome_passes_through():
+    """A query on a contig the reference never mentions is returned as-is."""
+    q = _q([("chr1", 0, 100), ("chr9", 0, 100)])
+    ref = pd.DataFrame({"#CHR": ["chr1"], "START": [0], "END": [50]})
+    out = iv.trim_range_by_range(q, ref)
+    assert list(zip(out["#CHR"], out["START"], out["END"])) == [
+        ("chr1", 50, 100),
+        ("chr9", 0, 100),
+    ]
+
+
+def test_trim_range_empty_reference_is_identity():
+    """No reference ranges means nothing is cut."""
+    q = _q([("chr1", 0, 100), ("chr2", 0, 50)])
+    empty = pd.DataFrame({"#CHR": [], "START": [], "END": []})
+    out = iv.trim_range_by_range(q, empty)
+    assert len(out) == 2 and out["END"].tolist() == [100, 50]
+
+
+def test_trim_range_rejects_degenerate_ranges():
+    """The module's 0-based half-open invariant applies here too."""
+    bad = _q([("chr1", 50, 50)])
+    ref = pd.DataFrame({"#CHR": ["chr1"], "START": [0], "END": [10]})
+    with pytest.raises(AssertionError):
+        iv.trim_range_by_range(bad, ref)

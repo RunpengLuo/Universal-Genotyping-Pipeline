@@ -65,9 +65,8 @@ def logging_snakemake(msg):
     handler alone keeps workflow-parse diagnostics in the run log and off the terminal;
     ``logger.info`` would reach both, and ``print`` neither.
 
-    Falls back to ``print`` when there is no file handler: outside Snakemake (e.g.
-    ``resources/scripts/validate_sample_file.py``) and under ``--dryrun``, which writes
-    no log file at all.
+    Falls back to ``print`` when there is no file handler: outside Snakemake, and under
+    ``--dryrun``, which writes no log file at all.
 
     Args:
         msg: Message text, emitted as one unformatted INFO record.
@@ -92,6 +91,43 @@ def logging_snakemake(msg):
     )
 
 
+def log_hist(values, label, bins=20, width=48, fmt=".4g"):
+    """Log a one-line summary plus a plain-ASCII histogram of *values*.
+
+    For a distribution worth eyeballing but not worth a PDF. Bars are scaled to the
+    tallest bin, so the shape is readable but the heights are relative; the counts are
+    printed alongside. numpy is imported here, not at module scope, because this module
+    loads before ``set_omp_threads`` has capped the BLAS thread count.
+
+    Args:
+        values: 1-D numeric sequence; non-finite entries are dropped.
+        label: Name of the quantity, used in the summary line.
+        bins: Number of histogram bins.
+        width: Character width of the tallest bar.
+        fmt: Format spec for the summary statistics and bin edges.
+    """
+    import numpy as np
+
+    v = np.asarray(values, dtype=float).ravel()
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        logging.info(f"{label}: no finite values")
+        return
+    logging.info(
+        f"{label}: n={v.size}  min={v.min():{fmt}}  median={np.median(v):{fmt}}  "
+        f"mean={v.mean():{fmt}}  max={v.max():{fmt}}"
+    )
+    counts, edges = np.histogram(v, bins=bins)
+    peak = counts.max()
+    for i, count in enumerate(counts):
+        # np.histogram closes only the last bin on the right
+        close = "]" if i == len(counts) - 1 else ")"
+        bar = "#" * round(width * count / peak) if peak else ""
+        logging.info(
+            f"  [{edges[i]:>10{fmt}}, {edges[i + 1]:>10{fmt}}{close} {count:>9d} |{bar}"
+        )
+
+
 def maybe_path(x):
     """Return None if *x* is an empty list or None, otherwise return *x* unchanged.
 
@@ -112,12 +148,6 @@ def add_chr_prefix(series):
     """Prepend ``chr`` to every chromosome of a Series that lacks it."""
     series = series.astype(str)
     return series.where(series.str.lower().str.startswith("chr"), "chr" + series)
-
-
-def match_chr_style(name, input_nochr):
-    """Rename one contig to the convention ``genome_size`` declares."""
-    core = strip_chr_prefix(name)
-    return core if input_nochr else f"chr{core}"
 
 
 def chrom_sort_key(chrom):

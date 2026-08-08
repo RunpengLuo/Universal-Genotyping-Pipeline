@@ -73,6 +73,7 @@ if _has_config:
     segment_bed = _wf["segment_bed"]
     build_windows = _wf["build_windows"]
     do_repliseq = _wf["do_repliseq"]
+    window_bed = _wf["window_bed"]
     window_size = _wf["window_size"]
     genotype_files = _wf["genotype_files"]
     phase_files = _wf["phase_files"]

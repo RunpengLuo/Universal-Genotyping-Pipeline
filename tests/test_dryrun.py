@@ -131,7 +131,6 @@ def test_windows_are_built_from_the_segments(workspace, sheet, sample_id, mode, 
     counts = job_counts(proc.stdout)
     assert "build_segment_bed" in counts
     assert "build_window_bed" in counts
-    assert "verify_window_bed" not in counts
     # the configured segmentation feeds build_segment_bed, which feeds the tiling
     assert f"{ref}/segment.bed" in proc.stdout
     assert "/windows.bed.gz" in proc.stdout
@@ -207,10 +206,8 @@ def test_mixed_wgs_wes(workspace):
     ],
     ids=["bulk", "single_cell"],
 )
-def test_prebuilt_windows_are_verified_not_built(
-    workspace, sheet, sample_id, mode, assays
-):
-    """A pre-built window_bed is consumed directly, but checked against the segments."""
+def test_prebuilt_windows_are_used_not_built(workspace, sheet, sample_id, mode, assays):
+    """A pre-built window_bed is consumed as-is; nothing is tiled."""
     ref = workspace["ref"]
     proc = dryrun(
         workspace,
@@ -222,12 +219,11 @@ def test_prebuilt_windows_are_verified_not_built(
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     counts = job_counts(proc.stdout)
-    # nothing is tiled; the supplied grid is verified against segment.bed instead
+    # nothing is tiled; the supplied grid is read straight from its configured path
     assert "build_window_bed" not in counts
-    assert counts.get("verify_window_bed", 0) == 1
+    # build_segment_bed still runs: the SNP side and the RD QC overlay both read it
     assert "build_segment_bed" in counts
     assert f"{ref}/window.bed" in proc.stdout
-    assert "/window_bed.checked" in proc.stdout
 
 
 def test_prebuilt_windows_cover_all_assays(workspace):
@@ -670,11 +666,11 @@ def test_genotype_dataset_ids_in_selection_is_used(workspace):
 
 
 def test_single_cell_skips_repliseq(workspace):
-    """The Repli-seq covariate is a bulk bias-correction input, not a grid input.
+    """`do_repliseq` is the one thing build_window_bed still gates on the mode.
 
-    Single-cell builds the same window BED but reads none of GC/MAP/REPLI, so the ENCODE
-    bigWig fetch + liftOver must stay out of the DAG. Without this the grid change would
-    silently add 15 UCSC downloads to every hg19/hg38 single-cell run.
+    GC and MAP are annotated identically in every mode, but the ENCODE bigWig fetch +
+    liftOver must stay out of a single-cell DAG: they are 15 UCSC downloads feeding a
+    covariate only rd_correct (bulk) reads.
     """
     sheet = _sheet_with_refvers(
         workspace, "sc_hg38.json", ["hg38"] * 4, source="sc_json"
@@ -702,7 +698,6 @@ def test_copytyping_does_not_build_windows(workspace):
     assert proc.returncode == 0, proc.stderr[-2000:]
     counts = job_counts(proc.stdout)
     assert "build_window_bed" not in counts
-    assert "verify_window_bed" not in counts
 
 
 def test_single_cell_binning_reads_the_window_grid(workspace):

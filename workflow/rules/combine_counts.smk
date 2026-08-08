@@ -129,8 +129,7 @@ elif workflow_mode == "single_cell_genotyping":
                 if require_genetic_map
                 else []
             ),
-            window_bed=window_bed_path,
-            checked=window_bed_checked,
+            window_bed=window_bed,
             genome_size=config["genome_size"],
         output:
             bb_file=[

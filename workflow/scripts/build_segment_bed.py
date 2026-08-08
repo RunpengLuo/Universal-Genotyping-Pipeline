@@ -16,7 +16,8 @@ Blacklist subtraction may split one segment into several rows; they all keep its
 so a blacklist hole never becomes a bin boundary.
 
 Dependencies:
-  pandas; io_utils.read_BED, range_utils.assign_range_to_range, utils.setup_logging.
+  io_utils.read_BED, range_utils.assign_range_to_range,
+  range_utils.trim_range_by_range, utils.setup_logging, utils.log_hist.
 
 Inputs
   segments: the configured segmentation BED (BED4; 4th column = seg_id).
@@ -29,11 +30,9 @@ Outputs:
 import logging
 import os
 
-import pandas as pd
-
 from io_utils import read_BED
-from range_utils import assign_range_to_range
-from utils import setup_logging
+from range_utils import assign_range_to_range, trim_range_by_range
+from utils import log_hist, setup_logging
 
 snakemake_handle = snakemake  # noqa: F821
 setup_logging(snakemake_handle.log[0])
@@ -44,29 +43,6 @@ blacklist_bed = snakemake_handle.input.get("blacklist_bed", None)
 out_bed = snakemake_handle.output["segment_bed"]
 
 ID_COLS = ["region_id", "seg_id"]
-
-
-def subtract_blacklist(regions: pd.DataFrame, bl: pd.DataFrame) -> pd.DataFrame:
-    """Interval-subtract blacklist per chromosome, preserving ID_COLS."""
-    bl_by_chr = {c: g[["START", "END"]].to_numpy() for c, g in bl.groupby("#CHR")}
-    rows = []
-    for chrom, start, end, *ids in regions[
-        ["#CHR", "START", "END", *ID_COLS]
-    ].itertuples(index=False, name=None):
-        pieces = [(int(start), int(end))]
-        for bs, be in bl_by_chr.get(str(chrom), ()):
-            nxt = []
-            for s, e in pieces:
-                if be <= s or bs >= e:
-                    nxt.append((s, e))
-                    continue
-                if bs > s:
-                    nxt.append((s, int(bs)))
-                if be < e:
-                    nxt.append((int(be), e))
-            pieces = nxt
-        rows.extend([str(chrom), s, e, *ids] for s, e in pieces if e > s)
-    return pd.DataFrame(rows, columns=["#CHR", "START", "END", *ID_COLS])
 
 
 # configured segmentation, chr-normalized (seg_id = 4th column, else CHR:START-END)
@@ -93,7 +69,7 @@ logging.info(
 if blacklist_bed:
     bl = read_BED(blacklist_bed, extra_columns=())[["#CHR", "START", "END"]]
     n_raw = len(segments)
-    segments = subtract_blacklist(segments, bl)
+    segments = trim_range_by_range(segments, bl)
     logging.info(
         f"blacklist subtracted: {n_raw} -> {len(segments)} pieces "
         f"({os.path.basename(blacklist_bed)})"
@@ -102,12 +78,10 @@ if blacklist_bed:
 out = segments[["#CHR", "START", "END", *ID_COLS]]
 out = out.sort_values(["#CHR", "START"]).reset_index(drop=True)
 
-seg_len = out["END"] - out["START"]
 logging.info(
     f"segment bed: {len(out)} rows, {out['seg_id'].nunique()} seg_ids, "
-    f"{out['region_id'].nunique()} region_ids; "
-    f"length bp: min={int(seg_len.min())}, median={int(seg_len.median())}, "
-    f"mean={seg_len.mean():.0f}, max={int(seg_len.max())}"
+    f"{out['region_id'].nunique()} region_ids"
 )
-
 out.to_csv(out_bed, sep="\t", header=False, index=False)
+
+log_hist((out["END"] - out["START"]) / 1000.0, "segment length (kbp)")

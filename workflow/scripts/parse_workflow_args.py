@@ -117,10 +117,10 @@ def read_sample_sheet(path):
 
 
 def parse_records(
-    records,
-    sample_id,
-    reference_version,
-    config_assay_types,
+    records: list,
+    sample_id: str,
+    reference_version: str,
+    config_assay_types: list,
 ):
     """Select and parse sample records based on sample_id, reference build, and assay types.
 
@@ -326,6 +326,7 @@ def parse_workflow(config):
         logging_snakemake(
             f"build window BED from {segment_bed}, window_size={window_size}"
         )
+        window_bed = config["aux_dir"] + "/windows.bed.gz"
 
     # === pre-built files ===
     het_snp_vcf = config["het_snp_vcf"]
@@ -573,5 +574,6 @@ def parse_workflow(config):
         "segment_bed": segment_bed,
         "build_windows": build_windows,
         "do_repliseq": do_repliseq,
+        "window_bed": window_bed,
         "window_size": window_size,
     }

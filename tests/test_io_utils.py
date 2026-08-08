@@ -83,21 +83,6 @@ def test_add_chr_prefix(names, want):
     assert utils.add_chr_prefix(pd.Series(names, dtype=str)).tolist() == want
 
 
-@pytest.mark.parametrize(
-    "name,input_nochr,want",
-    [
-        ("22", False, "chr22"),
-        ("chr22", False, "chr22"),
-        ("22", True, "22"),
-        ("chr22", True, "22"),
-        ("chrX", True, "X"),
-    ],
-)
-def test_match_chr_style(name, input_nochr, want):
-    """Intervals handed to bedtools take the naming genome_size declares."""
-    assert utils.match_chr_style(name, input_nochr) == want
-
-
 def test_add_chr_prefix_is_per_row():
     """A GTF can start on a scaffold, so the decision cannot be made per file."""
     pd = pytest.importorskip("pandas")

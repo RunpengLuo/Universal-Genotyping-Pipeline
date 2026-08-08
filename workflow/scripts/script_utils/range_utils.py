@@ -19,6 +19,9 @@ is what makes ``dropna=True`` usable when a parallel matrix has to be subset the
 
 ``overlaps_any_range`` is the boolean variant and ``merge_ranges_to_clusters`` the
 array-level one: its ranges index into an ordered sequence rather than a coordinate.
+
+``trim_range_by_range`` is the one entry point that reshapes rather than annotates:
+interval difference, cutting one range set out of another.
 """
 
 import heapq
@@ -380,6 +383,98 @@ def overlaps_any_range(qry, ref, pos_col="POS0"):
             found |= valid
         hit[qmask] = found
     return hit
+
+
+def _merge_ranges(starts, ends):
+    """Sort and union overlapping or abutting ranges into disjoint ``(starts, ends)``.
+
+    Unlike :func:`_range_clusters`, which keeps every range and only groups them, this
+    replaces an overlapping run by the single range that covers it.
+    """
+    order = np.argsort(starts, kind="stable")
+    s, e = starts[order], ends[order]
+    # a range opens a new merged block when it starts past every earlier end
+    opens = s > np.maximum.accumulate(np.concatenate(([s[0] - 1], e[:-1])))
+    heads = np.flatnonzero(opens)
+    return s[heads], np.maximum.reduceat(e, heads)
+
+
+def trim_range_by_range(qry, ref):
+    """Cut every *ref* range out of the *qry* ranges and keep the surviving pieces.
+
+    Interval difference. A query range overlapping a reference range is split into the
+    parts outside it - one output row per surviving piece - and a query range fully
+    covered disappears. Every non-coordinate column of *qry* is carried onto each piece,
+    so ids survive the split; a query on a chromosome *ref* never mentions passes through
+    untouched. Output keeps the input row order.
+
+    Fully vectorized. Reference ranges are merged into disjoint blocks once, then two
+    ``searchsorted`` calls give each query the half-open block window it overlaps; the
+    surviving pieces are the gaps, built with one ``repeat``. Cost is O(#pieces) in
+    numpy, with no per-query Python.
+
+    Args:
+        qry: Ranges to cut, with ``#CHR``, ``START``, ``END`` plus any other columns.
+        ref: Ranges to remove, with ``#CHR``, ``START``, ``END``. May self-overlap.
+
+    Returns:
+        A new frame with *qry*'s columns, reindexed from 0. Row count may grow (a range
+        split in two), shrink (a range fully covered), or stay the same.
+    """
+    _check_ranges(qry, "qry")
+    if len(ref) == 0:
+        return qry.reset_index(drop=True)
+    _check_ranges(ref, "ref")
+
+    # one global block array; a chromosome's blocks are the slice at its offset, so the
+    # per-query window indices below stay valid as global indices
+    block_s, block_e, offset = [], [], {}
+    pos = 0
+    for chrom, ref_c in ref.groupby("#CHR", sort=False):
+        s, e = _merge_ranges(
+            ref_c["START"].to_numpy(np.int64), ref_c["END"].to_numpy(np.int64)
+        )
+        offset[chrom] = (pos, len(s))
+        block_s.append(s)
+        block_e.append(e)
+        pos += len(s)
+    block_s = np.concatenate(block_s)
+    block_e = np.concatenate(block_e)
+
+    chroms = qry["#CHR"].to_numpy()
+    qs = qry["START"].to_numpy(np.int64)
+    qe = qry["END"].to_numpy(np.int64)
+    lo = np.zeros(len(qry), dtype=np.int64)
+    hi = np.zeros(len(qry), dtype=np.int64)
+    for chrom in pd.unique(chroms):
+        rows = np.flatnonzero(chroms == chrom)
+        if chrom not in offset:
+            continue  # no block on this contig -> lo == hi == 0, the range is kept whole
+        off, n_blk = offset[chrom]
+        sl_s, sl_e = block_s[off : off + n_blk], block_e[off : off + n_blk]
+        lo[rows] = off + np.searchsorted(sl_e, qs[rows], side="right")
+        hi[rows] = off + np.searchsorted(sl_s, qe[rows], side="left")
+
+    # n_blocks blocks cut a range into at most n_blocks + 1 pieces
+    n_blocks = np.maximum(hi - lo, 0)
+    n_pieces = n_blocks + 1
+    src = np.repeat(np.arange(len(qry)), n_pieces)
+    k = np.arange(n_pieces.sum()) - np.repeat(np.cumsum(n_pieces) - n_pieces, n_pieces)
+
+    first, last = k == 0, k == n_blocks[src]
+    # piece k runs from the end of block k-1 (or the query start) to the start of
+    # block k (or the query end); blocks are disjoint, so interior pieces are non-empty
+    prev_blk = np.clip(lo[src] + k - 1, 0, len(block_e) - 1)
+    next_blk = np.clip(lo[src] + k, 0, len(block_s) - 1)
+    piece_s = np.where(first, qs[src], block_e[prev_blk])
+    piece_e = np.where(last, qe[src], block_s[next_blk])
+
+    # only the two boundary pieces can come out empty, when a block covers that end
+    keep = piece_e > piece_s
+    out = qry.iloc[src[keep]].reset_index(drop=True)
+    out["START"] = piece_s[keep]
+    out["END"] = piece_e[keep]
+    return out
 
 
 def merge_ranges_to_clusters(n_items, ranges):

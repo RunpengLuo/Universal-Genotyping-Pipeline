@@ -357,3 +357,74 @@ def test_window_frame_routes_fragments_to_the_owning_bb(feat, tmp_path):
     assert dense[0, 0] == 2, "two windows of one bb did not accumulate"
     assert dense[1, 1] == 1
     assert dense.sum() == 3, "the fragment in the blacklist hole was counted"
+
+
+# ---------------------------------------------------------------------------
+# build_fixedwidth_bins: the vectorized segment tiler
+# ---------------------------------------------------------------------------
+
+
+def _tile_loop(start, end, size):
+    """The pre-vectorization reference implementation."""
+    rows, pos = [], start
+    while pos < end:
+        e = min(pos + size, end)
+        rows.append([pos, e])
+        pos = e
+    if len(rows) > 1 and (rows[-1][1] - rows[-1][0]) < size // 2:
+        rows[-2][1] = rows[-1][1]
+        rows.pop()
+    return rows
+
+
+@pytest.mark.parametrize(
+    "start,end",
+    [
+        (0, 3000),  # exact multiple
+        (0, 2600),  # remainder >= size//2 -> its own bin
+        (0, 2400),  # remainder <  size//2 -> absorbed by its predecessor
+        (0, 2500),  # remainder == size//2, the boundary
+        (0, 400),  # shorter than one bin
+        (0, 1000),  # exactly one bin
+        (0, 1001),  # one bin + a 1 bp tail
+        (0, 1),  # single base
+        (7_000_000, 7_002_450),  # nonzero offset
+    ],
+)
+def test_fixedwidth_bins_match_the_tiling_loop(agg, start, end):
+    """Vectorized tiling reproduces the loop it replaced, remainder rule included."""
+    seg = pd.DataFrame(
+        {"#CHR": ["chr1"], "START": [start], "END": [end], "seg_id": ["s"]}
+    )
+    got = agg.build_fixedwidth_bins(seg, 1000)[["START", "END"]].values.tolist()
+    assert got == _tile_loop(start, end, 1000)
+
+
+def test_fixedwidth_bins_carry_segment_ids(agg):
+    """Each bin inherits its source segment's ids, so no assignment pass is needed."""
+    seg = pd.DataFrame(
+        {
+            "#CHR": ["chr1", "chr1", "chr2"],
+            "START": [0, 5000, 0],
+            "END": [2400, 7600, 1500],
+            "region_id": ["1p", "1q", "2p"],
+            "seg_id": ["a", "b", "c"],
+        }
+    )
+    out = agg.build_fixedwidth_bins(seg, 1000, chroms=["chr1"])
+    assert out["#CHR"].unique().tolist() == ["chr1"]
+    assert out["seg_id"].tolist() == ["a", "a", "b", "b", "b"]
+    assert out["region_id"].tolist() == ["1p", "1p", "1q", "1q", "1q"]
+    # every bin lies inside the segment it came from
+    span = seg.set_index("seg_id")
+    for _, r in out.iterrows():
+        assert span.loc[r["seg_id"], "START"] <= r["START"]
+        assert r["END"] <= span.loc[r["seg_id"], "END"]
+
+
+def test_fixedwidth_bins_on_empty_and_zero_length(agg):
+    """A zero-length segment yields no bin; an empty frame yields an empty frame."""
+    zero = pd.DataFrame({"#CHR": ["chr1"], "START": [5], "END": [5], "seg_id": ["s"]})
+    assert len(agg.build_fixedwidth_bins(zero, 1000)) == 0
+    empty = pd.DataFrame({"#CHR": [], "START": [], "END": [], "seg_id": []})
+    assert len(agg.build_fixedwidth_bins(empty, 1000)) == 0
