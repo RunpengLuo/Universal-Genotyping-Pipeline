@@ -34,6 +34,7 @@ REF_FILES = (
     "genome.fa",
     "genome_size.txt",
     "region.bed",
+    "segment.bed",
     "window.bed",
     "genes.gtf",
     "gmap.txt.gz",
@@ -97,11 +98,6 @@ def workspace(tmp_path_factory):
         _touch(str(ref / name))
         _touch(str(ref / f"{name}.bai"))
 
-    # SV breakpoints BEDPE (0-based, like BED): two junctions on chr22
-    (ref / "sv.bedpe").write_text(
-        "chr22\t16000000\t16000001\tchr22\t16500000\t16500001\tsv1\t60\t+\t-\n"
-        "chr22\t20000000\t20000001\tchr22\t30000000\t30000001\tsv2\t42\t-\t+\n"
-    )
     barcodes = str(outs / "filtered_feature_bc_matrix" / "barcodes.tsv.gz")
     bulk_json = {
         "version": 1,
@@ -127,35 +123,6 @@ def workspace(tmp_path_factory):
                 "files": {
                     "alignment": str(ref / "tumor.bam"),
                     "alignment_index": str(ref / "tumor.bam.bai"),
-                },
-            },
-        ],
-    }
-    # bulk with an SV BEDPE on the tumor -> breakpoint-aware pre-segmentation
-    bulk_bedpe_json = {
-        "version": 1,
-        "samples": [
-            {
-                "sample_id": "B1",
-                "dataset_id": "N1",
-                "assay_type": "bulkWGS",
-                "sample_type": "normal",
-                "reference_version": "chm13v2",
-                "files": {
-                    "alignment": str(ref / "normal.bam"),
-                    "alignment_index": str(ref / "normal.bam.bai"),
-                },
-            },
-            {
-                "sample_id": "B1",
-                "dataset_id": "D1",
-                "assay_type": "bulkWGS",
-                "sample_type": "tumor",
-                "reference_version": "chm13v2",
-                "files": {
-                    "alignment": str(ref / "tumor.bam"),
-                    "alignment_index": str(ref / "tumor.bam.bai"),
-                    "breakpoint_bedpe": str(ref / "sv.bedpe"),
                 },
             },
         ],
@@ -278,7 +245,6 @@ def workspace(tmp_path_factory):
     paths = {}
     for name, doc in (
         ("bulk", bulk_json),
-        ("bulk_bedpe", bulk_bedpe_json),
         ("bulk_mixed", bulk_mixed_json),
         ("sc", sc_json),
     ):
@@ -323,6 +289,7 @@ def dryrun(workspace, sample_file, sample_id, workflow_mode, assay_types, extra=
         f"reference={ref}/genome.fa",
         f"genome_size={ref}/genome_size.txt",
         f"region_bed={ref}/region.bed",
+        f"segment_bed={ref}/segment.bed",
         f"gtf_file={ref}/genes.gtf",
         f"gmap_path={ref}/gmap.txt.gz",
         f"snp_panel={ref}/snp_panel.vcf.gz",

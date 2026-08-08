@@ -129,7 +129,8 @@ elif workflow_mode == "single_cell_genotyping":
                 if require_genetic_map
                 else []
             ),
-            region_bed=config["region_bed"],
+            window_bed=window_bed_path,
+            checked=window_bed_checked,
             genome_size=config["genome_size"],
         output:
             bb_file=[
@@ -215,6 +216,7 @@ elif workflow_mode == "single_cell_genotyping":
             nonbulk_assays=assay_types,
             frag_reps=assay2dataset_ids["scATAC"],
             h5ad_assays=[at for at in assay_types if ASSAY_TYPE2MODALITY[at] == "RNA"],
+            chroms=chroms,
             nu=config["params_combine_counts"]["nu"],
             min_switchprob=config["params_combine_counts"]["min_switchprob"],
             switchprob_ps=config["params_combine_counts"]["switchprob_ps"],
@@ -254,7 +256,7 @@ elif workflow_mode == "copytyping_preprocess":
                 if wc.assay_type == "scATAC"
                 else []
             ),
-            region_bed=lambda wc: config["region_bed"],
+            region_bed=segment_bed,
             genome_size=lambda wc: config["genome_size"],
             bb_file=lambda wc: config["bb_file"] or [],
         output:

@@ -6,6 +6,13 @@ onto ONE shared set of bbs. Each (replicate x assay) is pseudobulked into one ob
 satisfy every (rep, assay) -- exactly the bulk multi-sample pattern (see combine_counts.py),
 but with single cells pseudobulked per replicate first.
 
+The fixed bins are the window BED, the same grid bulk bins on: windows exist where no SNP
+does, so a SNP-free segment still yields bbs carrying Xcount, and no window lies in a
+blacklist hole. The two count types reach a bb differently, on purpose: scATAC fragments
+are routed through the windows (a fragment in a hole hits no window and is dropped), while
+scRNA/VISIUM genes go to the bb hull, since a gene is indivisible and would land in an
+arbitrary window otherwise.
+
 All outputs live under ``bb_dir/MSR{msr}/{assay}/``: the shared ``bb.tsv.gz`` and combined
 ``sample_ids.tsv`` (duplicated per assay) plus the per-assay (n_bins x n_cells) matrices
 (``bb.{T,A,B}allele.npz``, ``multi_snp.*``, ``barcodes*``). Input for HATCHet3 and CalicoST.
@@ -17,7 +24,13 @@ import shutil
 
 snakemake_handle = snakemake
 
-from utils import set_omp_threads, setup_logging, maybe_path
+from utils import (
+    add_chr_prefix,
+    maybe_path,
+    set_omp_threads,
+    setup_logging,
+    sort_df_chr,
+)
 
 set_omp_threads(snakemake_handle)
 setup_logging(snakemake_handle.log[0])
@@ -38,14 +51,18 @@ from phasing_utils import (
     setup_phase_clusters,
 )
 from matrix_utils import sum_features_to_bbs, sum_observations_to_pseudobulk
-from atac_utils import count_atac_fragments_to_bbs
-from rna_utils import sum_rna_counts_to_bbs
+from feature_utils import (
+    merge_feature_ids,
+    stamp_gene_clusters,
+    sum_atac_fragments_to_bins,
+    sum_umis_to_bins,
+)
 from aggregation_utils import (
     build_adaptive_bins,
-    gene_cluster_labels,
-    merge_feature_ids,
-    assign_snps_to_bins,
+    log_off_range_depth,
+    stamp_bin_label,
 )
+from range_utils import assign_pos_to_range
 from plot_alleles import plot_allele_freqs
 from matplotlib.backends.backend_pdf import PdfPages
 
@@ -62,7 +79,7 @@ barcode_full_files = list(snakemake_handle.input["barcodes_full"])
 frag_files = list(snakemake_handle.input["frag_files"])
 h5ad_files = list(snakemake_handle.input["h5ad_files"])
 gmap_file = maybe_path(snakemake_handle.input["gmap_file"])
-region_bed = snakemake_handle.input["region_bed"]
+window_bed = snakemake_handle.input["window_bed"]
 genome_size = snakemake_handle.input["genome_size"]
 
 # parameters
@@ -73,6 +90,7 @@ h5ad_assays = list(
 qc_dir = snakemake_handle.params["qc_dir"]
 run_id = snakemake_handle.params["run_id"]
 nonbulk_assays = list(snakemake_handle.params["nonbulk_assays"])
+chroms = list(snakemake_handle.params["chroms"])
 nu = float(snakemake_handle.params["nu"])
 min_switchprob = float(snakemake_handle.params["min_switchprob"])
 switchprob_ps = float(snakemake_handle.params["switchprob_ps"])
@@ -128,21 +146,6 @@ cluster_cols = setup_phase_clusters(snps)
 
 gene_aware_binning = gene_aware_binning_param and has_feature
 logging.info(f"gene_aware_binning={gene_aware_binning}")
-if gene_aware_binning:
-    # gene clusters over the union SNPs (genomically ordered) so a bb never splits a
-    # gene; explode the ;-joined multi-gene feature_id so each gene gets its own span
-    _g = snps.loc[
-        snps["feature_id"].notna() & (snps["feature_id"] != "intergenic"),
-        ["feature_id"],
-    ].copy()
-    _g["__i"] = _g.index.to_numpy()
-    _g["feature_id"] = _g["feature_id"].str.split(";")
-    _g = _g.explode("feature_id")
-    _g = _g[_g["feature_id"] != "intergenic"]
-    _rng = _g.groupby("feature_id")["__i"].agg(["min", "max"])
-    snps["gene_cluster"] = gene_cluster_labels(
-        len(snps), zip(_rng["min"].to_numpy(), _rng["max"].to_numpy())
-    )
 
 ##################################################
 # 2. per-(replicate x assay) pseudobulk scattered onto the shared SNP set
@@ -181,15 +184,27 @@ joint_sids = pd.concat(
     [sample_ids_list[k].assign(assay_type=nonbulk_assays[k]) for k in range(n_assays)],
     ignore_index=True,
 )
-# per-SNP zero-width fixed bins for the joint binning
-bin_cols = ["#CHR", "START", "END", "region_id", "PS"]
-if gene_aware_binning:
-    bin_cols.append("gene_cluster")
-snp_bins = snps[bin_cols].copy()
-snp_bins["bin_id"] = np.arange(len(snp_bins))
+# fixed bins: the window BED, the same grid bulk bins on. Tiled per segment row, so a
+# window never spans two segments and none lies in a blacklist hole. Windows exist where
+# no SNP does, so a SNP-free segment still yields bbs carrying Xcount.
+bin_df = pd.read_table(window_bed, sep="\t", dtype={"#CHR": str})
+bin_df["#CHR"] = add_chr_prefix(bin_df["#CHR"])
+bin_df = bin_df[bin_df["#CHR"].isin(chroms)]
+# drop the bulk bias-correction covariates; groupby would copy them per cluster
+bin_df = bin_df[["#CHR", "START", "END", "region_id", "seg_id"]]
+bin_df = sort_df_chr(bin_df, ch="#CHR", pos="START").reset_index(drop=True)
+# bin_id must be the row position: build_adaptive_bins maps bb_id back positionally
+bin_df["bin_id"] = np.arange(len(bin_df))
+logging.info(f"fixed bins: {len(bin_df)} windows from {window_bed}")
+
 tot_pb_cont = np.ascontiguousarray(tot_pb)
 # assigned once here; every MSR below reuses it
-snps_binned = assign_snps_to_bins(snps, snp_bins, tot_pb_cont)
+snps["_orig_df_idx"] = np.arange(len(snps))
+snps_binned, off_idx = assign_pos_to_range(snps, bin_df, ref_id="bin_id", dropna=True)
+log_off_range_depth(off_idx, tot_pb_cont)
+stamp_bin_label(bin_df, snps_binned, "PS", default=1)
+if gene_aware_binning:
+    stamp_gene_clusters(bin_df, snps_binned)
 
 # per-assay multi-SNP pre-grouping (diagnostic; every nsnp_multi SNPs)
 multi_cache = []
@@ -197,7 +212,10 @@ for k in range(n_assays):
     snps_k = snps_list[k].copy()
     if "PS" not in snps_k.columns:
         snps_k["PS"] = 1
-    bins_k = snps_k[["#CHR", "START", "END", "region_id"]].copy()
+    k_cols = ["#CHR", "START", "END", "region_id"]
+    if "seg_id" in snps_k.columns:
+        k_cols.append("seg_id")
+    bins_k = snps_k[k_cols].copy()
     bins_k["bin_id"] = np.arange(len(bins_k))
     multi_snps, snps_multi = build_adaptive_bins(
         bins_k,
@@ -205,7 +223,7 @@ for k in range(n_assays):
         np.ascontiguousarray(tot_pb_list[k]),
         0,
         nsnp_multi,
-        cluster_cols=["region_id"],
+        cluster_cols=[c for c in ("region_id", "seg_id") if c in bins_k.columns],
         tumor_sidx=0,
         max_blocksize=0,
         gene_aware=False,
@@ -239,7 +257,7 @@ n_msr = len(msr_list)
 for j, min_snp_reads in enumerate(msr_list):
     logging.info(f"===== joint non-bulk binning MSR={min_snp_reads} =====")
     bbs, snps_bb = build_adaptive_bins(
-        snp_bins,
+        bin_df,
         snps_binned.copy(),
         tot_pb_cont,
         min_snp_reads,
@@ -250,6 +268,14 @@ for j, min_snp_reads in enumerate(msr_list):
         gene_aware=gene_aware_binning,
     )
     num_bbs = len(bbs)
+    assert bin_df["bb_id"].between(0, num_bbs - 1).all(), (
+        "fixed bins, some did not land in a bb (null cluster key)"
+    )
+    n_empty = int((bbs["#SNPS"] == 0).sum())
+    logging.info(
+        f"{num_bbs} bbs from {len(bin_df)} windows; {n_empty} carry no SNP "
+        "(Xcount only, all-zero allele rows)"
+    )
 
     if genetic_map is not None:
         dist_cms = interp_cM_between_bbs(bbs, snps_bb, genetic_map, bb_id_col="bb_id")
@@ -269,8 +295,13 @@ for j, min_snp_reads in enumerate(msr_list):
         bb_cols.append("feature_id")
     bb_out = bbs[bb_cols]
 
-    # union SNP -> shared bb_id map + the bb ranges (fragment/gene -> bb assignment)
+    # union SNP -> shared bb_id map, plus the two frames counts are assigned through
     bb_of_snp = snps_bb[["#CHR", "POS0", "bb_id"]]
+    # ATAC: the windows, stamped with their owning bb. A fragment in a blacklist hole or
+    # between segments hits no window and is dropped, where the bb hull would swallow it.
+    window_bb_ranges = bin_df[["#CHR", "START", "END", "bb_id"]].copy()
+    # RNA: the bb hulls. A gene is never split, and against 1 kb windows every window
+    # inside a gene ties on overlap, so gene -> window would pick one arbitrarily.
     bb_ranges = bbs[["#CHR", "START", "END", "bb_id"]].copy()
 
     for k in range(n_assays):
@@ -297,11 +328,11 @@ for j, min_snp_reads in enumerate(msr_list):
 
         # per-cell Xcount per bb bin: scATAC from raw fragments, RNA from the h5ad
         if assay == "scATAC":
-            x_count = count_atac_fragments_to_bbs(
+            x_count = sum_atac_fragments_to_bins(
                 frag_files,
                 frag_reps,
                 read_full_barcodes(barcode_full_files[k]),
-                bb_ranges,
+                window_bb_ranges,
                 num_bbs,
             )
             save_npz(out_x_count[idx], x_count)
@@ -309,7 +340,7 @@ for j, min_snp_reads in enumerate(msr_list):
                 f"{assay} MSR={min_snp_reads} Xcount (fragments): shape={x_count.shape}, nnz={x_count.nnz}"
             )
         elif assay in h5ad_of:
-            x_count = sum_rna_counts_to_bbs(
+            x_count = sum_umis_to_bins(
                 h5ad_of[assay],
                 read_barcodes(barcode_files[k]),
                 bb_ranges,

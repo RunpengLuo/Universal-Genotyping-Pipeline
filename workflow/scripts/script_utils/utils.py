@@ -136,7 +136,7 @@ def chrom_sort_key(chrom):
 
 def sort_chroms(chroms: list):
     """Sort chromosome names in genomic order. See :func:`chrom_sort_key`."""
-    assert len(chroms) != 0
+    assert len(chroms) != 0, "chromosome list is empty"
     return sorted((str(c) for c in chroms), key=chrom_sort_key)
 
 

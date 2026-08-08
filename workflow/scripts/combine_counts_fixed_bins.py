@@ -21,10 +21,13 @@ import scanpy as sc
 from const import ASSAY_TYPE2MODALITY, BULK_ASSAYS
 from io_utils import read_barcodes, read_full_barcodes
 from combine_counts_utils import observation_cluster_ids
-from aggregation_utils import merge_feature_ids, assign_snps_to_bbs
 from matrix_utils import sum_features_to_bbs
-from atac_utils import count_atac_fragments_to_bbs
-from rna_utils import assign_features_to_ranges
+from range_utils import assign_pos_to_range
+from feature_utils import (
+    assign_features_to_ranges,
+    merge_feature_ids,
+    sum_atac_fragments_to_bins,
+)
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_alleles import plot_allele_freqs
 
@@ -75,7 +78,9 @@ sample_df = pd.read_table(sample_file)
 dataset_ids = sample_df["REP_ID"].tolist()
 
 is_rna_assay = ASSAY_TYPE2MODALITY[assay_type] == "RNA"
-assert assay_type not in BULK_ASSAYS, "bulk sample CNV segmentation unsupported yet"
+assert assay_type not in BULK_ASSAYS, (
+    f"copytyping_preprocess, bulk assay unsupported: {assay_type}"
+)
 
 cell_rep_ids = observation_cluster_ids(
     read_full_barcodes(barcodes_full_path), dataset_ids
@@ -96,7 +101,10 @@ num_bbs = len(bb_df)
 logging.info(f"#bbs={num_bbs}")
 
 snps["RAW_SNP_DF_IDX"] = np.arange(len(snps))
-snps = assign_snps_to_bbs(snps, bb_df, assay_type, id_col="bb_id")
+logging.info(f"#{assay_type}-SNP (raw)={len(snps)}")
+snps, _ = assign_pos_to_range(snps, bb_df, ref_id="bb_id", dropna=True)
+logging.info(f"#{assay_type}-SNP (remain)={len(snps)}")
+bb_df["#SNPS"] = bb_df["bb_id"].map(snps["bb_id"].value_counts()).fillna(0).astype(int)
 
 if "feature_id" in snps.columns:
     bb_df["feature_id"] = (
@@ -171,13 +179,11 @@ if is_rna_assay:
     barcodes = np.asarray(read_barcodes(all_barcodes), dtype=str)
     missing = barcodes[~np.isin(barcodes, adata.obs_names)]
     assert len(missing) == 0, (
-        f"Missing {len(missing)} barcodes, e.g. {missing[:5]}, bug!"
+        f"h5ad, {len(missing)} barcode(s) missing, e.g. {missing[:5]}"
     )
     adata = adata[barcodes, :].copy()
 
-    adata = assign_features_to_ranges(
-        adata, bb_df, assay_type, range_id="bb_id", drop_cols=False
-    )
+    adata = assign_features_to_ranges(adata, bb_df, assay_type, range_id="bb_id")
     counts = adata.var["bb_id"].value_counts()
     bb_df["#feature"] = bb_df["bb_id"].map(counts).fillna(0).astype(int)
     x_count = sum_features_to_bbs(adata.X.T, adata.var["bb_id"].to_numpy(), num_bbs)
@@ -187,7 +193,7 @@ if is_rna_assay:
 else:
     # scATAC: per-cell Xcount from raw 10x fragments (no tile h5ad)
     bb_grid = bb_df[["#CHR", "START", "END", "bb_id"]].copy()
-    x_count = count_atac_fragments_to_bbs(
+    x_count = sum_atac_fragments_to_bins(
         frag_files,
         dataset_ids,
         read_full_barcodes(barcodes_full_path),

@@ -29,7 +29,6 @@ from const import (
     LONGREAD_ASSAYS,
     LONGREAD_PHASER,
     NONBULK_ASSAYS,
-    OPTIONAL_FILES,
     PANEL_PHASER,
     REPLISEQ_REFVERS,
     RDR_NORMALIZATIONS,
@@ -44,7 +43,6 @@ from const import (
     get_genetic_map_path,
     is_known_refver,
     get_phasing_panel_path,
-    is_url,
 )
 from io_utils import read_chrom_sizes
 from utils import logging_snakemake, strip_chr_prefix
@@ -73,15 +71,15 @@ def read_sample_sheet(path):
     ext = os.path.splitext(path)[1].lower()
     allowed_exts = (".json", ".tsv", ".txt")
     assert ext in allowed_exts, (
-        f"{path}: sample file must have extensions in {allowed_exts}, got {ext!r}"
+        f"{path}: extension must be one of {allowed_exts}, got {ext!r}"
     )
     records = []
     if ext == ".json":
         with open(path) as fh:
             doc = json.load(fh)
-        assert isinstance(doc, dict), f"{path}: sample file must be a JSON object"
+        assert isinstance(doc, dict), f"{path}: not a JSON object"
         samples = doc.get("samples")
-        assert isinstance(samples, list), f"{path}: 'samples' must be a list"
+        assert isinstance(samples, list), f"{path}: `samples` is not a list"
         for idx, rec in enumerate(samples):
             assert isinstance(rec, dict), f"{path}: record {idx} is not an object"
             norm = dict(rec)
@@ -89,7 +87,9 @@ def read_sample_sheet(path):
                 if key in norm and norm[key] is not None:
                     norm[key] = str(norm[key])
             files = norm.get("files")
-            assert isinstance(norm["files"], dict), "`files` must be an dict object"
+            assert isinstance(norm["files"], dict), (
+                f"{path}: record {idx}, `files` is not a dict"
+            )
             if isinstance(files, dict):
                 norm["files"] = {k: str(v) for k, v in files.items() if v is not None}
             records.append(norm)
@@ -149,14 +149,14 @@ def parse_records(
             continue
         dataset_id = rec["dataset_id"]
         assert dataset_id and all((c.isalnum() or c in "_-") for c in dataset_id), (
-            f"dataset_id must match [A-Za-z0-9_-], got {dataset_id!r}"
+            f"dataset_id {dataset_id!r}, must match [A-Za-z0-9_-]"
         )
         sample_type = rec["sample_type"]
         assert rec["sample_type"] in ("normal", "tumor"), (
-            f"{dataset_id}: sample_type must be 'normal' or 'tumor', got {sample_type}"
+            f"{dataset_id}: sample_type must be normal or tumor, got {sample_type!r}"
         )
         files = rec["files"]
-        readable = REQUIRED_FILES[assay_type] | OPTIONAL_FILES.get(assay_type, set())
+        readable = REQUIRED_FILES[assay_type]
         files = {k: v for k, v in files.items() if k in readable}
         for key in sorted(REQUIRED_FILES[assay_type]):
             assert files.get(key), (
@@ -168,7 +168,7 @@ def parse_records(
 
         parsed_records.append(rec)
 
-    assert parsed_records, "no datasets exist after selection."
+    assert parsed_records, "no datasets exist after selection"
 
     dataset2assays = {}
     for rec in parsed_records:
@@ -177,8 +177,8 @@ def parse_records(
         if len(assays) == 1:
             continue
         assert len(assays) == 2 and set(assays) == {"scRNA", "scATAC"}, (
-            f"dataset_id={dataset_id!r} has assays {assays}; only an "
-            "scRNA + scATAC pair may share one"
+            f"dataset_id {dataset_id!r}, assays {assays} may not share one "
+            "(scRNA + scATAC only)"
         )
 
     dataset_ids = {rec["dataset_id"] for rec in parsed_records}
@@ -187,13 +187,13 @@ def parse_records(
         if rdr_base_id:
             dataset_id = rec["dataset_id"]
             assert rec["sample_type"] == "tumor", (
-                f"{dataset_id}: rdr_base_dataset_id cannot set on a non-tumor record"
+                f"{dataset_id}: rdr_base_dataset_id set on a non-tumor record"
             )
             assert rdr_base_id != dataset_id, (
-                f"{dataset_id}: rdr_base_dataset_id cannot set to itself"
+                f"{dataset_id}: rdr_base_dataset_id is itself"
             )
             assert rdr_base_id in dataset_ids, (
-                f"{dataset_id}: rdr_base_dataset_id={rdr_base_id!r} is not in the sample sheet"
+                f"{dataset_id}: rdr_base_dataset_id {rdr_base_id!r} not in the sample sheet"
             )
     return parsed_records
 
@@ -219,7 +219,7 @@ def parse_workflow(config):
     # === workflow mode ===
     workflow_mode = config["workflow_mode"]
     assert workflow_mode in WORKFLOW_MODES, (
-        f"workflow_mode must be one of {list(WORKFLOW_MODES)}"
+        f"workflow_mode must be one of {list(WORKFLOW_MODES)}, got {workflow_mode!r}"
     )
 
     # === assay_types in configfile ===
@@ -228,12 +228,12 @@ def parse_workflow(config):
         a for a in config_assay_types if a not in ALLOWED_ASSAY_TYPES
     ]
     assert not invalid_assay_types, (
-        f"assay_types invalid: {invalid_assay_types}; allowed: {sorted(ALLOWED_ASSAY_TYPES)}"
+        f"assay_types {invalid_assay_types} not in {sorted(ALLOWED_ASSAY_TYPES)}"
     )
     allowed = BULK_ASSAYS if workflow_mode == "bulk_genotyping" else NONBULK_ASSAYS
     config_assay_types = [a for a in config_assay_types if a in allowed]
     assert len(config_assay_types) > 0, (
-        f"no assay types valid for workflow_mode={workflow_mode}"
+        f"assay_types, none valid for workflow_mode={workflow_mode}"
     )
 
     # === sample_file ===
@@ -243,15 +243,16 @@ def parse_workflow(config):
 
     # === reference version ===
     raw_refver = config["reference_version"]
-    assert raw_refver, (
-        f"reference_version is required in the config; one of {REFVERS} (or an alias)"
-    )
+    assert raw_refver, f"reference_version is required, one of {REFVERS} (or an alias)"
     reference_version = canonical_refver(raw_refver)
     if not is_known_refver(raw_refver):
         logging_snakemake(
             f"WARNING: reference_version={raw_refver!r} is not natively supported "
             f"({REFVERS})."
         )
+    reference = config["reference"]
+    assert reference, "reference is required (genome FASTA)"
+    assert os.path.exists(reference), f"reference path is invalid: {reference}"
 
     records = parse_records(records, sample_id, reference_version, config_assay_types)
     dataset_ids = {r["dataset_id"]: r for r in records}
@@ -290,7 +291,7 @@ def parse_workflow(config):
 
     # === species ===
     species = config["species"]
-    assert species, f"species is required in the config; one of {list(SPECIES)}"
+    assert species, f"species is required, one of {list(SPECIES)}"
     if species not in SPECIES:
         logging_snakemake(
             f"WARNING: species={species!r} is not natively supported ({list(SPECIES)})."
@@ -299,40 +300,31 @@ def parse_workflow(config):
     # === gtf_file ===
     assert config["gtf_file"], "gtf_file is required (gene/exon annotation GTF)"
 
-    # === segment BED: bulk splits arms at breakpoints, else the region BED ===
-    is_bulk = workflow_mode == "bulk_genotyping"
-    segment_bed = (
-        config["aux_dir"] + "/segment.bed" if is_bulk else config["region_bed"]
+    # === segment BED: the configured segmentation, arm-stamped and blacklisted ===
+    region_bed = config["region_bed"]
+    assert region_bed, "region_bed is required (chromosome arms)"
+    assert os.path.exists(region_bed), f"region_bed path is invalid: {region_bed}"
+    in_segment_bed = config["segment_bed"]
+    assert in_segment_bed, "segment_bed is required (genomic segments)"
+    assert os.path.exists(in_segment_bed), (
+        f"segment_bed path is invalid: {in_segment_bed}"
     )
-    bedpe_files = list(
-        dict.fromkeys(
-            rec["files"]["breakpoint_bedpe"]
-            for rec in records
-            if "breakpoint_bedpe" in rec["files"]
-        )
-    )
-    has_breakpoints = len(bedpe_files) > 0
+    segment_bed = config["aux_dir"] + "/segment.bed"
 
-    # === window BED (bulk): pre-built unless breakpoints re-tile the arms ===
-    do_repliseq = reference_version in REPLISEQ_REFVERS
+    # === window BED ===
+    do_repliseq = (
+        workflow_mode == "bulk_genotyping" and reference_version in REPLISEQ_REFVERS
+    )
     window_size = int(config["params_build_windows"]["window_size"])
     window_bed = config["window_bed"]
-    use_prebuilt_windows = False
-    if is_bulk and window_bed is not None:
-        assert is_url(window_bed) or os.path.exists(window_bed), (
-            f"window_bed path is invalid: {window_bed}"
-        )
-        use_prebuilt_windows = not has_breakpoints
-        if has_breakpoints:
-            logging_snakemake(
-                f"NOTE: window_bed ignored ({window_bed}); {len(bedpe_files)} "
-                "breakpoint_bedpe file(s) re-tile the arms"
-            )
-    if is_bulk:
+    if window_bed:
+        assert os.path.exists(window_bed), f"window_bed path is invalid: {window_bed}"
+        logging_snakemake(f"use pre-built window BED: {window_bed}")
+        build_windows = False
+    else:
+        build_windows = True
         logging_snakemake(
-            f"NOTE: bulk segment BED={segment_bed} (region_id=arm, seg_id=chunk), "
-            f"{len(bedpe_files)} breakpoint_bedpe file(s), "
-            f"windows={'pre-built' if use_prebuilt_windows else 'built'}"
+            f"build window BED from {segment_bed}, window_size={window_size}"
         )
 
     # === pre-built files ===
@@ -385,7 +377,7 @@ def parse_workflow(config):
                 ),
             )
             assert len(genotype_records) > 0, (
-                "failed to set dataset_ids for bulk gHET genotyping"
+                "genotype_dataset_ids, no dataset to genotype"
             )
             genotype_records = genotype_records[:1]
         genotype_dataset_ids = [rec["dataset_id"] for rec in genotype_records]
@@ -456,7 +448,7 @@ def parse_workflow(config):
                 normals = [r for r in lr_records if r["sample_type"] == "normal"]
                 phase_records = normals or lr_records
             assert phase_records, (
-                f"{phaser} requires a long-read assay ({sorted(LONGREAD_ASSAYS)})"
+                f"{phaser} requires a long-read assay {sorted(LONGREAD_ASSAYS)}"
             )
             short_read = [
                 rec["dataset_id"]
@@ -579,9 +571,7 @@ def parse_workflow(config):
         "get_genetic_map": get_genetic_map,
         "get_phasing_panel": get_phasing_panel,
         "segment_bed": segment_bed,
-        "bedpe_files": bedpe_files,
-        "has_breakpoints": has_breakpoints,
-        "use_prebuilt_windows": use_prebuilt_windows,
+        "build_windows": build_windows,
         "do_repliseq": do_repliseq,
         "window_size": window_size,
     }

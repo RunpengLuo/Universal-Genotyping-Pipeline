@@ -115,26 +115,64 @@ def test_stream_rejected_for_single_cell(workspace):
     assert "only supported for bulk_genotyping" in (proc.stdout + proc.stderr)
 
 
-def test_breakpoint_presegmentation(workspace):
-    """build_segment_bed + per-stream window build always run for bulk; bedpe feeds the segment BED."""
-    base = dryrun(
-        workspace, workspace["bulk_json"], "T1", "bulk_genotyping", ["bulkWGS"]
+@pytest.mark.parametrize(
+    "sheet,sample_id,mode,assays",
+    [
+        ("bulk_json", "T1", "bulk_genotyping", ["bulkWGS"]),
+        ("sc_json", "S1", "single_cell_genotyping", ["scRNA", "scATAC"]),
+    ],
+    ids=["bulk", "single_cell"],
+)
+def test_windows_are_built_from_the_segments(workspace, sheet, sample_id, mode, assays):
+    """With no window_bed, every mode builds the segment BED and tiles it."""
+    ref = workspace["ref"]
+    proc = dryrun(workspace, workspace[sheet], sample_id, mode, assays)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    counts = job_counts(proc.stdout)
+    assert "build_segment_bed" in counts
+    assert "build_window_bed" in counts
+    assert "verify_window_bed" not in counts
+    # the configured segmentation feeds build_segment_bed, which feeds the tiling
+    assert f"{ref}/segment.bed" in proc.stdout
+    assert "/windows.bed.gz" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    "mode,assays",
+    [
+        ("bulk_genotyping", ["bulkWGS"]),
+        ("single_cell_genotyping", ["scRNA", "scATAC"]),
+        ("copytyping_preprocess", ["scATAC"]),
+    ],
+)
+def test_segment_bed_is_required(workspace, mode, assays):
+    """segment_bed is a required reference input in every mode."""
+    sheet = (
+        workspace["bulk_json"] if mode == "bulk_genotyping" else workspace["sc_json"]
     )
-    bedpe = dryrun(
-        workspace, workspace["bulk_bedpe_json"], "B1", "bulk_genotyping", ["bulkWGS"]
+    sample_id = "T1" if mode == "bulk_genotyping" else "S1"
+    proc = dryrun(workspace, sheet, sample_id, mode, assays, extra=["segment_bed="])
+    assert proc.returncode != 0
+    assert "segment_bed is required" in proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize(
+    "mode,assays",
+    [
+        ("bulk_genotyping", ["bulkWGS"]),
+        ("single_cell_genotyping", ["scRNA", "scATAC"]),
+        ("copytyping_preprocess", ["scATAC"]),
+    ],
+)
+def test_segment_bed_is_built_in_every_mode(workspace, mode, assays):
+    """Every mode reads aux/segment.bed, so build_segment_bed is always planned."""
+    sheet = (
+        workspace["bulk_json"] if mode == "bulk_genotyping" else workspace["sc_json"]
     )
-    assert base.returncode == 0 and bedpe.returncode == 0, bedpe.stderr[-1500:]
-    base_counts, bedpe_counts = job_counts(base.stdout), job_counts(bedpe.stdout)
-    # the segment BED + per-stream window build are always-on for bulk (both runs)
-    for rule in (
-        "build_segment_bed",
-        "build_window_bed",
-    ):
-        assert rule in base_counts, f"{rule} missing (base):\n{base.stdout[-2000:]}"
-        assert rule in bedpe_counts, f"{rule} missing (bedpe):\n{bedpe.stdout[-2000:]}"
-    # a breakpoint_bedpe only feeds build_segment_bed when present
-    assert "sv.bedpe" in bedpe.stdout
-    assert "sv.bedpe" not in base.stdout
+    sample_id = "T1" if mode == "bulk_genotyping" else "S1"
+    proc = dryrun(workspace, sheet, sample_id, mode, assays)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "build_segment_bed" in job_counts(proc.stdout)
 
 
 def test_mixed_wgs_wes(workspace):
@@ -161,40 +199,35 @@ def test_mixed_wgs_wes(workspace):
     assert "bulkWES/bb.tsv.gz" not in proc.stdout
 
 
-def test_prebuilt_windows_skip_build(workspace):
-    """A pre-built window_bed (WGS-only, no BEDPE) is consumed directly, nothing built."""
+@pytest.mark.parametrize(
+    "sheet,sample_id,mode,assays",
+    [
+        ("bulk_json", "T1", "bulk_genotyping", ["bulkWGS"]),
+        ("sc_json", "S1", "single_cell_genotyping", ["scRNA", "scATAC"]),
+    ],
+    ids=["bulk", "single_cell"],
+)
+def test_prebuilt_windows_are_verified_not_built(
+    workspace, sheet, sample_id, mode, assays
+):
+    """A pre-built window_bed is consumed directly, but checked against the segments."""
     ref = workspace["ref"]
     proc = dryrun(
         workspace,
-        workspace["bulk_json"],
-        "T1",
-        "bulk_genotyping",
-        ["bulkWGS"],
+        workspace[sheet],
+        sample_id,
+        mode,
+        assays,
         extra=[f"window_bed={ref}/window.bed"],
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     counts = job_counts(proc.stdout)
-    # build_window_bed is not planned; the prebuilt window_bed is read directly
+    # nothing is tiled; the supplied grid is verified against segment.bed instead
     assert "build_window_bed" not in counts
+    assert counts.get("verify_window_bed", 0) == 1
     assert "build_segment_bed" in counts
     assert f"{ref}/window.bed" in proc.stdout
-
-
-def test_prebuilt_windows_ignored_with_bedpe(workspace):
-    """A BEDPE re-tiles the arms, so a pre-built window_bed is ignored and rebuilt."""
-    ref = workspace["ref"]
-    proc = dryrun(
-        workspace,
-        workspace["bulk_bedpe_json"],
-        "B1",
-        "bulk_genotyping",
-        ["bulkWGS"],
-        extra=[f"window_bed={ref}/window.bed"],
-    )
-    assert proc.returncode == 0, proc.stderr[-2000:]
-    counts = job_counts(proc.stdout)
-    assert "build_window_bed" in counts
-    assert "subset_prebuilt_window_bed" not in counts
+    assert "/window_bed.checked" in proc.stdout
 
 
 def test_prebuilt_windows_cover_all_assays(workspace):
@@ -218,7 +251,7 @@ def test_prebuilt_windows_skip_repliseq(workspace):
     """A pre-built window_bed skips the Repli-seq fetch (do_repliseq active on hg38).
 
     Network-free: the Repli-seq rules are the only URL-storage inputs here, and they
-    are gated inside `if not use_prebuilt_windows`, so nothing queries a remote host.
+    are gated inside `if build_windows`, so nothing queries a remote host.
     """
     ref = workspace["ref"]
     sheet = _sheet_with_refvers(workspace, "repliseq.json", ["hg38", "hg38"])
@@ -264,11 +297,14 @@ def test_visium_spatial_files_are_tracked(workspace):
         assert name in proc.stdout, f"{name} is not a tracked input"
 
 
-def test_null_files_value_is_dropped(workspace):
-    """A null optional input is absent, not the literal path "None"."""
+def test_unread_files_key_is_dropped(workspace):
+    """A files key the assay never reads is dropped, null or not, and plans the same DAG."""
     sheet = os.path.join(workspace["root"], "null_file.json")
     doc = json.loads(open(workspace["bulk_json"]).read())
-    doc["samples"][1]["files"]["breakpoint_bedpe"] = None
+    doc["samples"][1]["files"]["fragments"] = (
+        None  # scATAC-only key on a bulkWGS record
+    )
+    doc["samples"][0]["files"]["barcodes"] = "/path/to/nowhere.tsv.gz"
     with open(sheet, "w") as fh:
         json.dump(doc, fh)
     proc = dryrun(workspace, sheet, "T1", "bulk_genotyping", ["bulkWGS"])
@@ -309,10 +345,10 @@ def test_record_without_reference_version_fails(workspace):
     assert "missing required key(s)" in out and "reference_version" in out
 
 
-def _sheet_with_refvers(workspace, name, refvers):
-    """Copy bulk_json, setting each record's reference_version from *refvers*."""
+def _sheet_with_refvers(workspace, name, refvers, source="bulk_json"):
+    """Copy a sample sheet, setting each record's reference_version from *refvers*."""
     sheet = os.path.join(workspace["root"], name)
-    doc = json.loads(open(workspace["bulk_json"]).read())
+    doc = json.loads(open(workspace[source]).read())
     for rec, refver in zip(doc["samples"], refvers):
         rec["reference_version"] = refver
     with open(sheet, "w") as fh:
@@ -631,3 +667,53 @@ def test_genotype_dataset_ids_in_selection_is_used(workspace):
     )
     assert proc.returncode == 0, proc.stderr[-1500:]
     assert "genotype_dataset_ids: ['N1']" in proc.stdout
+
+
+def test_single_cell_skips_repliseq(workspace):
+    """The Repli-seq covariate is a bulk bias-correction input, not a grid input.
+
+    Single-cell builds the same window BED but reads none of GC/MAP/REPLI, so the ENCODE
+    bigWig fetch + liftOver must stay out of the DAG. Without this the grid change would
+    silently add 15 UCSC downloads to every hg19/hg38 single-cell run.
+    """
+    sheet = _sheet_with_refvers(
+        workspace, "sc_hg38.json", ["hg38"] * 4, source="sc_json"
+    )
+    proc = dryrun(
+        workspace,
+        sheet,
+        "S1",
+        "single_cell_genotyping",
+        ["scRNA", "scATAC"],
+        extra=["reference_version=hg38"],
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    counts = job_counts(proc.stdout)
+    assert "build_window_bed" in counts
+    assert "repliseq_bigwig_to_bedgraph" not in counts
+    assert "repliseq_liftover" not in counts
+
+
+def test_copytyping_does_not_build_windows(workspace):
+    """copytyping_preprocess bins onto its own bb_file, so no window grid is needed."""
+    proc = dryrun(
+        workspace, workspace["sc_json"], "S1", "copytyping_preprocess", ["scATAC"]
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    counts = job_counts(proc.stdout)
+    assert "build_window_bed" not in counts
+    assert "verify_window_bed" not in counts
+
+
+def test_single_cell_binning_reads_the_window_grid(workspace):
+    """combine_counts_nonbulk takes the window BED as its fixed bins."""
+    proc = dryrun(
+        workspace,
+        workspace["sc_json"],
+        "S1",
+        "single_cell_genotyping",
+        ["scRNA", "scATAC"],
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "combine_counts_nonbulk" in job_counts(proc.stdout)
+    assert "/windows.bed.gz" in proc.stdout

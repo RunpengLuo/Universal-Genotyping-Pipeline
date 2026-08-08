@@ -10,10 +10,10 @@ This script convert visium HD 3' BAM files from <src_col> resolution to <tgt_col
 [_, parquet_file, bam_in, bam_out, src_col, tgt_col] = sys.argv
 
 assert src_col in {"square_002um", "square_008um", "square_016um"}, (
-    f"unknown src_col={src_col}"
+    f"unknown src_col: {src_col}"
 )
 assert tgt_col in {"square_002um", "square_008um", "square_016um"}, (
-    f"unknown src_col={tgt_col}"
+    f"unknown tgt_col: {tgt_col}"
 )
 
 # 1) read mapping

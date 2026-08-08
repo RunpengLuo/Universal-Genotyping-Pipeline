@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(_REPO, "config"))
 for _sub in ("", "script_utils", "plot"):
     sys.path.insert(0, os.path.join(_SCRIPTS, _sub))
 ph = pytest.importorskip("phasing_utils")
+ru = pytest.importorskip("range_utils")
 
 
 @pytest.fixture
@@ -44,6 +45,20 @@ def agg():
     """aggregation_utils; its binning kernel needs numba."""
     pytest.importorskip("numba")
     return pytest.importorskip("aggregation_utils")
+
+
+@pytest.fixture
+def feat():
+    """feature_utils; pandas/numpy/scipy only."""
+    return pytest.importorskip("feature_utils")
+
+
+def _bin_snps(snps, bins):
+    """Stamp _orig_df_idx, assign to fixed bins, drop the misses (ex assign_snps_to_bins)."""
+    snps = snps.copy()
+    snps["_orig_df_idx"] = np.arange(len(snps))
+    binned, _ = ru.assign_pos_to_range(snps, bins, ref_id="bin_id", dropna=True)
+    return binned
 
 
 def _snps(n, region="r", ps=1):
@@ -157,7 +172,7 @@ def test_bbs_frame_joins_on_bb_id(agg):
     tot = np.full((80, 2), 10.0)
     bbs, snps_bb = agg.build_adaptive_bins(
         bins,
-        agg.assign_snps_to_bins(snps, bins, tot),
+        _bin_snps(snps, bins),
         tot,
         50,
         2,
@@ -178,3 +193,167 @@ if __name__ == "__main__":
             fn()
             print(f"PASS {name}")
     print("all combine_counts unit tests passed")
+
+
+# ---------------------------------------------------------------------------
+# Single-cell binning on the window grid: the fixed bins are windows, so bins
+# exist where no SNP does and none lies in a blacklist hole.
+# ---------------------------------------------------------------------------
+
+
+def _windows(n, chrom="chr1", size=1000, start=0):
+    """n contiguous fixed-size windows carrying one region_id/seg_id."""
+    starts = start + np.arange(n) * size
+    win = pd.DataFrame(
+        {
+            "#CHR": [chrom] * n,
+            "START": starts,
+            "END": starts + size,
+            "region_id": ["arm"] * n,
+            "seg_id": ["seg"] * n,
+        }
+    )
+    win["bin_id"] = np.arange(n)
+    return win
+
+
+def _snps_in(windows, rows):
+    """One SNP at the midpoint of each named window row."""
+    mids = ((windows["START"] + windows["END"]) // 2).to_numpy()[rows]
+    return pd.DataFrame(
+        {
+            "#CHR": ["chr1"] * len(rows),
+            "POS0": mids,
+            "POS": mids + 1,
+            "region_id": ["arm"] * len(rows),
+            "seg_id": ["seg"] * len(rows),
+        }
+    )
+
+
+def test_leading_snp_free_bin_keeps_a_cluster_key(agg):
+    """A bin with no SNP must still carry every cluster key.
+
+    build_adaptive_bins groups the bins by cluster_cols and pandas drops null keys, so a
+    null-keyed bin would never enter the merge and would keep the initialized bb_id of 0.
+    With a 1 kb grid the first bin almost never holds a SNP, so this is the common case.
+    """
+    win = _windows(10)
+    snps = _snps_in(win, [5, 6, 7])
+    snps["PS"] = 1
+    tot = np.full((len(snps), 2), 100.0)
+    binned = _bin_snps(snps, win)
+    agg.stamp_bin_label(win, binned, "PS", default=1)
+
+    assert win["PS"].notna().all(), "leading SNP-free bins lost their cluster key"
+    bbs, _ = agg.build_adaptive_bins(
+        win,
+        binned,
+        tot,
+        50,
+        1,
+        cluster_cols=["region_id", "seg_id", "PS"],
+        tumor_sidx=0,
+        max_blocksize=0,
+        gene_aware=False,
+    )
+    assert win["bb_id"].between(0, len(bbs) - 1).all()
+
+
+def test_snp_free_segment_gets_its_own_bb(agg):
+    """Windows exist without SNPs, so a SNP-free segment still yields a bb."""
+    win = pd.concat(
+        [_windows(5), _windows(5, start=100_000).assign(seg_id="seg2")],
+        ignore_index=True,
+    )
+    win["bin_id"] = np.arange(len(win))
+    snps = _snps_in(win, [1, 2, 3])  # every SNP lands in seg, none in seg2
+    snps["PS"] = 1
+    tot = np.full((len(snps), 2), 100.0)
+    binned = _bin_snps(snps, win)
+    agg.stamp_bin_label(win, binned, "PS", default=1)
+    bbs, _ = agg.build_adaptive_bins(
+        win,
+        binned,
+        tot,
+        50,
+        1,
+        cluster_cols=["region_id", "seg_id", "PS"],
+        tumor_sidx=0,
+        max_blocksize=0,
+        gene_aware=False,
+    )
+    assert (bbs["#SNPS"] == 0).any(), "the SNP-free segment produced no bb"
+    assert sorted(bbs["bb_id"]) == list(range(len(bbs))), "bb_ids are not contiguous"
+
+
+def test_switchprobs_finite_across_a_snp_free_bb(agg):
+    """A bb holding no SNP must not interpolate to NaN, nor poison the next bb."""
+    bbs = pd.DataFrame(
+        {
+            "#CHR": ["chr1"] * 3,
+            "START": [0, 10_000, 20_000],
+            "END": [10_000, 20_000, 30_000],
+            "bb_id": [0, 1, 2],
+        }
+    )
+    # bb 1 holds no SNP
+    snp_info = pd.DataFrame(
+        {"#CHR": ["chr1"] * 2, "POS": [5_000, 25_000], "bb_id": [0, 2]}
+    )
+    gmap = pd.DataFrame(
+        {
+            "#CHR": ["chr1"] * 4,
+            "POS": [0, 10_000, 20_000, 30_000],
+            "cM": [0.0, 1.0, 2.0, 3.0],
+        }
+    )
+    dist = ph.interp_cM_between_bbs(bbs, snp_info, gmap, bb_id_col="bb_id")
+    assert np.isfinite(dist).all(), "a SNP-free bb produced NaN cM distances"
+    probs = ph.estimate_switchprobs_cM(dist)
+    assert np.isfinite(probs).all()
+
+
+def test_gene_cluster_over_bins_never_splits_a_gene(agg, feat):
+    """A gene's whole span of bins is one cluster, including its SNP-free interior."""
+    win = _windows(10)
+    snps = _snps_in(win, [3, 7])  # one gene, SNPs only at its two ends
+    snps["feature_id"] = ["G", "G"]
+    binned = _bin_snps(snps, win)
+    feat.stamp_gene_clusters(win, binned)
+    inside = win.loc[3:7, "gene_cluster"].to_numpy()
+    assert len(set(inside)) == 1, "bins 3..7 of one gene fell into several clusters"
+    assert win.loc[2, "gene_cluster"] != inside[0]
+
+
+def test_window_frame_routes_fragments_to_the_owning_bb(feat, tmp_path):
+    """ATAC counts through the windows: holes are dropped, sibling windows accumulate."""
+    frag = tmp_path / "atac_fragments.tsv.gz"
+    import gzip
+
+    rows = [
+        ("chr1", 100, 200, "AAA"),  # window 0 -> bb 0
+        ("chr1", 1100, 1200, "AAA"),  # window 1 -> bb 0
+        ("chr1", 2100, 2200, "AAA"),  # the HOLE -> dropped
+        ("chr1", 3100, 3200, "BBB"),  # window 2 -> bb 1
+    ]
+    with gzip.open(frag, "wt") as fh:
+        for c, s, e, bc in rows:
+            fh.write(f"{c}\t{s}\t{e}\t{bc}\t1\n")
+
+    # windows 0,1 own bb 0; window 2 owns bb 1; 2000-3000 is a blacklist hole
+    win = pd.DataFrame(
+        {
+            "#CHR": ["chr1"] * 3,
+            "START": [0, 1000, 3000],
+            "END": [1000, 2000, 4000],
+            "bb_id": [0, 0, 1],
+        }
+    )
+    barcodes = pd.DataFrame({"REP_ID": ["R1", "R1"], "BARCODE": ["AAA_R1", "BBB_R1"]})
+    mtx = feat.sum_atac_fragments_to_bins([str(frag)], ["R1"], barcodes, win, 2)
+    dense = mtx.toarray()
+    assert dense.shape == (2, 2)
+    assert dense[0, 0] == 2, "two windows of one bb did not accumulate"
+    assert dense[1, 1] == 1
+    assert dense.sum() == 3, "the fragment in the blacklist hole was counted"

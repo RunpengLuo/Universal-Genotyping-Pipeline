@@ -1,11 +1,13 @@
-"""Build the bulk window BED, in one pass.
+"""Build the window BED, in one pass.
 
-Tiles segment_bed, assigns region_id (arm) + seg_id (breakpoint chunk) by window
-midpoint, then annotates GC (always), MAP (when a mappability_bed input is given), and
-REPLI (when Repli-seq bedGraphs are given). Output columns: #CHR START END region_id
-seg_id GC [MAP] [REPLI] -- the window BED consumed by count_reads (one bin set for every
-bulk assay: WGS/WGS-lr/WES). The Repli-seq bigWig fetch + bigWigToBedGraph + liftOver
-are Snakemake rules; this script only bins the resulting bedGraphs.
+Tiles segment_bed per segment row (so no window spans two segments), assigns region_id
+(arm) + seg_id (segment) by window midpoint, then annotates each bias-correction
+covariate whose input is non-empty: GC (reference FASTA), MAP (mappability_bed), REPLI
+(Repli-seq bedGraphs). Output columns: #CHR START END region_id seg_id [GC] [MAP]
+[REPLI] -- one bin set for every assay of the run. Bulk feeds all three covariates and
+counts the windows with mosdepth -> rd_correct; single-cell feeds none of them and uses
+the intervals as its fixed-bin skeleton. The Repli-seq bigWig fetch + bigWigToBedGraph +
+liftOver are Snakemake rules; this script only bins the resulting bedGraphs.
 """
 
 import logging
@@ -38,6 +40,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 from io_utils import read_BED
 from plot_utils import _hist_with_stats
+from range_utils import assign_range_to_range
 
 
 inp = snakemake_handle.input
@@ -90,28 +93,11 @@ windows = generate_wgs_windows(int(p["window_size"]), chroms, regions)
 n_tiled = len(windows)
 logging.info(f"tiled {n_tiled} windows")
 
-# region_id (arm) + seg_id (chunk) per window by midpoint; drop windows off-segment
-mids = (windows["START"] + windows["END"]) // 2
-region_out = pd.Series(pd.NA, index=windows.index, dtype="object")
-seg_out = pd.Series(pd.NA, index=windows.index, dtype="object")
-for chrom in regions["#CHR"].unique():
-    win_mask = windows["#CHR"] == chrom
-    if not win_mask.any():
-        continue
-    reg_ch = regions.loc[regions["#CHR"] == chrom].sort_values("START")
-    starts = reg_ch["START"].to_numpy()
-    ends = reg_ch["END"].to_numpy()
-    ids = reg_ch["region_id"].to_numpy()
-    segs = reg_ch["seg_id"].to_numpy()
-    positions = mids[win_mask].to_numpy()
-    idx = np.searchsorted(starts, positions, side="right") - 1
-    valid = (idx >= 0) & (positions < ends[idx.clip(min=0)])
-    win_indices = windows.index[win_mask]
-    region_out.loc[win_indices[valid]] = ids[idx[valid]]
-    seg_out.loc[win_indices[valid]] = segs[idx[valid]]
-windows["region_id"] = region_out
-windows["seg_id"] = seg_out
-windows = windows[windows["region_id"].notna()].reset_index(drop=True)
+# region_id (arm) + seg_id (segment) per window by midpoint; drop windows off-segment
+windows, _ = assign_range_to_range(windows, regions, "region_id", rule="midpoint")
+windows, _ = assign_range_to_range(
+    windows, regions, "seg_id", rule="midpoint", dropna=True
+)
 logging.info(
     f"region_id/seg_id: kept {len(windows)}/{n_tiled} windows (dropped off-segment)"
 )
@@ -131,11 +117,15 @@ bed_windows = windows[["#CHR", "START", "END"]].copy()
 if input_nochr:
     bed_windows["#CHR"] = bed_windows["#CHR"].map(strip_chr_prefix)
 
-# GC (always): per-window GC fraction via pybedtools nucleotide_content
-bt = BedTool.from_dataframe(bed_windows)
-nuc = bt.nucleotide_content(fi=inp["reference"]).to_dataframe(disable_auto_names=True)
-windows["GC"] = nuc["5_pct_gc"].values
-logging.info("annotated GC")
+# GC (optional): per-window GC fraction via pybedtools nucleotide_content
+reference = maybe_path(inp["reference"])
+if reference:
+    bt = BedTool.from_dataframe(bed_windows)
+    nuc = bt.nucleotide_content(fi=reference).to_dataframe(disable_auto_names=True)
+    windows["GC"] = nuc["5_pct_gc"].values
+    logging.info("annotated GC")
+else:
+    logging.info("no reference; GC skipped")
 
 # MAP (optional): per-window mean mappability via pybedtools map
 mappability_bed = maybe_path(inp["mappability_bed"])
@@ -156,7 +146,7 @@ if mappability_bed:
         dtype={"#CHR": str, "START": int, "END": int, "_df_idx": int, "MAP": str},
     )
     assert len(map_cov) == n_windows, (
-        f"bedtools map returned {len(map_cov)} rows, expected {n_windows}"
+        f"bedtools map, got {len(map_cov)} rows, expected {n_windows}"
     )
     map_cov["MAP"] = (
         pd.to_numeric(map_cov["MAP"], errors="coerce").fillna(0.0).clip(0.0, 1.0)
@@ -171,34 +161,29 @@ bedgraphs = list(inp["bedgraphs"])
 if bedgraphs:
     n_win = len(windows)
     signal_sum = np.zeros(n_win, dtype=np.float64)
-    signal_count = np.zeros(n_win, dtype=np.int32)
+    signal_count = np.zeros(n_win, dtype=np.int64)
+    win_ranges = windows[["#CHR", "START", "END"]].assign(_win=np.arange(n_win))
     for lf in bedgraphs:
         bg = pd.read_csv(
             lf,
             sep="\t",
             header=None,
-            names=["chrom", "start", "end", "signal"],
+            names=["#CHR", "START", "END", "signal"],
             dtype={
-                "chrom": str,
-                "start": np.int64,
-                "end": np.int64,
+                "#CHR": str,
+                "START": np.int64,
+                "END": np.int64,
                 "signal": np.float64,
             },
         )
-        bg = bg[bg["chrom"].isin(chroms)].reset_index(drop=True)
-        for chrom, grp in bg.groupby("chrom", sort=False):
-            bin_df_idx = np.where((windows["#CHR"] == chrom).to_numpy())[0]
-            if len(bin_df_idx) == 0:
-                continue
-            bin_starts = windows["START"].to_numpy()[bin_df_idx]
-            order = np.argsort(bin_starts)
-            bin_starts, bin_df_idx = bin_starts[order], bin_df_idx[order]
-            bg_mids = ((grp["start"] + grp["end"]) // 2).to_numpy()
-            hit_idx = np.searchsorted(bin_starts, bg_mids, side="right") - 1
-            valid = (hit_idx >= 0) & (hit_idx < len(bin_df_idx))
-            global_df_idx = bin_df_idx[hit_idx[valid]]
-            signal_sum[global_df_idx] += grp["signal"].to_numpy()[valid]
-            signal_count[global_df_idx] += 1
+        bg = bg[bg["#CHR"].isin(chroms)].reset_index(drop=True)
+        bg, _ = assign_range_to_range(
+            bg, win_ranges, "_win", rule="midpoint", dropna=True
+        )
+        # bincount, not `arr[idx] +=`: several bedGraph rows can share one window
+        hit = bg["_win"].to_numpy()
+        signal_sum += np.bincount(hit, weights=bg["signal"].to_numpy(), minlength=n_win)
+        signal_count += np.bincount(hit, minlength=n_win)
     with np.errstate(invalid="ignore", divide="ignore"):
         windows["REPLI"] = np.round(
             np.where(signal_count > 0, signal_sum / signal_count, np.nan), 6
@@ -223,7 +208,7 @@ _hist_with_stats(
     ax1,
     win_len,
     "window length (bp)",
-    header=f"{p['mode']} windows",
+    header=f"{p['window_size']} bp windows",
     ylabel="# windows",
 )
 fig.tight_layout()

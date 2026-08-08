@@ -12,7 +12,7 @@ from scipy.io import mmread
 from scipy.sparse import csr_matrix, hstack
 from scipy.stats import beta
 
-from range_utils import assign_pos_to_range
+from range_utils import assign_pos_to_range, assign_range_to_range
 from io_utils import read_VCF
 from utils import sort_df_chr
 
@@ -100,8 +100,12 @@ def canon_mat_one_replicate(
 
     tot_mtx = tot_mtx.tocsr()
     ad_mtx = ad_mtx.tocsr()
-    assert tot_mtx.shape == ad_mtx.shape
-    assert tot_mtx.shape == (m, ncells)
+    assert tot_mtx.shape == ad_mtx.shape, (
+        f"count matrices, shape mismatch: {tot_mtx.shape} vs {ad_mtx.shape}"
+    )
+    assert tot_mtx.shape == (m, ncells), (
+        f"count matrix, shape {tot_mtx.shape}, expected {(m, ncells)}"
+    )
 
     raw_snp_df_idx = child_snps["RAW_SNP_DF_IDX"].to_numpy()
     tot_mtx = tot_mtx[raw_snp_df_idx, :]
@@ -153,9 +157,7 @@ def observation_cluster_ids(rep2bc: pd.DataFrame, dataset_ids):
     """
     cats = pd.Categorical(rep2bc["REP_ID"], categories=list(dataset_ids))
     codes = np.asarray(cats.codes, dtype=np.int64)
-    assert (codes >= 0).all(), (
-        "barcodes.full contains REP_ID values outside dataset_ids"
-    )
+    assert (codes >= 0).all(), "barcodes.full, REP_ID values outside dataset_ids"
     return codes
 
 
@@ -225,7 +227,7 @@ def build_assay_obs_clusters(sample_df, bulk_assays):
     assay_obs_clusters = []
     for at in bulk_assays:
         obs = [i for i, a in enumerate(obs_assay) if a == at]
-        assert obs, f"no samples for assay {at} in joint sample sheet"
+        assert obs, f"joint sample sheet, no sample for assay {at}"
         stypes = [obs_stype[i] for i in obs]
         assay_obs_clusters.append(
             {
@@ -262,10 +264,10 @@ def build_rdr_base_map(sample_df):
         brep = obs_base_rep[i]
         if has_col and pd.notna(brep) and str(brep) != "":
             assert brep in repid_to_obs, (
-                f"RDR_BASE_REP_ID={brep!r} for tumor {obs_repid[i]!r} is not a REP_ID"
+                f"{obs_repid[i]}: RDR_BASE_REP_ID {brep!r} is not a REP_ID"
             )
             assert repid_to_obs[brep] != i, (
-                f"RDR_BASE_REP_ID={brep!r} for tumor {obs_repid[i]!r} is itself"
+                f"{obs_repid[i]}: RDR_BASE_REP_ID {brep!r} is itself"
             )
             base_map[i] = repid_to_obs[brep]
     return base_map
@@ -282,22 +284,6 @@ def aggregate_bin_depth_to_bbs(
     aligned bases, both ``(num_bbs, total_samples)``.
     """
 
-    def _bins_to_bbs(bins_a, bb_spans):
-        """Assign each fixed bin to the bb whose span contains its midpoint.
-
-        Returns an int64 array of ``bb_id`` per fixed bin, ``-1`` where the midpoint
-        falls in no bb. Works for an assay on the same bins (bin in its own bb) and for a finer
-        WES bin set projected onto the WGS bbs.
-        """
-        mids = pd.DataFrame(
-            {
-                "#CHR": bins_a["#CHR"].to_numpy(),
-                "POS0": ((bins_a["START"] + bins_a["END"]) // 2).to_numpy(np.int64),
-            }
-        )
-        mids = assign_pos_to_range(mids, bb_spans, ref_id="bb_id", pos_col="POS0")
-        return mids["bb_id"].fillna(-1).to_numpy(np.int64)
-
     bb_spans = (
         scaffold.groupby("bb_id", sort=True)
         .agg(
@@ -312,12 +298,15 @@ def aggregate_bin_depth_to_bbs(
     bb_dp = np.full((num_bbs, total_samples), np.nan, dtype=np.float32)
     bb_bases = np.zeros((num_bbs, total_samples), dtype=np.float64)
     for clu, bins_a, dp_a in zip(assay_obs_clusters, bin_df_list, dp_corrected_list):
-        bb_ids = _bins_to_bbs(bins_a, bb_spans)
+        # a finer WES bin set projects onto the WGS bbs by midpoint
+        mapped, na_idx = assign_range_to_range(
+            bins_a[["#CHR", "START", "END"]], bb_spans, "bb_id", rule="midpoint"
+        )
+        bb_ids = mapped["bb_id"].fillna(-1).to_numpy(np.int64)
         valid = bb_ids >= 0
-        n_drop = int((~valid).sum())
-        if n_drop:
+        if len(na_idx):
             logging.info(
-                f"{clu['assay']}: {n_drop}/{len(bins_a)} fixed bins outside all bbs (dropped)"
+                f"{clu['assay']}: {len(na_idx)}/{len(bins_a)} fixed bins outside all bbs (dropped)"
             )
         vb = bb_ids[valid]
         bin_lengths = (bins_a["END"] - bins_a["START"]).to_numpy(dtype=np.float64)[
@@ -445,16 +434,16 @@ def get_mask_by_het_balanced(
 
 
 ##################################################
-def assign_snp_ranges(snps: pd.DataFrame, regions: pd.DataFrame, colname="region_id"):
-    """Split each region into one ``[START, END)`` range per SNP it contains.
+def build_pos_ranges(snps: pd.DataFrame, regions: pd.DataFrame, colname="region_id"):
+    """Split each region into one ``[START, END)`` range per position it contains.
 
-    A SNP owns the span between the midpoints of its neighbours, bounded by the
-    region edges; a lone SNP owns the whole region. SNPs outside every region keep
-    ``START = END = 0`` and an empty ``region_id``. Membership is by 1-based ``POS``
-    against the region's coordinates.
+    A position owns the span between the midpoints of its neighbours, bounded by the
+    region edges; a lone position owns the whole region. Positions outside every region
+    keep ``START = END = 0`` and an empty ``region_id``. Membership is by 0-based
+    ``POS0``, like every other range operation.
 
     Args:
-        snps: SNPs with ``#CHR``, ``POS``, ``POS0``, sorted genomically.
+        snps: Positions with ``#CHR``, ``POS0``, sorted genomically.
         regions: Ranges with ``#CHR``, ``START``, ``END``, ``region_id`` and
             optionally ``seg_id``.
         colname: Column to write the region identifier into.
@@ -466,7 +455,7 @@ def assign_snp_ranges(snps: pd.DataFrame, regions: pd.DataFrame, colname="region
     regions = regions.reset_index(drop=True)
     regions["_reg_id"] = np.arange(len(regions))
 
-    snps = assign_pos_to_range(snps, regions, ref_id="_reg_id", pos_col="POS")
+    snps, _ = assign_pos_to_range(snps, regions, ref_id="_reg_id", pos_col="POS0")
     snps["START"] = 0
     snps["END"] = 0
     snps[colname] = ""

@@ -17,21 +17,21 @@ from scipy.stats import beta as beta_dist
 def setup_phase_clusters(snps):
     """Ensure ``seg_id``/``PS`` columns exist; return ``[region_id, seg_id, PS]``.
 
-    These are the ``cluster_cols`` binning uses. ``seg_id`` (the breakpoint chunk from
+    These are the ``cluster_cols`` binning uses. ``seg_id`` (the segment from
     build_segment_bed) is the hard bb boundary; binning clusters by it and never merges
     across it, while ``region_id`` (the arm) is carried for RDR/QC. When ``seg_id`` is
     absent (no global BED), it falls back to ``region_id`` so clustering is identical to
     the pre-seg_id behavior. ``PS`` is the phase cluster (VCF ``PS`` tag); if absent, set
     ``PS=1``, and when present every SNP must carry a non-null value.
     """
-    assert "region_id" in snps.columns, "invalid SNP file"
+    assert "region_id" in snps.columns, "SNP file, missing column(s) region_id"
     if "seg_id" not in snps.columns:
         snps["seg_id"] = snps["region_id"]
     if "PS" not in snps.columns:
         logging.info("PS not in SNP columns, setting PS=1 for all SNPs")
         snps["PS"] = 1
     else:
-        assert snps["PS"].notna().all(), "unexpected SNP without PS in phased VCF"
+        assert snps["PS"].notna().all(), "SNP file, `PS` column has NaNs"
     logging.info(
         f"#seg_id={snps['seg_id'].nunique()}, #phase clusters={snps['PS'].nunique()}"
     )
@@ -214,6 +214,10 @@ def interp_cM_between_bbs(
         snp_start="min", snp_end="max"
     )
     bbs = bbs.join(hb_pos, on=bb_id_col)
+    # a bb holding no SNP falls back to its own span; a NaN here would interpolate to NaN
+    # and propagate to the next bb through dist_cM
+    bbs["snp_start"] = bbs["snp_start"].fillna(bbs["START"] + 1)
+    bbs["snp_end"] = bbs["snp_end"].fillna(bbs["END"])
 
     genetic_map_chrs = genetic_map.groupby(by="#CHR", sort=False, observed=True)
     for ch, ch_bbs in bbs.groupby(by="#CHR", sort=False, observed=True):

@@ -22,20 +22,17 @@ from scipy.sparse import save_npz
 
 from const import ASSAY_TYPE2MODALITY
 from io_utils import read_VCF
-from range_utils import assign_pos_to_range
+from range_utils import overlaps_any_range
 from combine_counts_utils import (
-    assign_snp_ranges,
+    build_pos_ranges,
     canon_mat_from_files,
     hstack_replicate_mats,
 )
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_alleles import plot_allele_freqs, plot_snp_depth
 from phasing_utils import apply_phase_to_mat
-from aggregation_utils import (
-    annotate_feature_type,
-    apply_exon_only_mask,
-    apply_region_blacklist_masks,
-)
+from aggregation_utils import apply_region_blacklist_masks
+from feature_utils import annotate_feature_type, apply_exon_only_mask
 
 
 ##################################################
@@ -81,7 +78,7 @@ logging.info(
 
 snps = read_VCF(snp_vcf, addkey=True, add_phase1=True, add_pos0=True)
 parent_keys = pd.Index(snps["KEY"])
-assert not parent_keys.duplicated().any(), "invalid bi-allelic SNP VCF file"
+assert not parent_keys.duplicated().any(), "SNP VCF, duplicate keys (not bi-allelic)"
 
 barcodes_list = []
 tot_mtx_list = []
@@ -129,17 +126,7 @@ if is_rna_assay:
     # coverage filter only: RNA reads cover expressed genes, so drop SNPs outside
     # the h5ad feature set (feature_id itself stays GTF-derived from above)
     adata: sc.AnnData = sc.read_h5ad(h5ad_file)
-    feature_df = adata.var.reset_index(drop=False).rename(
-        columns={"index": "feature_id"}
-    )
-    feature_df["feature_df_idx"] = np.arange(len(feature_df))
-    cov = assign_pos_to_range(
-        snps[["#CHR", "POS0"]].copy(),
-        feature_df,
-        ref_id="feature_df_idx",
-        pos_col="POS0",
-    )
-    cov_mask = cov["feature_df_idx"].notna().to_numpy()
+    cov_mask = overlaps_any_range(snps, adata.var)
     snp_mask &= cov_mask
     logging.info(
         f"{assay_type} feature overlap: {np.sum(cov_mask)}/{len(snps)} "
@@ -152,7 +139,7 @@ snps = snps.loc[snp_mask, :].reset_index(drop=True)
 snps["START"] = snps["POS0"]
 snps["END"] = snps["POS"]
 
-snps = assign_snp_ranges(snps, regions, colname="region_id")
+snps = build_pos_ranges(snps, regions, colname="region_id")
 
 logging.info(f"#SNPs={np.sum(snp_mask)}/{num_snps_before} after filtering")
 

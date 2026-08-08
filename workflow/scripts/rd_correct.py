@@ -79,7 +79,7 @@ logging.info(f"rd_correct: {nsamples} samples, {len(target_chroms)} chroms")
 logging.info("load bin BED and mosdepth depth")
 bin_df = pd.read_table(bin_bed_file, sep="\t", dtype={"#CHR": str})
 assert "#CHR" in bin_df.columns and "GC" in bin_df.columns, (
-    f"window_bed must have #CHR, START, END, GC columns; got {bin_df.columns.tolist()}"
+    f"window_bed, missing `#CHR` or `GC` column: {bin_df.columns.tolist()}"
 )
 bin_df["#CHR"] = add_chr_prefix(bin_df["#CHR"])
 

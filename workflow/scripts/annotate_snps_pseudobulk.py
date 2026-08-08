@@ -79,7 +79,10 @@ CNT = ["DP", "AD", "OTH"]
 raw_snps_list = []
 for idx, modality in enumerate(modalities):
     raw_snps = read_VCF(raw_snp_vcfs[idx], addkey=True)
-    assert all(c in raw_snps.columns for c in KEY + CNT), "invalid cellsnp-lite format"
+    assert all(c in raw_snps.columns for c in KEY + CNT), (
+        f"cellsnp-lite file, missing column(s) "
+        f"{[c for c in KEY + CNT if c not in raw_snps.columns]}"
+    )
     for cnt in CNT:
         raw_snps[f"{cnt}{idx}"] = raw_snps[cnt].astype(np.int64)
 

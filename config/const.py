@@ -45,12 +45,6 @@ REQUIRED_FILES = {
     "VISIUM3prime": ALIGNMENT_FILES
     | {"barcodes", "matrix_h5", "tissue_positions", "scalefactors"},
 }
-OPTIONAL_FILES = {
-    "bulkWGS": {"breakpoint_bedpe"},
-    "bulkWGS-lr": {"breakpoint_bedpe"},
-    "bulkWES": {"breakpoint_bedpe"},
-}
-
 # Outputs under <bb_dir>
 BB_ALLELES = ("bb.Tallele.npz", "bb.Aallele.npz", "bb.Ballele.npz")
 BB_GRID = ("bb.tsv.gz", "sample_ids.tsv")

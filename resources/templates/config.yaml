@@ -36,6 +36,8 @@ reference: /path/to/reference.fa
 gtf_file: /path/to/genes.gtf.gz
 genome_size: /path/to/genome.sizes
 region_bed: /path/to/regions.bed
+# genomic segments (4th column = seg_id); set to region_bed for one segment per arm
+segment_bed: /path/to/regions.bed
 
 # Blacklist excluded regions/genes
 blacklist_bed: null

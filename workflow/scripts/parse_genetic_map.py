@@ -55,10 +55,7 @@ if phaser == "eagle":
         ignore_index=True,
     )
     missing = [c for c in required_columns if c not in genetic_map.columns]
-    assert not missing, (
-        f"eagle gmap missing expected columns {missing}; "
-        f"got {list(genetic_map.columns)}"
-    )
+    assert not missing, f"eagle gmap, missing column(s) {missing}"
 
     # Strip any 'chr' prefix, filter to requested chroms (as bare strings), re-add.
     wanted = {str(c) for c in chroms}
@@ -110,7 +107,7 @@ if phaser == "shapeit":
             comment="#",
         )
         assert "pos" in genetic_map.columns and "cM" in genetic_map.columns, (
-            "gmap.gz file is invalid"
+            "gmap file, missing `pos` or `cM` column"
         )
         genetic_map["#CHR"] = f"chr{chrom}"
         genetic_map["POS"] = genetic_map["pos"]

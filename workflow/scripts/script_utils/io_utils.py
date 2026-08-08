@@ -1,9 +1,12 @@
+import logging
+import os
+import tempfile
 from collections import OrderedDict
 
 import pandas as pd
 import numpy as np
 
-from const import GTF_COLUMNS
+from const import GTF_COLUMNS, RANGER_MATRIX_H5, RANGER_SPATIAL_DIR
 from utils import add_chr_prefix, sort_chroms, sort_df_chr
 
 
@@ -47,7 +50,9 @@ def read_VCF(
     if snps.empty:
         return None
     ncols = snps.shape[1]
-    assert ncols == 8 or ncols >= 10, "invalid VCF file"
+    assert ncols == 8 or ncols >= 10, (
+        f"VCF file, expected 8 or >=10 columns, got {ncols}"
+    )
     colnames = ["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO"]
     if ncols >= 10:
         colnames += ["FORMAT", "SAMPLE"]
@@ -186,7 +191,9 @@ def read_BED(bed_file: str, addchr=True, extra_columns=("region_id", "seg_id")):
     (e.g. a blacklist).
     """
     df = pd.read_table(bed_file, sep="\t", header=None, dtype={0: "string"})
-    assert len(df.columns) >= 3, "invalid BED format"
+    assert len(df.columns) >= 3, (
+        f"BED file, expected >=3 columns, got {len(df.columns)}"
+    )
     n_extra = min(len(df.columns) - 3, len(extra_columns))
     columns = ["Chromosome", "Start", "End"] + list(extra_columns[:n_extra])
     df = df.iloc[:, : 3 + n_extra].copy()
@@ -203,42 +210,6 @@ def read_BED(bed_file: str, addchr=True, extra_columns=("region_id", "seg_id")):
         )
     if "seg_id" in extra_columns and "seg_id" not in df.columns:
         df["seg_id"] = df["region_id"]
-    return df
-
-
-def read_BEDPE(bedpe_file: str, addchr=True):
-    """Read a BEDPE of SV junctions (bedtools 10-column layout, 0-based like BED).
-
-    Columns: ``#CHR1 START1 END1 #CHR2 START2 END2 [NAME SCORE STRAND1 STRAND2]``;
-    only the first 6 are required. Both chrom columns are chr-normalized so they
-    match a chr-prefixed region BED. An empty file returns an empty DataFrame.
-    """
-    names = [
-        "#CHR1",
-        "START1",
-        "END1",
-        "#CHR2",
-        "START2",
-        "END2",
-        "NAME",
-        "SCORE",
-        "STRAND1",
-        "STRAND2",
-    ]
-    try:
-        df = pd.read_csv(
-            bedpe_file, sep="\t", header=None, comment="#", dtype={0: str, 3: str}
-        )
-    except pd.errors.EmptyDataError:
-        return pd.DataFrame(columns=names[:6])
-    n = min(df.shape[1], len(names))
-    df = df.iloc[:, :n].copy()
-    df.columns = names[:n]
-    for c in ("#CHR1", "#CHR2"):
-        s = df[c].astype(str)
-        df[c] = s if not addchr else s.where(s.str.startswith("chr"), "chr" + s)
-    df["START1"] = df["START1"].astype(np.int64)
-    df["START2"] = df["START2"].astype(np.int64)
     return df
 
 
@@ -264,6 +235,104 @@ def read_barcodes(bc_file: str):
 def read_full_barcodes(path: str):
     """Read a 2-column REP_ID,BARCODE TSV (with header) into a DataFrame."""
     return pd.read_table(path, sep="\t", header=0, dtype=str)
+
+
+def read_chunks_from_atac_fragments(frag_file: str, chunksize=5_000_000):
+    """Read a 10x ATAC fragment file in chunks.
+
+    Each record of ``atac_fragments.tsv.gz`` is one deduplicated fragment, columns
+    ``chrom, chromStart, chromEnd, barcode, readSupport, strand``; only the first four
+    are read. One sample runs to hundreds of millions of records, hence the chunking.
+    Contig names are left as the file spells them, so a caller that filters rows first
+    can chr-normalize the subset rather than every record.
+
+    Args:
+        frag_file: Path to the (optionally gzipped) fragment TSV.
+        chunksize: Records per chunk.
+
+    Returns:
+        Iterator of DataFrames with ``#CHR``, ``start``, ``end``, ``BC``.
+
+    Notes/References:
+        Format: https://www.10xgenomics.com/support/software/cell-ranger-arc/latest/analysis/outputs/fragments-file
+    """
+    return pd.read_csv(
+        frag_file,
+        sep="\t",
+        comment="#",
+        header=None,
+        usecols=[0, 1, 2, 3],
+        names=["#CHR", "start", "end", "BC"],
+        dtype={0: str, 1: np.int64, 2: np.int64, 3: str},
+        chunksize=chunksize,
+    )
+
+
+def read_10x_ranger_spatial(
+    matrix_h5, names, paths, library_id, assay_type, load_images=True
+):
+    """Read one Space Ranger spatial dataset into an AnnData.
+
+    squidpy takes a directory, while the sample file names each spatial file
+    individually so remote files can be fetched. The Space Ranger layout it expects is
+    rebuilt as symlinks in a temporary directory - the feature matrix at the root, the
+    rest under spatial/ - which lives only for the read. Names come from RANGER_* in
+    const.py.
+
+    Args:
+        matrix_h5: Path to this dataset's feature-barcode matrix.
+        names: Space Ranger filenames under spatial/, for this dataset.
+        paths: Paths supplying those files, in the same order.
+        library_id: Library id squidpy records in ``uns``; the dataset_id.
+        assay_type: VISIUM | VISIUM3prime.
+        load_images: Read the tissue images; VISIUM3prime must pass False.
+
+    Returns:
+        AnnData with unique var_names.
+
+    Raises:
+        AssertionError: load_images is set for VISIUM3prime.
+
+    Notes/References:
+        spatial/ layout: https://www.10xgenomics.com/support/software/space-ranger/latest/analysis/outputs/spatial-outputs
+    """
+    import squidpy as sq
+
+    if assay_type == "VISIUM3prime":
+        assert not load_images, "VISIUM3prime, squidpy cannot load its tissue images"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        os.symlink(
+            os.path.abspath(matrix_h5),
+            os.path.join(tmp_dir, RANGER_MATRIX_H5[0]),
+        )
+        spatial_dir = os.path.join(tmp_dir, RANGER_SPATIAL_DIR)
+        os.makedirs(spatial_dir)
+        for name, path in zip(names, paths):
+            os.symlink(os.path.abspath(path), os.path.join(spatial_dir, name))
+        logging.info(f"staged {len(names) + 1} files for squidpy: {names}")
+        adata = sq.read.visium(tmp_dir, load_images=load_images, library_id=library_id)
+    adata.var_names_make_unique()
+    return adata
+
+
+def read_10x_ranger_scRNA(matrix_h5):
+    """Read one Cell Ranger gene-expression matrix into an AnnData.
+
+    Args:
+        matrix_h5: Path to ``filtered_feature_bc_matrix.h5``.
+
+    Returns:
+        AnnData of the gene-expression features only, with unique var_names.
+
+    Notes/References:
+        Format: https://www.10xgenomics.com/support/software/cell-ranger/latest/analysis/outputs/cr-outputs-h5-matrices
+    """
+    import scanpy as sc
+
+    adata = sc.read_10x_h5(matrix_h5, gex_only=True)
+    adata.var_names_make_unique()
+    return adata
 
 
 def read_gtf(gtf_file: str, feature_types):

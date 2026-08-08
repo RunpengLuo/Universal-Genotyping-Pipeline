@@ -25,7 +25,7 @@ import pandas as pd
 
 from io_utils import read_VCF, read_bcftools_counts
 from combine_counts_utils import (
-    assign_snp_ranges,
+    build_pos_ranges,
     bcftools_counts_to_child_mats,
     canon_mat_one_replicate,
     get_mask_by_depth,
@@ -33,11 +33,8 @@ from combine_counts_utils import (
     hstack_replicate_mats,
 )
 from phasing_utils import apply_phase_to_mat
-from aggregation_utils import (
-    annotate_feature_type,
-    apply_exon_only_mask,
-    apply_region_blacklist_masks,
-)
+from aggregation_utils import apply_region_blacklist_masks
+from feature_utils import annotate_feature_type, apply_exon_only_mask
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_alleles import plot_allele_freqs, plot_snp_depth
 from plot_utils import observation_order
@@ -98,7 +95,7 @@ logging.info(
 ##################################################
 snps = read_VCF(snp_vcf, addkey=True, add_phase1=True, add_pos0=True)
 parent_keys = pd.Index(snps["KEY"])
-assert not parent_keys.duplicated().any(), "invalid bi-allelic SNP VCF file"
+assert not parent_keys.duplicated().any(), "SNP VCF, duplicate keys (not bi-allelic)"
 parent_alt_by_key = dict(zip(snps["KEY"], snps["ALT"]))
 
 tot_mtx_list = []
@@ -146,7 +143,7 @@ for nc in normal_obs:
 snp_mask = apply_exon_only_mask(snps, snp_mask, exon_only)
 
 snps = snps.loc[snp_mask, :].reset_index(drop=True)
-snps = assign_snp_ranges(snps, regions, colname="region_id")
+snps = build_pos_ranges(snps, regions, colname="region_id")
 
 logging.info(f"#SNPs={np.sum(snp_mask)}/{num_snps_before} after filtering")
 

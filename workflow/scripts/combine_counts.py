@@ -2,7 +2,7 @@
 
 All bulk assays (WGS/WGS-lr/WES) share ONE set of fixed bins tiled from ``segment.bed``
 (the window BED). ``build_adaptive_bins`` closes a bb only when every tumor observation
-meets ``min_snp_reads``, clustered by ``seg_id`` (breakpoint chunk). Fixed-bin depth is
+meets ``min_snp_reads``, clustered by ``seg_id`` (the segment). Fixed-bin depth is
 aggregated per assay onto the same bbs. Allele counts are aggregated per bb across all
 samples; RDR is computed per assay, normalizing each tumor by the RDR base observation
 named in its ``RDR_BASE_REP_ID`` (median-normalized when unset).
@@ -26,10 +26,11 @@ import pandas as pd
 
 from aggregation_utils import (
     build_adaptive_bins,
-    gene_cluster_labels,
-    merge_feature_ids,
-    assign_snps_to_bins,
+    stamp_bin_label,
+    log_off_range_depth,
 )
+from range_utils import assign_pos_to_range
+from feature_utils import merge_feature_ids, stamp_gene_clusters
 from io_utils import read_snp_mats_bulk
 from matrix_utils import sum_features_to_bbs
 from combine_counts_utils import (
@@ -143,42 +144,21 @@ gene_aware_binning = gene_aware_binning_param and has_feature
 bin_df["bin_id"] = np.arange(len(bin_df))
 tot_tumor = np.ascontiguousarray(tot_mtx[:, tumor_obs_all], dtype=np.float64)
 # assigned once here; every sweep point below reuses it
-snps_binned = assign_snps_to_bins(snps, bin_df, tot_tumor)
+snps["_orig_df_idx"] = np.arange(len(snps))
+snps_binned, off_idx = assign_pos_to_range(snps, bin_df, ref_id="bin_id", dropna=True)
+log_off_range_depth(off_idx, tot_tumor)
 snps_per_bin = snps_binned.groupby("bin_id").size()
 logging.info(
     f"SNPs per fixed bin: {len(snps_per_bin)}/{len(bin_df)} bins have SNPs, "
     f"mean={snps_per_bin.mean():.1f}, median={snps_per_bin.median():.1f}"
 )
-bin_ps = snps_binned.groupby("bin_id")["PS"].agg(lambda x: x.mode().iloc[0])
-bin_df["PS"] = bin_df["bin_id"].map(bin_ps)
-if bin_df["PS"].isna().any():
-    bin_df["PS"] = bin_df["PS"].ffill()
+stamp_bin_label(bin_df, snps_binned, "PS", default=1)
 
 if phase_flip_test:
-    bin_pc = snps_binned.groupby("bin_id")["phase_cluster"].agg(
-        lambda x: x.mode().iloc[0]
-    )
-    bin_df["phase_cluster"] = bin_df["bin_id"].map(bin_pc)
-    if bin_df["phase_cluster"].isna().any():
-        bin_df["phase_cluster"] = bin_df["phase_cluster"].ffill()
+    stamp_bin_label(bin_df, snps_binned, "phase_cluster", default=0)
 
 if gene_aware_binning:
-    # glue each gene span into one cluster so a bb never splits a gene;
-    # explode the ;-joined multi-gene feature_id so each gene gets its own span
-    genic = snps_binned[
-        snps_binned["feature_id"].notna() & (snps_binned["feature_id"] != "intergenic")
-    ].copy()
-    genic["feature_id"] = genic["feature_id"].str.split(";")
-    genic = genic.explode("feature_id")
-    genic = genic[genic["feature_id"] != "intergenic"]
-    rng = genic.groupby("feature_id")["bin_id"].agg(["min", "max"])
-    bin_df["gene_cluster"] = gene_cluster_labels(
-        len(bin_df), zip(rng["min"].to_numpy(), rng["max"].to_numpy())
-    )
-    logging.info(
-        f"gene-aware binning: {len(rng)} genes over {len(bin_df)} fixed bins -> "
-        f"{bin_df['gene_cluster'].nunique()} gene/intergenic clusters (bbs never split a gene)"
-    )
+    stamp_gene_clusters(bin_df, snps_binned)
 
 sample_labels = [f"{obs_assay[i]}:{obs_repid[i]}" for i in range(total_samples)]
 tumor_labels = [sample_labels[c] for c in tumor_obs_all]

@@ -73,7 +73,7 @@ rule phase_and_concat_nonbulk:
             if ASSAY_TYPE2MODALITY[wc.assay_type] == "RNA"
             else []
         ),
-        region_bed=lambda wc: config["region_bed"],
+        region_bed=segment_bed,
         genome_size=lambda wc: config["genome_size"],
         gtf_file=lambda wc: config["gtf_file"],
         blacklist_bed=lambda wc: branch(

@@ -131,6 +131,7 @@ rule rd_correct:
             for dataset_id in assay2dataset_ids[wc.assay_type]
         ],
         window_bed=window_bed_path,
+        checked=window_bed_checked,
         genome_size=config["genome_size"],
         region_bed=segment_bed,
         blacklist_bed=config["blacklist_bed"] or [],

@@ -1,4 +1,4 @@
-"""Adaptive binning: merge fixed bins into bbs, and the SNP annotation around it.
+"""Adaptive binning: merge fixed bins into bbs, and the SNP filtering around it.
 
 A fixed bin is one row of the window BED (a ``window_size`` tile); a bb is the merged
 bin that binning emits. ``build_adaptive_bins`` walks consecutive fixed bins inside one
@@ -6,6 +6,8 @@ bin that binning emits. ``build_adaptive_bins`` walks consecutive fixed bins ins
 
 The config keys ``min_snp_reads`` / ``min_snp_per_bin`` / ``max_blocksize`` speak of
 "bin" in the bb sense; they keep their published names.
+
+GTF-feature annotation and the gene-aware cluster key live in ``feature_utils``.
 """
 
 import logging
@@ -16,51 +18,34 @@ import numba
 
 from scipy.sparse import issparse
 
-from range_utils import (
-    assign_all_features,
-    assign_pos_to_range,
-    overlaps_any_range,
-)
-from io_utils import read_BED, read_gtf
+from range_utils import assign_pos_to_range, overlaps_any_range
+from io_utils import read_BED
 from matrix_utils import cluster_sum
 
 
-def gene_cluster_labels(n_features, ranges):
-    """Gene-cluster id per ordered feature (fixed bins or SNPs) so bbs never split a gene.
+def stamp_bin_label(bin_df, snps_binned, col, default):
+    """Carry a per-SNP label onto the fixed bins as a never-null cluster key.
 
-    Each gene occupies an inclusive index range ``(lo, hi)`` over the feature ordering
-    (e.g. the first..last fixed bin holding that gene's SNPs). Every boundary internal to
-    a range is made non-cuttable; overlapping ranges (genes that share a feature, i.e.
-    adjacent/overlapping genes) merge transitively into one cluster; features in no range
-    are singleton clusters (native fixed-bin/SNP granularity). Features sharing a cluster
-    id must stay in one bb, so a bb holds whole genes only - never a partial gene.
+    Each bin takes the modal value of *col* over its SNPs, then bins with no SNP inherit
+    from their neighbours (forward, then backward), and a frame with no SNP at all falls
+    back to *default*. The fill must cover both ends: ``build_adaptive_bins`` groups the
+    bins by ``cluster_cols`` and pandas drops null keys, so a null-keyed bin would never
+    enter the merge loop and would keep the initialized ``bb_id`` of 0.
 
-    Parameters
-    ----------
-    n_features : int
-        Number of ordered features.
-    ranges : iterable of (lo, hi)
-        Inclusive index ranges, one per gene.
+    Args:
+        bin_df: Fixed bins with ``bin_id``. Modified in place.
+        snps_binned: SNPs carrying ``bin_id`` and *col*.
+        col: Label column to carry over.
+        default: Value for bins when no SNP in the frame has one.
 
-    Returns
-    -------
-    np.ndarray (int64), length n_features
-        Run-length-contiguous cluster id; the boundary between features ``i-1`` and ``i``
-        is a cut point iff ``labels[i] != labels[i-1]``.
+    Returns:
+        *bin_df* with *col* added.
     """
-    if n_features == 0:
-        return np.zeros(0, dtype=np.int64)
-    blocked = np.zeros(
-        n_features - 1, dtype=bool
-    )  # blocked[i] = boundary (i, i+1) non-cuttable
-    for lo, hi in ranges:
-        if hi > lo:
-            blocked[lo:hi] = True
-    labels = np.empty(n_features, dtype=np.int64)
-    labels[0] = 0
-    if n_features > 1:
-        labels[1:] = np.cumsum(~blocked)
-    return labels
+    per_bin = snps_binned.groupby("bin_id")[col].agg(lambda x: x.mode().iloc[0])
+    bin_df[col] = bin_df["bin_id"].map(per_bin)
+    if bin_df[col].isna().any():
+        bin_df[col] = bin_df[col].ffill().bfill().fillna(default)
+    return bin_df
 
 
 @numba.njit
@@ -168,64 +153,25 @@ def _merge_bins_to_bbs(
     return bb_ids, bb_id
 
 
-def assign_and_drop_outside(snps, ref, ref_id, pos_col="POS0", label=""):
-    """Assign SNPs to reference ranges, log the misses, and drop them.
+def log_off_range_depth(na_idx, tot_mtx, label=""):
+    """Log the depth carried by the positions an assignment dropped.
 
-    The shared body of ``assign_snps_to_bins`` and ``assign_snps_to_bbs``: assign, report
-    the fraction outside every range, drop those SNPs, and cast the id to the reference's
-    own dtype.
+    *na_idx* is the second return of any ``assign_*`` and indexes *tot_mtx* rows
+    directly, so this reports how much signal falls outside the reference grid.
 
     Args:
-        snps: SNP frame with ``#CHR`` and *pos_col*.
-        ref: Reference ranges carrying *ref_id*.
-        ref_id: Identifier column to assign.
-        pos_col: 0-based position column of *snps*.
+        na_idx: Positional indices of the unassigned rows.
+        tot_mtx: Per-position total counts, rows aligned to the pre-assignment frame.
         label: Prefix for the log line.
-
-    Returns:
-        ``(kept, outside_mask)``: the assigned SNPs reindexed from 0, and the
-        boolean mask of dropped SNPs over the INPUT frame.
     """
-    snps = assign_pos_to_range(snps, ref, ref_id=ref_id, pos_col=pos_col)
-    outside = snps[ref_id].isna()
-    n_out = int(outside.sum())
+    if not len(na_idx):
+        return
+    off_depth = tot_mtx[na_idx].sum(axis=1)
     logging.info(
-        f"{label}SNPs outside any {ref_id}: {n_out}/{len(snps)} "
-        f"({n_out / max(len(snps), 1):.3%})"
+        f"{label}off-range depth over {len(na_idx)} dropped positions: "
+        f"min={off_depth.min()}, max={off_depth.max()}, "
+        f"mean={off_depth.mean():.1f}, median={np.median(off_depth):.1f}"
     )
-    kept = snps.loc[~outside].reset_index(drop=True)
-    kept[ref_id] = kept[ref_id].astype(ref[ref_id].dtype)
-    return kept, outside.to_numpy()
-
-
-def assign_snps_to_bins(snps, bins, tot_mtx):
-    """Assign SNPs to fixed bins once, dropping those outside every bin.
-
-    Hoisted out of ``build_adaptive_bins`` so a caller sweeping binning parameters pays
-    for the assignment once instead of per sweep point. The returned frame carries
-    ``_orig_df_idx`` (the SNP's position in the input frame, indexing ``tot_mtx``) and an
-    int64 ``bin_id``; ``build_adaptive_bins`` skips step 1 when it sees one.
-
-    Args:
-        snps: SNP frame with ``#CHR`` and ``POS0``.
-        bins: Fixed-bin frame with ``#CHR``, ``START``, ``END``, ``bin_id``.
-        tot_mtx: Per-SNP total counts, for the off-bin depth log only.
-
-    Returns:
-        The SNPs inside a fixed bin, reindexed from 0.
-    """
-    snps["_orig_df_idx"] = np.arange(len(snps))
-    orig_df_idx = snps["_orig_df_idx"].to_numpy()
-    kept, outside = assign_and_drop_outside(snps, bins, "bin_id")
-    if outside.any():
-        off_depth = tot_mtx[orig_df_idx[outside]].sum(axis=1)
-        logging.info(
-            f"off-target SNP depth: "
-            f"min={off_depth.min()}, max={off_depth.max()}, "
-            f"mean={off_depth.mean():.1f}, median={np.median(off_depth):.1f}"
-        )
-    kept["bin_id"] = kept["bin_id"].astype(np.int64)
-    return kept
 
 
 def build_adaptive_bins(
@@ -246,7 +192,7 @@ def build_adaptive_bins(
     bins : pd.DataFrame
         Fixed bins with ``#CHR``, ``START``, ``END``, ``bin_id``, and the clustering
         columns. When ``gene_aware``, must also carry a ``gene_cluster`` column (see
-        ``gene_cluster_labels``) so bbs never split a gene.
+        ``feature_utils.stamp_gene_clusters``) so bbs never split a gene.
     snps : pd.DataFrame
         SNP DataFrame with ``POS0`` and ``#CHR`` columns.
     tot_mtx : (n_snps, M) ndarray
@@ -283,9 +229,11 @@ def build_adaptive_bins(
         f"max_blocksize={max_blocksize}"
     )
 
-    # 1. Assign SNPs to fixed bins, unless the caller already did (assign_snps_to_bins)
+    # 1. Assign SNPs to fixed bins, unless the caller already did
     if "bin_id" not in snps.columns:
-        snps = assign_snps_to_bins(snps, bins, tot_mtx)
+        snps["_orig_df_idx"] = np.arange(len(snps))
+        snps, na_idx = assign_pos_to_range(snps, bins, ref_id="bin_id", dropna=True)
+        log_off_range_depth(na_idx, tot_mtx)
 
     # 2. Compute per-fixed-bin stats
     B = len(bins)
@@ -308,6 +256,10 @@ def build_adaptive_bins(
     bins["bb_id"] = 0
     all_bin_starts = bins["START"].to_numpy(dtype=np.int64)
     all_bin_ends = bins["END"].to_numpy(dtype=np.int64)
+    # groupby drops null keys, which would leave those bins on the initialized bb_id 0
+    assert bins[cluster_cols].notna().all().all(), (
+        f"fixed bins, null cluster key in {cluster_cols}"
+    )
     bin_clusters = bins.groupby(by=cluster_cols, sort=False)
     logging.info(f"#fixed-bin clusters={len(bin_clusters)}, keys: {cluster_cols}")
 
@@ -360,8 +312,9 @@ def build_adaptive_bins(
     bbs["BLOCKSIZE"] = bbs["END"] - bbs["START"]
     bbs["bb_id"] = bbs.index
 
-    # PS column if present
-    if "PS" in snps.columns:
+    # PS column if present; a cluster_cols PS is already carried by pos_dict, and taking
+    # it from the SNPs instead would be NaN for a bb that holds none
+    if "PS" in snps.columns and "PS" not in bbs.columns:
         ps = snps.groupby("bb_id")["PS"].first()
         bbs["PS"] = bbs.index.map(ps)
 
@@ -386,39 +339,6 @@ def build_adaptive_bins(
     return bbs, snps
 
 
-def merge_feature_ids(strings, sep=";", default="intergenic"):
-    """Collapse an iterable of ``sep``-joined feature_id strings into one deduped union.
-
-    Drops ``default`` tokens unless nothing else remains; preserves first-seen order.
-    """
-    seen = dict()
-    for s in strings:
-        if not isinstance(s, str):
-            continue
-        for tok in s.split(sep):
-            if tok and tok != default:
-                seen[tok] = None
-    return sep.join(seen) if seen else default
-
-
-def annotate_feature_type(snps, gtf_file):
-    """Annotate SNPs with feature_id (overlapping genes) and feature_type.
-
-    ``feature_id`` is a ``;``-joined list of every GTF gene the SNP overlaps
-    (``intergenic`` when none), so gene membership is read back off it rather than
-    assigned a second time. ``feature_type`` is exon > intron > intergenic.
-    """
-    gtf = read_gtf(gtf_file, ("gene", "exon"))
-    snps["feature_id"] = assign_all_features(snps, gtf["gene"], id_col="gene_id")
-    in_gene = snps["feature_id"] != "intergenic"
-    in_exon = pd.Series(overlaps_any_range(snps, gtf["exon"]), index=snps.index)
-
-    snps["feature_type"] = "intergenic"
-    snps.loc[in_gene, "feature_type"] = "intron"
-    snps.loc[in_exon, "feature_type"] = "exon"
-    return snps
-
-
 def apply_region_blacklist_masks(snps, snp_mask, region_bed, blacklist_bed):
     """AND snp_mask with region inclusion and (optional) blacklist exclusion.
 
@@ -437,33 +357,3 @@ def apply_region_blacklist_masks(snps, snp_mask, region_bed, blacklist_bed):
         )
         snp_mask &= ~bl_mask
     return snp_mask, regions
-
-
-def apply_exon_only_mask(snps, snp_mask, exon_only):
-    """Log exonic SNP count and, if exon_only, AND snp_mask with the exon mask."""
-    n_exon = int((snps["feature_type"] == "exon").sum())
-    logging.info(
-        f"#exonic SNPs: {n_exon}/{len(snps)} ({n_exon / max(len(snps), 1):.3%})"
-    )
-    if exon_only:
-        exon_mask = (snps["feature_type"] == "exon").to_numpy()
-        logging.info(f"exon filter: {np.sum(exon_mask)}/{len(snps)} SNPs passed")
-        snp_mask &= exon_mask
-    return snp_mask
-
-
-def assign_snps_to_bbs(
-    snp_df: pd.DataFrame, bb_df: pd.DataFrame, assay_type: str, id_col="bb_id"
-):
-    """Assign SNPs to pre-computed bbs and count them per bb.
-
-    ``bb_df`` must hold 0-based, half-open, non-overlapping ranges. It gains a ``#SNPS``
-    column in place; SNPs outside every bb are dropped.
-    """
-    logging.info(f"#{assay_type}-SNP (raw)={len(snp_df)}")
-    snp_df, _ = assign_and_drop_outside(snp_df, bb_df, id_col, label=f"{assay_type}: ")
-    logging.info(f"#{assay_type}-SNP (remain)={len(snp_df)}")
-
-    counts = snp_df[id_col].value_counts()
-    bb_df["#SNPS"] = bb_df[id_col].map(counts).fillna(0).astype(int)
-    return snp_df

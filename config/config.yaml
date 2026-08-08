@@ -28,8 +28,11 @@ chromosomes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
 # (2) stream = read remote URLs directly, fetching only `chromosomes`.
 remote_mode: storage
 
+# Pre-built (phased) gHETs
 het_snp_vcf: null
 het_snp_vcf_phased: true
+
+# Pre-built segmentation coordinates (copy-typing preprocess ONLY)
 bb_file: null
 
 ##################################################
@@ -39,7 +42,13 @@ reference_version: null
 reference: null
 gtf_file: null
 genome_size: null
+
+# reference genome chrom arms (4th column = region_id); required
 region_bed: null
+
+# pre-defined genomic segments (4th column = seg_id); required.
+# Set it to region_bed for one segment per chromosome arm.
+segment_bed: null
 
 # Blacklist excluded regions/genes
 blacklist_bed: null
