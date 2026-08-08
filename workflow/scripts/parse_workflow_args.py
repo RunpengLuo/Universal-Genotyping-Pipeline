@@ -45,7 +45,7 @@ from const import (
     get_phasing_panel_path,
 )
 from io_utils import read_chrom_sizes
-from utils import logging_snakemake, strip_chr_prefix
+from utils import check_local_path, logging_snakemake, strip_chr_prefix
 
 
 def read_sample_sheet(path):
@@ -162,6 +162,8 @@ def parse_records(
             assert files.get(key), (
                 f"{dataset_id}: files.{key} is required for {assay_type}"
             )
+        for key, path in files.items():
+            check_local_path(path, f"{dataset_id}: files.{key}")
         rec["files"] = files
         rec["modality"] = ASSAY_TYPE2MODALITY[assay_type]
         logging_snakemake(f"selected: {dataset_id}\t{rec_refver}\t{assay_type}")
@@ -213,8 +215,8 @@ def parse_workflow(config):
 
     def require_per_chrom(get_path, label):
         """Every configured chromosome has its file."""
-        missing = [c for c in config["chromosomes"] if not os.path.exists(get_path(c))]
-        assert not missing, f"{label} not found for chromosomes: {missing[:3]}"
+        for chrname in config["chromosomes"]:
+            check_local_path(get_path(chrname), f"{label} (chromosome {chrname})")
 
     # === workflow mode ===
     workflow_mode = config["workflow_mode"]
@@ -252,7 +254,7 @@ def parse_workflow(config):
         )
     reference = config["reference"]
     assert reference, "reference is required (genome FASTA)"
-    assert os.path.exists(reference), f"reference path is invalid: {reference}"
+    check_local_path(reference, "reference")
 
     records = parse_records(records, sample_id, reference_version, config_assay_types)
     dataset_ids = {r["dataset_id"]: r for r in records}
@@ -303,12 +305,10 @@ def parse_workflow(config):
     # === segment BED: the configured segmentation, arm-stamped and blacklisted ===
     region_bed = config["region_bed"]
     assert region_bed, "region_bed is required (chromosome arms)"
-    assert os.path.exists(region_bed), f"region_bed path is invalid: {region_bed}"
+    check_local_path(region_bed, "region_bed")
     in_segment_bed = config["segment_bed"]
     assert in_segment_bed, "segment_bed is required (genomic segments)"
-    assert os.path.exists(in_segment_bed), (
-        f"segment_bed path is invalid: {in_segment_bed}"
-    )
+    check_local_path(in_segment_bed, "segment_bed")
     segment_bed = config["aux_dir"] + "/segment.bed"
 
     # === window BED ===
@@ -318,7 +318,7 @@ def parse_workflow(config):
     window_size = int(config["params_build_windows"]["window_size"])
     window_bed = config["window_bed"]
     if window_bed:
-        assert os.path.exists(window_bed), f"window_bed path is invalid: {window_bed}"
+        check_local_path(window_bed, "window_bed")
         logging_snakemake(f"use pre-built window BED: {window_bed}")
         build_windows = False
     else:
@@ -333,9 +333,7 @@ def parse_workflow(config):
     het_snp_vcf_phased = bool(config["het_snp_vcf_phased"])
     bb_file = config["bb_file"]
     if het_snp_vcf is not None:
-        assert os.path.exists(het_snp_vcf), (
-            f"het_snp_vcf path is invalid: {het_snp_vcf}"
-        )
+        check_local_path(het_snp_vcf, "het_snp_vcf")
 
     # === copytyping_preprocess requirements ===
     if workflow_mode == "copytyping_preprocess":

@@ -221,5 +221,11 @@ snp_ids = snps["#CHR"].astype(str) + "_" + snps["POS"].astype(str)
 np.save(out_unique_snp_ids, snp_ids.to_numpy())
 all_barcodes.to_csv(out_all_barcodes, sep="\t", header=False, index=False)
 barcodes_full.to_csv(out_barcodes_full, sep="\t", header=True, index=False)
-write_sample_ids(sample_id, dataset_ids, sample_types, None, out_sample_file)
+write_sample_ids(
+    sample_id,
+    dataset_ids,
+    sample_types,
+    [assay_type] * len(dataset_ids),
+    out_sample_file,
+)
 logging.info("finished.")

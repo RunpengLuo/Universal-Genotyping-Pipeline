@@ -12,6 +12,7 @@ import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../config"))
 from const import *  # noqa: F401,F403
+from const import is_url
 
 _OMP_THREAD_VARS = (
     "OMP_NUM_THREADS",
@@ -136,6 +137,28 @@ def maybe_path(x):
     if x == [] or x is None:
         return None
     return x
+
+
+def check_local_path(path, label):
+    """Assert an input path is usable: a URL by scheme, a local path by existence.
+
+    A URL is never contacted. ``storage()`` fetches it when a job needs it, and a
+    reachability probe here would put a network request in every dry run.
+
+    Args:
+        path: Local path or URL.
+        label: Names where the path came from, e.g. ``"d1: files.alignment"``.
+
+    Returns:
+        *path* unchanged.
+
+    Raises:
+        AssertionError: *path* is local and does not exist.
+    """
+    if is_url(path):
+        return path
+    assert os.path.exists(path), f"{label}, path does not exist: {path}"
+    return path
 
 
 def strip_chr_prefix(name):
