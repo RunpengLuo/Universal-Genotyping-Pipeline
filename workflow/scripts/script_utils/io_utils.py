@@ -6,7 +6,12 @@ from collections import OrderedDict
 import pandas as pd
 import numpy as np
 
-from const import GTF_COLUMNS, RANGER_MATRIX_H5, RANGER_SPATIAL_DIR
+from const import (
+    GTF_COLUMNS,
+    RANGER_MATRIX_H5,
+    RANGER_SPATIAL_DIR,
+    SAMPLE_ID_COLNAMES,
+)
 from utils import add_chr_prefix, sort_chroms, sort_df_chr
 
 
@@ -441,3 +446,48 @@ def read_genes_gtf_file(gtf_file: str, id_col="gene_ids"):
     if id_col != "gene_id":
         genes = genes.rename(columns={"gene_id": id_col})
     return genes
+
+
+def write_sample_ids(
+    sample_id: str,
+    dataset_ids: list,
+    sample_types: list,
+    assay_types: list,
+    out_file: str,
+    rdr_base_dataset_ids=None,
+    colnames=None,
+):
+    """Write ``sample_ids.tsv``, one row per observation of the bb matrices.
+
+    Every column but the leading ``SAMPLE`` is a sample-file record key renamed through
+    ``SAMPLE_ID_COLNAMES``; ``SAMPLE`` is derived (``{sample_id}_{dataset_id}``) and has
+    no record key. Column order follows the argument order.
+
+    Args:
+        sample_id: Sample (patient) id, one per file.
+        dataset_ids: Dataset id per observation, in matrix-observation order.
+        sample_types: ``tumor``/``normal`` per observation.
+        assay_types: Assay type per observation; the column is omitted when None.
+        out_file: Output TSV path.
+        rdr_base_dataset_ids: RDR baseline dataset id per observation; the column is
+            omitted when None.
+        colnames: Record key -> column name overrides on top of ``SAMPLE_ID_COLNAMES``.
+
+    Returns:
+        The DataFrame written.
+    """
+    cols = {**SAMPLE_ID_COLNAMES, **(colnames or {})}
+    record = {
+        "sample_id": sample_id,
+        "dataset_id": dataset_ids,
+        "sample_type": sample_types,
+        "assay_type": assay_types,
+        "rdr_base_dataset_id": rdr_base_dataset_ids,
+    }
+    sample_dict = {"SAMPLE": [f"{sample_id}_{d}" for d in dataset_ids]}
+    sample_dict.update(
+        {cols[key]: val for key, val in record.items() if val is not None}
+    )
+    sample_df = pd.DataFrame(sample_dict)
+    sample_df.to_csv(out_file, sep="\t", header=True, index=False)
+    return sample_df

@@ -22,7 +22,7 @@ from scipy.io import mmread
 from scipy.sparse import save_npz
 
 from const import ASSAY_TYPE2MODALITY
-from io_utils import read_BED, read_VCF
+from io_utils import read_BED, read_VCF, write_sample_ids
 from range_utils import overlaps_any_range
 from combine_counts_utils import (
     apply_masks_to_df,
@@ -204,20 +204,16 @@ with PdfPages(out_qc_pdf) as pdf:
 
 ##################################################
 logging.info("saving output files")
-_snp_cols = [
-    "#CHR",
-    "POS",
-    "POS0",
-    "START",
-    "END",
-    "GT",
-    "PHASE",
-    "region_id",
-]
+snp_cols = ["#CHR", "POS", "POS0", "START", "END", "GT", "PHASE"]
+# PS drives the binning phase clusters downstream; without it everything is one cluster
+if "PS" in snps.columns:
+    snp_cols.append("PS")
+logging.info(f"phase set (PS) column carried: {'PS' in snps.columns}")
+snp_cols += ["region_id"]
 if "seg_id" in snps.columns:
-    _snp_cols.append("seg_id")
-_snp_cols += ["feature_id", "feature_type"]
-snps[_snp_cols].to_csv(out_snp_info, sep="\t", header=True, index=False)
+    snp_cols.append("seg_id")
+snp_cols += ["feature_id", "feature_type"]
+snps[snp_cols].to_csv(out_snp_info, sep="\t", header=True, index=False)
 save_npz(out_tot_mtx_snp, tot_mtx)
 save_npz(out_a_mtx_snp, a_mtx)
 save_npz(out_b_mtx_snp, b_mtx)
@@ -225,11 +221,5 @@ snp_ids = snps["#CHR"].astype(str) + "_" + snps["POS"].astype(str)
 np.save(out_unique_snp_ids, snp_ids.to_numpy())
 all_barcodes.to_csv(out_all_barcodes, sep="\t", header=False, index=False)
 barcodes_full.to_csv(out_barcodes_full, sep="\t", header=True, index=False)
-sample_df = pd.DataFrame(
-    {"SAMPLE": [f"{sample_id}_{dataset_id}" for dataset_id in dataset_ids]}
-)
-sample_df["SAMPLE_NAME"] = sample_id
-sample_df["REP_ID"] = dataset_ids
-sample_df["sample_type"] = sample_types
-sample_df.to_csv(out_sample_file, sep="\t", header=True, index=False)
+write_sample_ids(sample_id, dataset_ids, sample_types, None, out_sample_file)
 logging.info("finished.")
