@@ -146,13 +146,13 @@ def build_assay_obs_clusters(sample_df, bulk_assays):
     Each cluster records the assay's observation ``offset``, size ``n``, and
     ``tumor_obs``. Returns ``(assay_obs_clusters, tumor_obs_all)``.
     """
-    obs_assay = sample_df["assay_type"].tolist()
-    obs_stype = sample_df["sample_type"].tolist()
+    dataset_assays = sample_df["assay_type"].tolist()
+    sample_types = sample_df["sample_type"].tolist()
     assay_obs_clusters = []
     for at in bulk_assays:
-        obs = [i for i, a in enumerate(obs_assay) if a == at]
+        obs = [i for i, a in enumerate(dataset_assays) if a == at]
         assert obs, f"joint sample sheet, no sample for assay {at}"
-        stypes = [obs_stype[i] for i in obs]
+        stypes = [sample_types[i] for i in obs]
         assay_obs_clusters.append(
             {
                 "assay": at,
@@ -410,28 +410,26 @@ def build_rdr_base_map(sample_df):
     sample used as its RDR baseline. Returns ``{tumor_obs: base_obs}``; a tumor
     with an unset ``RDR_BASE_REP_ID`` is omitted (median-normalized downstream).
     """
-    obs_dataset_id = sample_df["REP_ID"].tolist()
-    obs_stype = sample_df["sample_type"].tolist()
-    dataset_id_to_obs = {rid: i for i, rid in enumerate(obs_dataset_id)}
+    dataset_ids = sample_df["REP_ID"].tolist()
+    sample_types = sample_df["sample_type"].tolist()
+    dataset_id_to_obs = {rid: i for i, rid in enumerate(dataset_ids)}
 
     has_col = "RDR_BASE_REP_ID" in sample_df.columns
-    obs_base_dataset_id = (
-        sample_df["RDR_BASE_REP_ID"].tolist()
-        if has_col
-        else [None] * len(obs_dataset_id)
+    base_dataset_ids = (
+        sample_df["RDR_BASE_REP_ID"].tolist() if has_col else [None] * len(dataset_ids)
     )
 
     base_map = {}
-    for i in range(len(obs_dataset_id)):
-        if obs_stype[i] != "tumor":
+    for i in range(len(dataset_ids)):
+        if sample_types[i] != "tumor":
             continue
-        base_dataset_id = obs_base_dataset_id[i]
+        base_dataset_id = base_dataset_ids[i]
         if has_col and pd.notna(base_dataset_id) and str(base_dataset_id) != "":
             assert base_dataset_id in dataset_id_to_obs, (
-                f"{obs_dataset_id[i]}: RDR_BASE_REP_ID {base_dataset_id!r} is not a REP_ID"
+                f"{dataset_ids[i]}: RDR_BASE_REP_ID {base_dataset_id!r} is not a REP_ID"
             )
             assert dataset_id_to_obs[base_dataset_id] != i, (
-                f"{obs_dataset_id[i]}: RDR_BASE_REP_ID {base_dataset_id!r} is itself"
+                f"{dataset_ids[i]}: RDR_BASE_REP_ID {base_dataset_id!r} is itself"
             )
             base_map[i] = dataset_id_to_obs[base_dataset_id]
     return base_map
@@ -445,7 +443,7 @@ def compute_bb_rdr(
     tumor_obs_all,
     base_map,
     rdr_outlier_quantile,
-    obs_dataset_id,
+    dataset_ids,
 ):
     """Per-bb RDR for every tumor observation.
 
@@ -473,7 +471,7 @@ def compute_bb_rdr(
         if m is not None:
             lib = obs_total_bases[m] / obs_total_bases[o]
             logging.info(
-                f"  bb RDR {obs_dataset_id[o]} / base {obs_dataset_id[m]}: library factor={lib:.4f}"
+                f"  bb RDR {dataset_ids[o]} / base {dataset_ids[m]}: library factor={lib:.4f}"
             )
             with np.errstate(invalid="ignore", divide="ignore"):
                 bb_rdr[:, rdr_pos[o]] = bb_dp[:, o] / bb_dp[:, m] * lib
@@ -483,7 +481,7 @@ def compute_bb_rdr(
             if valid_i.any():
                 med = np.median(vals[valid_i])
                 logging.info(
-                    f"  bb median-centering {obs_dataset_id[o]}: median={med:.4f}"
+                    f"  bb median-centering {dataset_ids[o]}: median={med:.4f}"
                 )
                 with np.errstate(invalid="ignore", divide="ignore"):
                     bb_rdr[valid_i, rdr_pos[o]] = vals[valid_i] / med

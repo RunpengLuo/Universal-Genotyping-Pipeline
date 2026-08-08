@@ -56,10 +56,10 @@ blacklist_bed = maybe_path(snakemake_handle.input["blacklist_bed"])
 # parameters
 qc_dir = snakemake_handle.params["qc_dir"]
 sample_id = snakemake_handle.params["sample_id"]
-obs_assays = list(snakemake_handle.params["obs_assays"])
-obs_dataset_ids = list(snakemake_handle.params["obs_dataset_ids"])
-obs_sample_types = list(snakemake_handle.params["obs_sample_types"])
-obs_base_dataset_ids = list(snakemake_handle.params["obs_base_dataset_ids"])
+dataset_assays = list(snakemake_handle.params["dataset_assays"])
+dataset_ids = list(snakemake_handle.params["dataset_ids"])
+sample_types = list(snakemake_handle.params["sample_types"])
+base_dataset_ids = list(snakemake_handle.params["base_dataset_ids"])
 min_depth = int(snakemake_handle.params["min_depth"])
 gamma = float(snakemake_handle.params["gamma"])
 exon_only = snakemake_handle.params["exon_only"]
@@ -73,10 +73,10 @@ out_b_mtx_snp = snakemake_handle.output["b_mtx_snp"]
 out_sample_file = snakemake_handle.output["sample_file"]
 out_qc_pdf = snakemake_handle.output["qc_pdf"]
 
-n_samples = len(obs_dataset_ids)
-normal_obs = [k for k, st in enumerate(obs_sample_types) if st == "normal"]
+n_samples = len(dataset_ids)
+normal_obs = [k for k, st in enumerate(sample_types) if st == "normal"]
 logging.info(
-    f"sample_id={sample_id}, {n_samples} bulk samples across assays={obs_assays}, "
+    f"sample_id={sample_id}, {n_samples} bulk samples across assays={dataset_assays}, "
     f"normal columns={normal_obs}"
 )
 
@@ -113,7 +113,7 @@ for nc in normal_obs:
     covered = total > 0
     log_hist(
         ref_mtx[covered, nc] / total[covered],
-        f"Normal[{obs_assays[nc]}:{obs_dataset_ids[nc]}] REF/(REF+ALT) over {len(total)} SNPs",
+        f"Normal[{dataset_assays[nc]}:{dataset_ids[nc]}] REF/(REF+ALT) over {len(total)} SNPs",
     )
 
 ##################################################
@@ -144,8 +144,8 @@ a_mtx = a_mtx[snp_mask, :]
 b_mtx = b_mtx[snp_mask, :]
 
 ##################################################
-sample_labels = [f"{obs_assays[k]}:{obs_dataset_ids[k]}" for k in range(n_samples)]
-obs_order = observation_order(obs_assays, obs_sample_types, obs_dataset_ids)
+sample_labels = [f"{dataset_assays[k]}:{dataset_ids[k]}" for k in range(n_samples)]
+obs_order = observation_order(dataset_assays, sample_types, dataset_ids)
 
 with PdfPages(out_qc_pdf) as pdf:
     plot_snp_depth(
@@ -216,12 +216,12 @@ np.savez_compressed(out_b_mtx_snp, mat=b_mtx)
 
 sample_df = pd.DataFrame(
     {
-        "SAMPLE": [f"{sample_id}_{dataset_id}" for dataset_id in obs_dataset_ids],
+        "SAMPLE": [f"{sample_id}_{dataset_id}" for dataset_id in dataset_ids],
         "SAMPLE_NAME": sample_id,
-        "REP_ID": obs_dataset_ids,
-        "sample_type": obs_sample_types,
-        "assay_type": obs_assays,
-        "RDR_BASE_REP_ID": obs_base_dataset_ids,
+        "REP_ID": dataset_ids,
+        "sample_type": sample_types,
+        "assay_type": dataset_assays,
+        "RDR_BASE_REP_ID": base_dataset_ids,
     }
 )
 sample_df.to_csv(out_sample_file, sep="\t", header=True, index=False)

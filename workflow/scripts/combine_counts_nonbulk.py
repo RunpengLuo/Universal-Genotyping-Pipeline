@@ -154,7 +154,7 @@ logging.info(f"gene_aware_binning={gene_aware_binning}")
 total_cols = sum(len(r) for r in dataset_ids_list)
 tot_pb = np.zeros((n_snps, total_cols), dtype=np.float64)
 tot_pb_list = []  # per-assay (n_snps_k x n_datasets_k) pseudobulk, in that assay's SNP order
-obs_assay, obs_dataset_id, obs_offsets = [], [], []
+dataset_assays, dataset_ids, obs_offsets = [], [], []
 offset = 0
 for k in range(n_assays):
     n_datasets_k = len(dataset_ids_list[k])
@@ -171,8 +171,8 @@ for k in range(n_assays):
         .astype(np.int64)
     )
     tot_pb[shared_snp_ids, offset : offset + tot_pb_k.shape[1]] = tot_pb_k
-    obs_assay += [nonbulk_assays[k]] * n_datasets_k
-    obs_dataset_id += dataset_ids_list[k]
+    dataset_assays += [nonbulk_assays[k]] * n_datasets_k
+    dataset_ids += dataset_ids_list[k]
     obs_offsets.append(offset)
     offset += n_datasets_k
 logging.info(f"binning on {total_cols} (replicate x assay) pseudobulk observations")
