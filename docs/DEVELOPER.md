@@ -90,7 +90,7 @@ Three suffixes, three meanings:
 | Suffix | Meaning | Examples |
 |---|---|---|
 | `_id` | a unit's identifier | `region_id`, `seg_id`, `bin_id`, `bb_id`, `snp_id`, `feature_id`, `cluster_ids` |
-| `_df_idx` | a row index into a DataFrame, and into any matrix aligned to it | `_orig_df_idx`, `feature_df_idx`, `RAW_SNP_DF_IDX` |
+| `_df_idx` | a row index into a DataFrame, and into any matrix aligned to it | `_orig_df_idx`, `RAW_SNP_DF_IDX` |
 | `_idx` | a positional index local to one function, into neither | `hit_idx`, `ideal_idx`, `gc_bin_idx` |
 
 An id survives a reindex; a `_df_idx` does not. Anything crossing a function or column
@@ -129,7 +129,6 @@ them uses the canonical word.
 | `min_snp_per_bin`, `min_snp_reads` (config keys) | thresholds on a **bb** |
 | `bb.tsv.gz`, `bb_dir`, `bb_id` | the merged bin (HATCHet's `.bb` convention) |
 | `PS` (VCF tag and column) | phase cluster |
-| `feature_df_idx` (temp column in `assign_features_to_ranges`) | a positional index, not an id; `feature_id` is taken by the GTF gene |
 | `REP_ID`, `RDR_BASE_REP_ID` (output columns) | `dataset_id`. See the note below. |
 
 > [!NOTE]

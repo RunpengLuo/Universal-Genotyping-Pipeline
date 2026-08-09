@@ -1,3 +1,20 @@
+"""One AnnData per RNA-family assay, over all of the sample's datasets.
+
+Reads each dataset's 10x Cell/Space Ranger matrix, restricts it to that dataset's
+barcodes, and concatenates on the union of genes. Genes are then stamped with their GTF
+coordinates and filtered (no GTF entry, zero pseudobulk UMIs, blacklisted, and for
+spatial assays expressed in too few barcodes), assigned to a region, and sorted
+genomically.
+
+Inputs
+  barcodes, matrix_h5, spatial_files: per dataset, from the sample file
+  gtf_file: gene coordinates, joined on `gene_id_colname`
+  gene_blacklist_file: optional, one gene id per line
+  region_bed: chromosome arms; genes outside every arm are dropped
+Outputs:
+  h5ad_file: (cells x genes) AnnData, var carrying `#CHR`/`START`/`END`/`region_id`
+"""
+
 import logging
 
 snakemake_handle = snakemake
@@ -22,56 +39,47 @@ from io_utils import (
 from feature_utils import assign_features_to_ranges
 
 ##################################################
-"""
-Input:
-1. 10x cell/space-ranger RNA Anndata, multiple replicates
-2. reference GTF file with gene_id and ranges
-3. gene blacklist
-4. genome size file
-5. genome regions whitelist
-
-Output:
-single h5ad matrix covers all replicates with position columns
-"""
-
 # inputs
-barcode_files = snakemake_handle.input["barcodes"]
+barcode_files = list(snakemake_handle.input["barcodes"])
 matrix_h5_files = list(snakemake_handle.input["matrix_h5"])
-spatial_files = list(snakemake_handle.input.get("spatial_files", []))
+spatial_files = list(snakemake_handle.input["spatial_files"])
 gtf_file = snakemake_handle.input["gtf_file"]
 gene_blacklist_file = maybe_path(snakemake_handle.input["gene_blacklist_file"])
 region_bed = snakemake_handle.input["region_bed"]
 
 # parameters
 assay_type = snakemake_handle.params["assay_type"]
-dataset_ids = snakemake_handle.params["dataset_ids"]
+dataset_ids = list(snakemake_handle.params["dataset_ids"])
 # per-dataset spatial/ filenames, aligned with spatial_files
 spatial_names = list(snakemake_handle.params["spatial_names"])
-gene_id_colname = str(snakemake_handle.params["gene_id_colname"])
+gene_id_colname = snakemake_handle.params["gene_id_colname"]
 min_frac_barcodes = float(snakemake_handle.params["min_frac_barcodes"])
 
 # outputs
 out_h5ad_file = snakemake_handle.output["h5ad_file"]
 
-
 logging.info(f"prepare rna anndata, assay_type={assay_type}, dataset_ids={dataset_ids}")
 
+# snakemake flattens nested `input:` lists, so regroup per dataset by name count
+n_spatial = [len(names) for names in spatial_names]
+assert len(spatial_files) == sum(n_spatial), (
+    f"spatial_files, {len(spatial_files)} paths for {sum(n_spatial)} names"
+)
+bounds = np.cumsum([0] + n_spatial)
+spatial_paths = [spatial_files[i:j] for i, j in zip(bounds[:-1], bounds[1:])]
+
 adatas = {}
-_spatial_offset = 0
 for idx, dataset_id in enumerate(dataset_ids):
     logging.info(f"process {assay_type}-{dataset_id}")
-    barcodes = read_barcodes(barcode_files[idx])
-    barcodes = pd.Index(barcodes).astype(str)
+    barcodes = pd.Index(read_barcodes(barcode_files[idx])).astype(str)
 
     matrix_h5 = matrix_h5_files[idx]
     if assay_type in SPATIAL_ASSAYS:
         names = spatial_names[idx]
-        paths = spatial_files[_spatial_offset : _spatial_offset + len(names)]
-        _spatial_offset += len(names)
         adata = read_10x_ranger_spatial(
             matrix_h5,
             names,
-            paths,
+            spatial_paths[idx],
             library_id=dataset_id,
             assay_type=assay_type,
             # squidpy doesn't support load images from 3' data yet.
@@ -101,10 +109,8 @@ adata.X = adata.X.tocsr()
 num_total_barcodes = adata.n_obs
 logging.info(f"#concat barcodes={num_total_barcodes}, #union features={adata.n_vars}")
 
-genes_gtf = read_genes_gtf_file(gtf_file, id_col=gene_id_colname)[
-    [gene_id_colname, "#CHR", "START", "END"]
-]
-logging.info(f"loaded #{len(genes_gtf)} unique genes from GTF.")
+genes_gtf = read_genes_gtf_file(gtf_file, id_col=gene_id_colname)
+logging.info(f"#genes in the GTF={len(genes_gtf)}")
 
 var_coords = adata.var.merge(
     genes_gtf, how="left", on=gene_id_colname, validate="m:1", sort=False
@@ -114,8 +120,7 @@ var_coords["pseudobulk_counts"] = np.asarray(adata.X.sum(axis=0)).ravel()
 num_genes = len(var_coords)
 umis = var_coords["pseudobulk_counts"].to_numpy()
 
-# per-gene statistics do not depend on which other genes are present, so the masks
-# are composed and the matrix is subset once
+# per-gene statistics are independent, so the masks compose and X is subset once
 keep = ~var_coords["START"].isna().to_numpy()
 if not keep.all():
     logging.warning(
@@ -158,8 +163,8 @@ logging.info(f"#genes after filtering={adata.n_vars}/{num_genes}")
 regions = read_BED(region_bed)[["#CHR", "START", "END", "region_id"]]
 adata = assign_features_to_ranges(adata, regions, assay_type)
 
-chs = sort_chroms(adata.var["#CHR"].unique().tolist())
-adata.var["#CHR"] = pd.Categorical(adata.var["#CHR"], categories=chs, ordered=True)
+chroms = sort_chroms(adata.var["#CHR"].unique().tolist())
+adata.var["#CHR"] = pd.Categorical(adata.var["#CHR"], categories=chroms, ordered=True)
 
 assert adata.var_names.is_unique, "AnnData, var_names are not unique"
 sort_index = adata.var.sort_values(by=["#CHR", "START"]).index

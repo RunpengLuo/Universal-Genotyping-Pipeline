@@ -26,7 +26,6 @@ rule process_rna_anndata:
             else []
         ),
         region_bed=lambda wc: config["region_bed"],
-        genome_size=lambda wc: config["genome_size"],
         gene_blacklist_file=lambda wc: branch(
             config["gene_blacklist_file"] is None,
             then=[],
@@ -48,7 +47,6 @@ rule process_rna_anndata:
     params:
         assay_type=lambda wc: wc.assay_type,
         dataset_ids=lambda wc: assay2dataset_ids[wc.assay_type],
-        sample_types=lambda wc: assay2sample_types[wc.assay_type],
         # per-dataset spatial/ filenames, aligned with input.spatial_files
         spatial_names=lambda wc: (
             spatial_layout(wc.assay_type, assay2dataset_ids[wc.assay_type])[0]

@@ -103,7 +103,6 @@ def assign_features_to_ranges(
     adata,
     ranges: pd.DataFrame,
     assay_type: str,
-    feature_df_idx="feature_df_idx",
     range_id="region_id",
 ):
     """Assign each AnnData feature to the range it overlaps most; drop the rest.
@@ -115,42 +114,28 @@ def assign_features_to_ranges(
         adata: AnnData whose ``var`` carries ``#CHR``, ``START``, ``END``.
         ranges: Target ranges with ``#CHR``, ``START``, ``END`` and *range_id*.
         assay_type: Assay name, for the log lines only.
-        feature_df_idx: Temporary column holding each feature's ``var`` row index.
         range_id: Identifier column of *ranges*, carried onto ``var``.
 
     Returns:
         A copy of *adata* restricted to the assignable features, ``var`` carrying
-        *range_id*.
+        *range_id* in *ranges*' dtype.
     """
-    logging.info(f"assign {assay_type} features to ranges, {feature_df_idx}-{range_id}")
+    logging.info(f"assign {assay_type} features to ranges, {range_id}")
     if adata.is_view:
         adata = adata.copy()
-    adata.var[feature_df_idx] = np.arange(len(adata.var))
+    n_raw = len(adata.var)
+    logging.info(f"#{assay_type}-features (raw)={n_raw}")
 
-    feature_df = adata.var.reset_index(drop=True)
-    logging.info(f"#{assay_type}-features (raw)={len(feature_df)}")
-
-    n_raw = len(feature_df)
-    feature_df, na_idx = assign_range_to_range(
-        feature_df, ranges, range_id, dropna=True
-    )
+    # var rows and the returned rows are in the same order, so assign positionally
+    annotated, na_idx = assign_range_to_range(adata.var, ranges, range_id)
+    adata.var[range_id] = annotated[range_id].to_numpy()
     logging.info(
         f"#{assay_type} feature outside any range={len(na_idx) / max(n_raw, 1):.3%}"
     )
-    logging.info(f"#{assay_type} feature (remain)={len(feature_df)}")
 
-    adata.var = (
-        adata.var.reset_index(drop=False)
-        .merge(
-            right=feature_df[[feature_df_idx, range_id]],
-            on=feature_df_idx,
-            how="left",
-        )
-        .set_index("index")
-    )
     adata = adata[:, adata.var[range_id].notna()].copy()
-    adata.var.drop(columns=feature_df_idx, inplace=True)
-    adata.var[range_id] = adata.var[range_id].astype(feature_df[range_id].dtype)
+    adata.var[range_id] = adata.var[range_id].astype(ranges[range_id].dtype)
+    logging.info(f"#{assay_type} feature (remain)={adata.n_vars}")
     return adata
 
 
