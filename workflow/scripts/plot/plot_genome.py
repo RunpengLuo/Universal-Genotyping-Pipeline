@@ -92,7 +92,8 @@ def plot_1d_multi_sample(
             ylim=(-0.05, 1.05)
             if is_frac
             else ((min_ylim, max_ylim) if max_ylim is not None else None),
-            ylabel=label,
+            # rotated axis: break "{dataset_id} {assay} {T|N}" after the dataset_id
+            ylabel=label.replace(" ", "\n", 1),
             plot_chrname=is_last,
             mb_ticks=True,
             show_gaps=False,

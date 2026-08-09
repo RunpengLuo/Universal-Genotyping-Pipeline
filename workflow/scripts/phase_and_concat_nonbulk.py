@@ -151,10 +151,15 @@ ref_mtx = ref_mtx[snp_mask, :]
 a_mtx = a_mtx[snp_mask, :]
 b_mtx = b_mtx[snp_mask, :]
 
+sample_labels = [
+    f"{dataset_id} {assay_type} {sample_type[0].upper()}"
+    for dataset_id, sample_type in zip(dataset_ids, sample_types)
+]
+
 with PdfPages(out_qc_pdf) as pdf:
     plot_snp_depth(
         tot_mtx,
-        dataset_ids,
+        sample_labels,
         qc_dir,
         f"{assay_type}.{run_id}",
         ref_mtx=ref_mtx,
@@ -167,7 +172,7 @@ with PdfPages(out_qc_pdf) as pdf:
     )
     plot_allele_freqs(
         snps,
-        dataset_ids,
+        sample_labels,
         tot_mtx,
         ref_mtx,
         genome_size,
@@ -185,7 +190,7 @@ with PdfPages(out_qc_pdf) as pdf:
     )
     plot_allele_freqs(
         snps,
-        dataset_ids,
+        sample_labels,
         tot_mtx,
         b_mtx,
         genome_size,

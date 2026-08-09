@@ -46,8 +46,8 @@ def plot_segmentation_qc(
     Page 2 — one row per REP_ID, three histograms of raw counts: native read counts,
       B-allele counts, total-allele counts. The count axes use scientific notation
       (matplotlib's offset multiplier) rather than a scaled axis label.
-      Every subplot title is multi-line and carries
-      ``{SAMPLE} {REP_ID} {assay_type} {sample_type}`` plus mean/median.
+      Each row is labelled ``{REP_ID}\\n{assay_type} {T|N}`` on the rotated row axis;
+      the patient id is the page super-title.
 
     Parameters
     ----------
@@ -122,11 +122,10 @@ def plot_segmentation_qc(
     )
     for ri in range(n_datasets):
         row = sample_df.iloc[ri]
-        assay = str(row.get("assay_type", ""))
-        # 2-line sample label, shown once per row as a bold vertical "row super-title"
+        # shown once per row as a bold vertical "row super-title"
         row_label = (
-            f"{row.get(name_col, '')}\n{row.get('REP_ID', '')}\n"
-            f"{assay} ({row.get('sample_type', '')})"
+            f"{row.get('REP_ID', '')}\n{row.get('assay_type', '')} "
+            f"{str(row.get('sample_type', ''))[:1].upper()}"
         )
         _hist_with_stats(
             axes[ri, 0], dense_observation(x_count_mat, ri), "Read count", sci_x=True
@@ -155,6 +154,13 @@ def plot_segmentation_qc(
             fontweight="bold",
             fontsize=9,
         )
+    fig2.suptitle(
+        f"{sample_df[name_col].iloc[0]} - per-dataset counts"
+        if n_datasets
+        else "per-dataset counts",
+        fontsize=11,
+        fontweight="bold",
+    )
     fig2.tight_layout()
     fig2.subplots_adjust(left=0.18)
     pdf_pages.savefig(fig2, dpi=dpi)

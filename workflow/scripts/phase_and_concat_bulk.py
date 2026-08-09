@@ -149,7 +149,10 @@ a_mtx = a_mtx[snp_mask, :]
 b_mtx = b_mtx[snp_mask, :]
 
 ##################################################
-sample_labels = [f"{dataset_assays[k]}:{dataset_ids[k]}" for k in range(n_samples)]
+sample_labels = [
+    f"{dataset_ids[k]} {dataset_assays[k]} {sample_types[k][0].upper()}"
+    for k in range(n_samples)
+]
 
 with PdfPages(out_qc_pdf) as pdf:
     plot_snp_depth(

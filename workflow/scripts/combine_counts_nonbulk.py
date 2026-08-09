@@ -126,6 +126,15 @@ tot_mtx_snp_list = [load_npz(f) for f in tot_mtx_snp_files]
 a_mtx_snp_list = [load_npz(f) for f in a_mtx_snp_files]
 b_mtx_snp_list = [load_npz(f) for f in b_mtx_snp_files]
 dataset_ids_list = [s["REP_ID"].tolist() for s in sample_ids_list]
+sample_labels_list = [
+    [
+        f"{dataset_id} {nonbulk_assays[k]} {str(sample_type)[0].upper()}"
+        for dataset_id, sample_type in zip(
+            dataset_ids_list[k], sample_ids_list[k]["sample_type"]
+        )
+    ]
+    for k in range(n_assays)
+]
 cell_dataset_idx_list = [
     observation_cluster_ids(read_full_barcodes(bc_full), dataset_ids_list[k])
     for k, bc_full in enumerate(barcode_full_files)
@@ -357,7 +366,7 @@ for j, min_snp_reads in enumerate(msr_list):
         pdf = PdfPages(out_qc_pdf[idx])
         plot_allele_freqs(
             bbs,
-            dataset_ids_list[k],
+            sample_labels_list[k],
             tot_bb,
             b_bb,
             genome_size,
@@ -379,7 +388,7 @@ for j, min_snp_reads in enumerate(msr_list):
         save_npz(out_b_mtx_multi[idx], mc["b"])
         plot_allele_freqs(
             mc["df"],
-            dataset_ids_list[k],
+            sample_labels_list[k],
             mc["tot"],
             mc["b"],
             genome_size,
