@@ -22,7 +22,7 @@ from scipy.io import mmread
 from scipy.sparse import save_npz
 
 from const import ASSAY_TYPE2MODALITY
-from io_utils import read_BED, read_VCF, write_sample_ids
+from io_utils import read_BED, read_VCF, write_sample_ids, write_snp_info
 from range_utils import overlaps_any_range
 from combine_counts_utils import (
     apply_masks_to_df,
@@ -204,16 +204,7 @@ with PdfPages(out_qc_pdf) as pdf:
 
 ##################################################
 logging.info("saving output files")
-snp_cols = ["#CHR", "POS", "POS0", "START", "END", "GT", "PHASE"]
-# PS drives the binning phase clusters downstream; without it everything is one cluster
-if "PS" in snps.columns:
-    snp_cols.append("PS")
-logging.info(f"phase set (PS) column carried: {'PS' in snps.columns}")
-snp_cols += ["region_id"]
-if "seg_id" in snps.columns:
-    snp_cols.append("seg_id")
-snp_cols += ["feature_id", "feature_type"]
-snps[snp_cols].to_csv(out_snp_info, sep="\t", header=True, index=False)
+write_snp_info(snps, out_snp_info)
 save_npz(out_tot_mtx_snp, tot_mtx)
 save_npz(out_a_mtx_snp, a_mtx)
 save_npz(out_b_mtx_snp, b_mtx)

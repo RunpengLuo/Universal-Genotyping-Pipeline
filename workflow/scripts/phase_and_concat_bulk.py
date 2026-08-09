@@ -28,6 +28,7 @@ from io_utils import (
     read_VCF,
     read_bcftools_pileup_counts,
     write_sample_ids,
+    write_snp_info,
 )
 from combine_counts_utils import (
     apply_masks_to_df,
@@ -206,18 +207,7 @@ with PdfPages(out_qc_pdf) as pdf:
 
 ##################################################
 logging.info("saving phased allele count mats to files")
-snp_cols = ["#CHR", "POS", "POS0", "START", "END", "GT", "PHASE"]
-
-# upstream phaser's phaseset label
-if "PS" in snps.columns:
-    snp_cols.append("PS")
-logging.info(f"phase set (PS) column carried: {'PS' in snps.columns}")
-
-snp_cols += ["region_id"]
-if "seg_id" in snps.columns:
-    snp_cols.append("seg_id")
-snp_cols += ["feature_id", "feature_type"]
-snps[snp_cols].to_csv(out_snp_info, sep="\t", header=True, index=False)
+write_snp_info(snps, out_snp_info)
 
 np.savez_compressed(out_tot_mtx_snp, mat=tot_mtx)
 np.savez_compressed(out_a_mtx_snp, mat=a_mtx)

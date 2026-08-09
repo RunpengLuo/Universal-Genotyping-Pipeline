@@ -491,3 +491,35 @@ def write_sample_ids(
     sample_df = pd.DataFrame(sample_dict)
     sample_df.to_csv(out_file, sep="\t", header=True, index=False)
     return sample_df
+
+
+def write_snp_info(
+    snps: pd.DataFrame,
+    out_file: str,
+):
+    """Write the SNP feature axis of the allele matrices.
+
+    Two columns are carried only when present: ``PS``, the upstream phaser's phase-set
+    label, which becomes the binning phase clusters; and ``seg_id``, which exists when
+    ``segment_bed`` had a 4th column.
+
+    Args:
+        snps: Filtered SNPs, in matrix-feature order.
+        out_file: Output TSV path.
+
+    Returns:
+        The DataFrame written.
+    """
+    snp_cols = ["#CHR", "POS", "POS0", "START", "END", "GT", "PHASE"]
+    # upstream phaser's phaseset label
+    if "PS" in snps.columns:
+        snp_cols.append("PS")
+    logging.info(f"phase set (PS) column carried: {'PS' in snps.columns}")
+
+    snp_cols += ["region_id"]
+    if "seg_id" in snps.columns:
+        snp_cols.append("seg_id")
+    snp_cols += ["feature_id", "feature_type"]
+    snp_info = snps[snp_cols]
+    snp_info.to_csv(out_file, sep="\t", header=True, index=False)
+    return snp_info
