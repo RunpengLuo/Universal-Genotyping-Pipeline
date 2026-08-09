@@ -90,6 +90,7 @@ h5ad_assays = list(
     snakemake_handle.params["h5ad_assays"]
 )  # parallel to h5ad_files (RNA-family)
 qc_dir = snakemake_handle.params["qc_dir"]
+sample_id = snakemake_handle.params["sample_id"]
 run_id = snakemake_handle.params["run_id"]
 nonbulk_assays = list(snakemake_handle.params["nonbulk_assays"])
 chroms = list(snakemake_handle.params["chroms"])
@@ -147,11 +148,6 @@ cell_dataset_idx_list = [
     for k, bc_full in enumerate(barcode_full_files)
 ]
 
-sample_id = (
-    sample_ids_list[0]["SAMPLE_NAME"].iloc[0]
-    if "SAMPLE_NAME" in sample_ids_list[0]
-    else ""
-)
 logging.info(f"joint non-bulk binning: sample_id={sample_id}, assays={nonbulk_assays}")
 
 ##################################################

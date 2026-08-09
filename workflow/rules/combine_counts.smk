@@ -73,6 +73,7 @@ if workflow_mode == "bulk_genotyping":
         threads: 1
         params:
             qc_dir=config["qc_dir"],
+            sample_id=sample_id,
             bulk_assays=assay_types,
             nu=config["params_combine_counts"]["nu"],
             min_switchprob=config["params_combine_counts"]["min_switchprob"],
@@ -212,6 +213,7 @@ elif workflow_mode == "single_cell_genotyping":
         threads: 1
         params:
             qc_dir=config["qc_dir"],
+            sample_id=sample_id,
             nonbulk_assays=assay_types,
             frag_dataset_ids=assay2dataset_ids["scATAC"],
             h5ad_assays=[at for at in assay_types if ASSAY_TYPE2MODALITY[at] == "RNA"],

@@ -68,6 +68,7 @@ blacklist_bed = maybe_path(snakemake_handle.input["blacklist_bed"])
 genome_size = snakemake_handle.input["genome_size"]
 
 # parameters
+sample_id = snakemake_handle.params["sample_id"]
 bulk_assays = list(snakemake_handle.params["bulk_assays"])
 phase_flip_test = bool(snakemake_handle.params["phase_flip_test"])
 phase_flip_epsilon = float(snakemake_handle.params["phase_flip_epsilon"])
@@ -100,7 +101,6 @@ dp_corrected_list = [np.load(f)["mat"] for f in dp_corrected_files]
 bin_df_list = [pd.read_table(f, sep="\t") for f in bin_df_files]
 n_snps = len(snps)
 
-sample_id = sample_df["SAMPLE_NAME"].iloc[0]
 total_samples = len(sample_df)
 logging.info(
     f"combine_counts: sample_id={sample_id}, bulk_assays={bulk_assays}; "
@@ -271,6 +271,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
             tot_mtx_bb,
             pdf=pdf,
             gene_count=bb_gene_count,
+            sample_id=sample_id,
         )
         plot_rdr_baf(
             bbs,

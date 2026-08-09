@@ -37,6 +37,7 @@ def plot_segmentation_qc(
     pdf: PdfPages | None = None,
     gene_count=None,
     gene_col: str = "feature_id",
+    sample_id: str = "",
     dpi: int = 150,
 ):
     """Two-page segmentation QC histograms for combine_counts output.
@@ -56,9 +57,8 @@ def plot_segmentation_qc(
         For the gene-count panel it may carry a ``;``-joined ``gene_col`` or a numeric
         ``n_genes`` column; otherwise pass *gene_count* explicitly.
     sample_df : pd.DataFrame
-        One row per count-matrix column (per REP_ID), with ``REP_ID``, ``assay_type``,
-        ``sample_type`` and a sample-name column (``SAMPLE_NAME`` or ``SAMPLE``). Row
-        order must match the columns of the count matrices.
+        One row per count-matrix column (per REP_ID), with ``REP_ID``, ``assay_type``
+        and ``sample_type``. Row order must match the columns of the count matrices.
     x_count_mat, b_count_mat, tot_count_mat : ndarray or sparse, (n_seg, n_datasets)
         Native, B-allele, and total-allele counts per segment per dataset_id; columns aligned
         to *sample_df* rows.
@@ -68,7 +68,6 @@ def plot_segmentation_qc(
     """
     logging.info("QC analysis - plot segmentation QC histograms")
 
-    name_col = "SAMPLE_NAME" if "SAMPLE_NAME" in sample_df.columns else "SAMPLE"
     n_datasets = len(sample_df)
 
     _own_pdf = pdf is None
@@ -155,9 +154,7 @@ def plot_segmentation_qc(
             fontsize=9,
         )
     fig2.suptitle(
-        f"{sample_df[name_col].iloc[0]} - per-dataset counts"
-        if n_datasets
-        else "per-dataset counts",
+        f"{sample_id} - per-dataset counts" if sample_id else "per-dataset counts",
         fontsize=11,
         fontweight="bold",
     )
