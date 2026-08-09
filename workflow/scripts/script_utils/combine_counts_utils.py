@@ -34,7 +34,7 @@ def observation_cluster_ids(rep2bc: pd.DataFrame, dataset_ids):
     return codes
 
 
-def build_assay_obs_clusters(sample_df, bulk_assays):
+def build_assay_obs_clusters(sample_df, assay_types):
     """Cluster the joint observations by assay into per-assay descriptors.
 
     Each cluster records the assay's observation ``offset``, size ``n``, and
@@ -43,7 +43,7 @@ def build_assay_obs_clusters(sample_df, bulk_assays):
     dataset_assays = sample_df["assay_type"].tolist()
     sample_types = sample_df["sample_type"].tolist()
     assay_obs_clusters = []
-    for at in bulk_assays:
+    for at in assay_types:
         obs = [i for i, a in enumerate(dataset_assays) if a == at]
         assert obs, f"joint sample sheet, no sample for assay {at}"
         stypes = [sample_types[i] for i in obs]
@@ -67,9 +67,8 @@ def build_union_snps(snps_list):
     """Union per-assay SNP tables into one genomically-sorted set.
 
     Keeps the shared annotation columns (``PS``/``feature_id`` only when present in
-    EVERY assay), dedupes on ``(#CHR, POS0)``, sorts, and adds a 0-based
-    ``snp_id``. Returns ``(snps, has_feature)``; ``setup_phase_clusters`` reports on
-    ``PS``.
+    EVERY assay), dedupes on ``(#CHR, POS0)``, sorts, and adds a 0-based ``snp_id``.
+    ``setup_phase_clusters`` reports on ``PS``.
     """
     has_ps = all("PS" in s.columns for s in snps_list)
     has_feature = all("feature_id" in s.columns for s in snps_list)
@@ -87,7 +86,7 @@ def build_union_snps(snps_list):
     ).drop_duplicates(["#CHR", "POS0"])
     snps = sort_df_chr(snps, ch="#CHR", pos="POS0").reset_index(drop=True)
     snps["snp_id"] = np.arange(len(snps))
-    return snps, has_feature
+    return snps
 
 
 ##################################################

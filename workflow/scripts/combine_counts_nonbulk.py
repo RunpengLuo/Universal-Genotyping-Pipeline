@@ -24,13 +24,7 @@ import shutil
 
 snakemake_handle = snakemake
 
-from utils import (
-    add_chr_prefix,
-    maybe_path,
-    set_omp_threads,
-    setup_logging,
-    sort_df_chr,
-)
+from utils import maybe_path, set_omp_threads, setup_logging
 
 set_omp_threads(snakemake_handle)
 setup_logging(snakemake_handle.log[0])
@@ -39,7 +33,14 @@ import numpy as np
 import pandas as pd
 from scipy.sparse import save_npz
 
-from io_utils import read_barcodes, read_full_barcodes, read_snp_mats, write_bb_file
+from const import ASSAY_TYPE2MODALITY
+from io_utils import (
+    read_barcodes,
+    read_full_barcodes,
+    read_snp_mats,
+    read_window_bed,
+    write_bb_file,
+)
 from combine_counts_utils import (
     build_union_snps,
     observation_cluster_ids,
@@ -83,16 +84,10 @@ window_bed = snakemake_handle.input["window_bed"]
 genome_size = snakemake_handle.input["genome_size"]
 
 # parameters
-frag_dataset_ids = list(
-    snakemake_handle.params["frag_dataset_ids"]
-)  # parallel to frag_files
-h5ad_assays = list(
-    snakemake_handle.params["h5ad_assays"]
-)  # parallel to h5ad_files (RNA-family)
 qc_dir = snakemake_handle.params["qc_dir"]
 sample_id = snakemake_handle.params["sample_id"]
 run_id = snakemake_handle.params["run_id"]
-nonbulk_assays = list(snakemake_handle.params["nonbulk_assays"])
+assay_types = list(snakemake_handle.params["assay_types"])
 chroms = list(snakemake_handle.params["chroms"])
 nu = float(snakemake_handle.params["nu"])
 min_switchprob = float(snakemake_handle.params["min_switchprob"])
@@ -100,7 +95,7 @@ switchprob_ps = float(snakemake_handle.params["switchprob_ps"])
 nsnp_multi = int(snakemake_handle.params["nsnp_multi"])
 msr_list = [int(m) for m in snakemake_handle.params["min_snp_reads"]]
 min_snp_per_bin = int(snakemake_handle.params["min_snp_per_bin"])
-gene_aware_binning_param = bool(snakemake_handle.params["gene_aware_binning"])
+gene_aware_binning = bool(snakemake_handle.params["gene_aware_binning"])
 
 # outputs
 out_bb_file = list(snakemake_handle.output["bb_file"])
@@ -117,7 +112,7 @@ out_barcodes_full = list(snakemake_handle.output["barcodes_full"])
 out_x_count = list(snakemake_handle.output["x_count"])
 out_qc_pdf = list(snakemake_handle.output["qc_pdf"])
 
-n_assays = len(nonbulk_assays)
+n_assays = len(assay_types)
 
 ##################################################
 # load per-assay inputs
@@ -136,7 +131,7 @@ snps_list, tot_mtx_snp_list, a_mtx_snp_list, b_mtx_snp_list = (
 dataset_ids_list = [s["REP_ID"].tolist() for s in sample_ids_list]
 sample_labels_list = [
     [
-        f"{dataset_id} {nonbulk_assays[k]} {str(sample_type)[0].upper()}"
+        f"{dataset_id} {assay_types[k]} {str(sample_type)[0].upper()}"
         for dataset_id, sample_type in zip(
             dataset_ids_list[k], sample_ids_list[k]["sample_type"]
         )
@@ -148,17 +143,21 @@ cell_dataset_idx_list = [
     for k, bc_full in enumerate(barcode_full_files)
 ]
 
-logging.info(f"joint non-bulk binning: sample_id={sample_id}, assays={nonbulk_assays}")
+logging.info(
+    f"combine_counts_nonbulk\n"
+    f"sample_id={sample_id}\n"
+    f"assay_types={assay_types}\n"
+    f"#SNPs(per assay)={[len(s) for s in snps_list]}\n"
+    f"#datasets(per assay)={[len(d) for d in dataset_ids_list]}"
+)
 
 ##################################################
 # 1. shared SNP set (union across assays)
-snps, has_feature = build_union_snps(snps_list)
+snps = build_union_snps(snps_list)
 n_snps = len(snps)
 logging.info(f"shared SNP set (union): {n_snps} SNPs across {n_assays} assays")
 
 cluster_cols = setup_phase_clusters(snps)
-
-gene_aware_binning = gene_aware_binning_param and has_feature
 logging.info(f"gene_aware_binning={gene_aware_binning}")
 
 ##################################################
@@ -188,23 +187,20 @@ logging.info(f"binning on {total_cols} (replicate x assay) pseudobulk observatio
 ##################################################
 # 3. shared precompute (genetic map, sample sheet, fixed bins, multi-SNP clusters)
 genetic_map = pd.read_table(gmap_file, sep="\t") if gmap_file is not None else None
-h5ad_of = dict(zip(h5ad_assays, h5ad_files))
+rna_assay_types = [at for at in assay_types if ASSAY_TYPE2MODALITY[at] == "RNA"]
+assert len(h5ad_files) == len(rna_assay_types), (
+    f"h5ad_files, {len(h5ad_files)} files for {len(rna_assay_types)} RNA assays"
+)
+h5ad_by_assay = dict(zip(rna_assay_types, h5ad_files))
 # combined sample sheet: one entry per (replicate x assay) observation
 joint_sids = pd.concat(
-    [sample_ids_list[k].assign(assay_type=nonbulk_assays[k]) for k in range(n_assays)],
+    [sample_ids_list[k].assign(assay_type=assay_types[k]) for k in range(n_assays)],
     ignore_index=True,
 )
 # fixed bins: the window BED, the same grid bulk bins on. Tiled per segment row, so a
 # window never spans two segments and none lies in a blacklist hole. Windows exist where
 # no SNP does, so a SNP-free segment still yields bbs carrying Xcount.
-bin_df = pd.read_table(window_bed, sep="\t", dtype={"#CHR": str})
-bin_df["#CHR"] = add_chr_prefix(bin_df["#CHR"])
-bin_df = bin_df[bin_df["#CHR"].isin(chroms)]
-# drop the bulk bias-correction covariates; groupby would copy them per cluster
-bin_df = bin_df[["#CHR", "START", "END", "region_id", "seg_id"]]
-bin_df = sort_df_chr(bin_df, ch="#CHR", pos="START").reset_index(drop=True)
-# bin_id must be the row position: build_adaptive_bins maps bb_id back positionally
-bin_df["bin_id"] = np.arange(len(bin_df))
+bin_df, _ = read_window_bed(window_bed, chroms=chroms)
 logging.info(f"fixed bins: {len(bin_df)} windows from {window_bed}")
 
 tot_pb_cont = np.ascontiguousarray(tot_pb)
@@ -266,7 +262,7 @@ for k in range(n_assays):
 # 4. per-MSR joint segmentation + per-assay outputs
 n_msr = len(msr_list)
 for j, min_snp_reads in enumerate(msr_list):
-    logging.info(f"===== joint non-bulk binning MSR={min_snp_reads} =====")
+    logging.info(f"===== MSR={min_snp_reads} =====")
     bbs, snps_bb = build_adaptive_bins(
         bin_df,
         snps_binned.copy(),
@@ -308,7 +304,7 @@ for j, min_snp_reads in enumerate(msr_list):
     bb_ranges = bbs[["#CHR", "START", "END", "bb_id"]].copy()
 
     for k in range(n_assays):
-        assay = nonbulk_assays[k]
+        assay = assay_types[k]
         # outputs are expanded assay-major over msr_list, so this is (k, j)
         idx = k * n_msr + j
 
@@ -332,9 +328,13 @@ for j, min_snp_reads in enumerate(msr_list):
 
         # per-cell Xcount per bb bin: scATAC from raw fragments, RNA from the h5ad
         if assay == "scATAC":
+            assert len(frag_files) == len(dataset_ids_list[k]), (
+                f"frag_files, {len(frag_files)} files for "
+                f"{len(dataset_ids_list[k])} scATAC datasets"
+            )
             x_count = sum_atac_fragments_to_bins(
                 frag_files,
-                frag_dataset_ids,
+                dataset_ids_list[k],
                 read_full_barcodes(barcode_full_files[k]),
                 window_bb_ranges,
                 num_bbs,
@@ -343,9 +343,9 @@ for j, min_snp_reads in enumerate(msr_list):
             logging.info(
                 f"{assay} MSR={min_snp_reads} Xcount (fragments): shape={x_count.shape}, nnz={x_count.nnz}"
             )
-        elif assay in h5ad_of:
+        elif assay in h5ad_by_assay:
             x_count = sum_umis_to_bins(
-                h5ad_of[assay],
+                h5ad_by_assay[assay],
                 read_barcodes(barcode_files[k]),
                 bb_ranges,
                 num_bbs,
@@ -401,4 +401,4 @@ for j, min_snp_reads in enumerate(msr_list):
 
 # TODO: recommend a default MSR (elbow of lag-1 dispersion vs #bins; see
 # docs/combine_counts_pseudocode.md section 4) and record the pick.
-logging.info("finished joint non-bulk binning (all MSR).")
+logging.info("finished combine_counts_nonbulk.")

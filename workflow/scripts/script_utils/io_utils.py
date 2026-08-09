@@ -12,7 +12,7 @@ from const import (
     RANGER_SPATIAL_DIR,
     SAMPLE_ID_COLNAMES,
 )
-from utils import add_chr_prefix, sort_chroms
+from utils import add_chr_prefix, sort_chroms, sort_df_chr
 
 
 def read_chrom_sizes(sz_file: str):
@@ -182,7 +182,7 @@ def read_bcftools_pileup_counts(tsv_file: str, parent_alt_by_key: dict):
     return snps, tot_mtx, ad_mtx
 
 
-def read_allele_mat(npz_file):
+def read_allele_mat(npz_file, mat_dtype=None):
     """Read one SNP-level allele matrix, dense or sparse, as it was written.
 
     Bulk writes ``np.savez_compressed(mat=...)`` (one ``mat`` key) because its matrices
@@ -192,6 +192,7 @@ def read_allele_mat(npz_file):
 
     Args:
         npz_file: Path to the ``.npz``.
+        mat_dtype: Cast the matrix to this dtype; ``None`` keeps the stored one.
 
     Returns:
         ``np.ndarray`` for a dense file, ``scipy.sparse.csr_matrix`` for a sparse one.
@@ -200,10 +201,11 @@ def read_allele_mat(npz_file):
 
     with np.load(npz_file) as npz:
         is_dense = "mat" in npz.files
-        return npz["mat"] if is_dense else load_npz(npz_file)
+        mat = npz["mat"] if is_dense else load_npz(npz_file)
+    return mat if mat_dtype is None else mat.astype(mat_dtype)
 
 
-def read_snp_mats(snp_info_file, tot_file, a_file, b_file):
+def read_snp_mats(snp_info_file, tot_file, a_file, b_file, mat_dtype=None):
     """Read a SNP table and its T/A/B allele matrices.
 
     Row order is the file's. Nothing downstream depends on it: the one step defined
@@ -212,6 +214,8 @@ def read_snp_mats(snp_info_file, tot_file, a_file, b_file):
     Args:
         snp_info_file: ``snps.tsv.gz`` from phase_and_concat.
         tot_file, a_file, b_file: the total / A-allele / B-allele ``.npz``.
+        mat_dtype: Cast the three matrices to this dtype; ``None`` keeps the stored one,
+            which for a sparse file avoids copying its ``data`` array.
 
     Returns:
         ``(snps, tot_mtx, a_mtx, b_mtx)``; the matrices are dense or sparse per
@@ -220,9 +224,9 @@ def read_snp_mats(snp_info_file, tot_file, a_file, b_file):
     snps = pd.read_table(snp_info_file, sep="\t")
     return (
         snps,
-        read_allele_mat(tot_file),
-        read_allele_mat(a_file),
-        read_allele_mat(b_file),
+        read_allele_mat(tot_file, mat_dtype),
+        read_allele_mat(a_file, mat_dtype),
+        read_allele_mat(b_file, mat_dtype),
     )
 
 
@@ -256,6 +260,48 @@ def read_BED(bed_file: str, addchr=True, extra_columns=("region_id", "seg_id")):
     if "seg_id" in extra_columns and "seg_id" not in df.columns:
         df["seg_id"] = df["region_id"]
     return df
+
+
+def read_window_bed(bed_files, chroms=None):
+    """Read fixed-bin BED(s) into one genomically sorted frame with ``bin_id``.
+
+    Takes one path, or several to union: the bulk path has one ``window.tsv.gz`` per
+    assay, each the same tiling minus that assay's NaN bins, so they are unioned on the
+    coordinates. The bias-correction covariates (GC/MAP/REPLI) are dropped - binning
+    groups by cluster and would copy them per group. ``seg_id`` is carried only when
+    every file has it, else it falls back to ``region_id`` (one segment per arm).
+
+    Every producer writes a sorted file, but a union of differing subsets is not sorted,
+    hence the sort here. ``bin_id`` must be the row position: ``build_adaptive_bins``
+    maps ``bb_id`` back positionally.
+
+    Args:
+        bed_files: One path, or a sequence of paths to union.
+        chroms: Keep only these contigs; ``None`` keeps every row. Single-cell reads the
+            window BED itself, which may be a genome-wide grid, so it filters; bulk
+            passes ``None`` because ``rd_correct`` already trimmed each window.tsv.gz.
+
+    Returns:
+        ``(bins, raw_bins)``: *bins* is the union, with ``#CHR``, ``START``, ``END``,
+        ``region_id``, ``seg_id``, ``bin_id``. *raw_bins* holds each file exactly as
+        read, so a caller whose per-file matrix is row-aligned to it (bulk's corrected
+        depth) can use it without reading the files a second time.
+    """
+    if isinstance(bed_files, (str, os.PathLike)):
+        bed_files = [bed_files]
+    raw_bins = [pd.read_table(f, sep="\t", dtype={"#CHR": str}) for f in bed_files]
+    has_seg = all("seg_id" in f.columns for f in raw_bins)
+    cols = ["#CHR", "START", "END", "region_id"] + (["seg_id"] if has_seg else [])
+    bin_df = pd.concat([f[cols] for f in raw_bins], ignore_index=True)
+    bin_df["#CHR"] = add_chr_prefix(bin_df["#CHR"])
+    if chroms is not None:
+        bin_df = bin_df[bin_df["#CHR"].isin(chroms)]
+    bin_df = bin_df.drop_duplicates(["#CHR", "START", "END"])
+    bin_df = sort_df_chr(bin_df, ch="#CHR", pos="START").reset_index(drop=True)
+    if not has_seg:
+        bin_df["seg_id"] = bin_df["region_id"]
+    bin_df["bin_id"] = np.arange(len(bin_df))
+    return bin_df, raw_bins
 
 
 def read_bedgraph(bg_file: str, chroms=None):

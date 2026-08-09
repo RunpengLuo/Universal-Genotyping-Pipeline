@@ -85,20 +85,25 @@ cell_dataset_ids = observation_cluster_ids(
     read_full_barcodes(barcodes_full_path), dataset_ids
 )
 
-logging.info(f"cnv segmentation, sample_id={sample_id}, assay_type={assay_type}")
-logging.info(f"dataset_ids={dataset_ids}")
 snps, tot_mtx, a_mtx, b_mtx = read_snp_mats(snp_info, tot_mtx_snp, a_mtx_snp, b_mtx_snp)
 
 bb_df = pd.read_table(bb_file, sep="\t")
 bb_df = sort_df_chr(bb_df, pos="START")
 bb_df["bb_id"] = np.arange(len(bb_df))
 num_bbs = len(bb_df)
-logging.info(f"#bbs={num_bbs}")
+
+logging.info(
+    f"combine_counts_fixed_bins\n"
+    f"sample_id={sample_id}\n"
+    f"assay_type={assay_type}\n"
+    f"#SNPs={len(snps)}\n"
+    f"#datasets={len(dataset_ids)}\n"
+    f"#bbs={num_bbs}"
+)
 
 snps["RAW_SNP_DF_IDX"] = np.arange(len(snps))
-logging.info(f"#{assay_type}-SNP (raw)={len(snps)}")
 snps, _ = assign_pos_to_range(snps, bb_df, ref_id="bb_id", dropna=True)
-logging.info(f"#{assay_type}-SNP (remain)={len(snps)}")
+logging.info(f"#SNPs in a bb={len(snps)}")
 bb_df["#SNPS"] = bb_df["bb_id"].map(snps["bb_id"].value_counts()).fillna(0).astype(int)
 
 stamp_bb_feature_ids(bb_df, snps)
@@ -186,4 +191,4 @@ write_bb_file(bb_df, out_bb_file)
 shutil.copy2(all_barcodes, out_barcodes)
 shutil.copy2(barcodes_full_path, out_barcodes_full)
 shutil.copy2(sample_file, out_sample_file)
-logging.info("finished.")
+logging.info("finished combine_counts_fixed_bins.")

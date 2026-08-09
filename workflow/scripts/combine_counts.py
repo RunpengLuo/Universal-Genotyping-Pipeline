@@ -8,7 +8,7 @@ samples; RDR is computed per assay, normalizing each tumor by the RDR base obser
 named in its ``RDR_BASE_REP_ID`` (median-normalized when unset).
 
 The allele matrices come as one joint set from phase_and_concat_bulk (read directly, no
-union); depth/fixed-bin inputs stay per-assay (index-aligned to ``params.bulk_assays``).
+union); depth/fixed-bin inputs stay per-assay (index-aligned to ``params.assay_types``).
 Outputs go under ``bb_dir/MSR{msr}/bulk/``; matrix observations are the bulk samples.
 """
 
@@ -16,7 +16,7 @@ import logging
 
 snakemake_handle = snakemake
 
-from utils import set_omp_threads, setup_logging, maybe_path, sort_df_chr
+from utils import set_omp_threads, setup_logging, maybe_path
 
 set_omp_threads(snakemake_handle)
 setup_logging(snakemake_handle.log[0])
@@ -35,7 +35,7 @@ from feature_utils import (
     stamp_bb_feature_ids,
     stamp_gene_clusters,
 )
-from io_utils import read_snp_mats, write_bb_file
+from io_utils import read_snp_mats, read_window_bed, write_bb_file
 from matrix_utils import sum_features_to_bbs
 from combine_counts_utils import (
     aggregate_bin_depth_to_bbs,
@@ -53,6 +53,7 @@ from phasing_utils import (
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_combine_counts import plot_rdr_baf, plot_rdr_baf_2d, plot_segmentation_qc
 
+##################################################
 
 # inputs
 snp_info = snakemake_handle.input["snp_info"]
@@ -69,11 +70,13 @@ genome_size = snakemake_handle.input["genome_size"]
 
 # parameters
 sample_id = snakemake_handle.params["sample_id"]
-bulk_assays = list(snakemake_handle.params["bulk_assays"])
+assay_types = list(snakemake_handle.params["assay_types"])
+
 phase_flip_test = bool(snakemake_handle.params["phase_flip_test"])
 phase_flip_epsilon = float(snakemake_handle.params["phase_flip_epsilon"])
 phase_flip_alpha = float(snakemake_handle.params["phase_flip_alpha"])
-gene_aware_binning_param = bool(snakemake_handle.params["gene_aware_binning"])
+
+gene_aware_binning = bool(snakemake_handle.params["gene_aware_binning"])
 max_blocksize = int(snakemake_handle.params["max_blocksize"])
 msr_list = [int(m) for m in snakemake_handle.params["min_snp_reads"]]
 min_snp_per_bin = int(snakemake_handle.params["min_snp_per_bin"])
@@ -92,29 +95,30 @@ out_rdr_mtx_bb = list(snakemake_handle.output["rdr_mtx_bb"])
 out_sample_file = list(snakemake_handle.output["sample_file"])
 out_qc_pdf = list(snakemake_handle.output["qc_pdf"])
 
+##################################################
+# load inputs
 sample_df = pd.read_table(sample_file)
-snps, tot_mtx, a_mtx, b_mtx = read_snp_mats(snp_info, tot_mtx_snp, a_mtx_snp, b_mtx_snp)
-tot_mtx = tot_mtx.astype(np.int32)
-a_mtx = a_mtx.astype(np.int32)
-b_mtx = b_mtx.astype(np.int32)
-dp_corrected_list = [np.load(f)["mat"] for f in dp_corrected_files]
-bin_df_list = [pd.read_table(f, sep="\t") for f in bin_df_files]
-n_snps = len(snps)
-
-total_samples = len(sample_df)
-logging.info(
-    f"combine_counts: sample_id={sample_id}, bulk_assays={bulk_assays}; "
-    f"{n_snps} SNPs x {total_samples} samples"
+bin_df, bin_df_list = read_window_bed(bin_df_files)
+snps, tot_mtx, a_mtx, b_mtx = read_snp_mats(
+    snp_info, tot_mtx_snp, a_mtx_snp, b_mtx_snp, mat_dtype=np.int32
 )
 
+num_datasets = len(sample_df)
 dataset_assays = sample_df["assay_type"].tolist()
 dataset_ids = sample_df["REP_ID"].tolist()
 sample_types = sample_df["sample_type"].tolist()
-assay_obs_clusters, tumor_obs_all = build_assay_obs_clusters(sample_df, bulk_assays)
+assay_obs_clusters, tumor_obs_all = build_assay_obs_clusters(sample_df, assay_types)
 base_map = build_rdr_base_map(sample_df)
-logging.info(f"{total_samples} bulk samples, {len(tumor_obs_all)} tumor columns")
+logging.info(
+    f"combine_counts\n"
+    f"sample_id={sample_id}\n"
+    f"assay_types={assay_types}\n"
+    f"#SNPs={len(snps)}\n"
+    f"#windows={len(bin_df)}\n"
+    f"#datasets={num_datasets}\n"
+    f"#tumor_datasets={len(tumor_obs_all)}"
+)
 
-has_feature = "feature_id" in snps.columns
 cluster_cols = setup_phase_clusters(snps)
 
 if phase_flip_test:
@@ -129,22 +133,8 @@ if phase_flip_test:
     )
     cluster_cols.append("phase_cluster")
 
-# one shared fixed-bin set: every bulk assay (WGS/WGS-lr/WES) tiles the same segment.bed
-logging.info(f"fixed bins shared across assays {bulk_assays}")
-bin_cols = ["#CHR", "START", "END", "region_id"]
-if all("seg_id" in w.columns for w in bin_df_list):
-    bin_cols.append("seg_id")
-bin_df = pd.concat(
-    [w[bin_cols] for w in bin_df_list],
-    ignore_index=True,
-).drop_duplicates(["#CHR", "START", "END"])
-bin_df = sort_df_chr(bin_df, ch="#CHR", pos="START").reset_index(drop=True)
-if "seg_id" not in bin_df.columns:
-    # no global BED seg_id on the fixed bins -> one seg per arm (== region_id partition)
-    bin_df["seg_id"] = bin_df["region_id"]
+dp_corrected_list = [np.load(f)["mat"] for f in dp_corrected_files]
 
-gene_aware_binning = gene_aware_binning_param and has_feature
-bin_df["bin_id"] = np.arange(len(bin_df))
 tot_tumor = np.ascontiguousarray(tot_mtx[:, tumor_obs_all], dtype=np.float64)
 # assigned once here; every sweep point below reuses it
 snps["_orig_df_idx"] = np.arange(len(snps))
@@ -165,7 +155,7 @@ if gene_aware_binning:
 
 sample_labels = [
     f"{dataset_ids[i]} {dataset_assays[i]} {sample_types[i][0].upper()}"
-    for i in range(total_samples)
+    for i in range(num_datasets)
 ]
 tumor_labels = [sample_labels[c] for c in tumor_obs_all]
 genetic_map = pd.read_table(gmap_file, sep="\t") if gmap_file is not None else None
@@ -181,7 +171,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     out_sample_file,
     out_qc_pdf,
 ):
-    logging.info(f"===== binning MSR={msr} =====")
+    logging.info(f"===== MSR={msr} =====")
     min_snp_reads_vec = np.full(len(tumor_obs_all), msr, dtype=np.float64)
     bbs, snps_bb = build_adaptive_bins(
         bin_df,
@@ -216,7 +206,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         bin_df_list,
         dp_corrected_list,
         num_bbs,
-        total_samples,
+        num_datasets,
     )
 
     logging.info(
@@ -350,4 +340,4 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
 
 # TODO: recommend a default MSR (e.g. elbow of lag-1 RDR/BAF dispersion vs #bins;
 # see docs/combine_counts_pseudocode.md section 4) and record the pick.
-logging.info("finished combine_counts (all MSR).")
+logging.info("finished combine_counts.")

@@ -92,8 +92,8 @@ def explode_feature_ids(df, cols=None, sep=";"):
 def stamp_bb_feature_ids(bbs, snps_bb, bb_id_col="bb_id"):
     """Carry each bb's genes onto it as one ``;``-joined ``feature_id``.
 
-    A no-op when the SNPs carry no ``feature_id`` (no GTF), so callers need no guard.
-    A bb holding no genic SNP becomes ``intergenic``.
+    A bb holding no genic SNP becomes ``intergenic``. ``gtf_file`` is required, so every
+    ``snps.tsv.gz`` carries ``feature_id`` and no caller needs a guard.
 
     Args:
         bbs: bbs with *bb_id_col*. Modified in place.
@@ -101,10 +101,8 @@ def stamp_bb_feature_ids(bbs, snps_bb, bb_id_col="bb_id"):
         bb_id_col: The bb identifier column, in both frames.
 
     Returns:
-        *bbs*, with ``feature_id`` added when the SNPs had one.
+        *bbs*, with ``feature_id`` added.
     """
-    if "feature_id" not in snps_bb.columns:
-        return bbs
     bbs["feature_id"] = (
         bbs[bb_id_col]
         .map(snps_bb.groupby(bb_id_col)["feature_id"].agg(merge_feature_ids))
