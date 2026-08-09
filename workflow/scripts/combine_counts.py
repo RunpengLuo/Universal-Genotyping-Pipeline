@@ -30,8 +30,12 @@ from aggregation_utils import (
     log_off_range_depth,
 )
 from range_utils import assign_pos_to_range
-from feature_utils import explode_feature_ids, merge_feature_ids, stamp_gene_clusters
-from io_utils import read_snp_mats_bulk
+from feature_utils import (
+    explode_feature_ids,
+    stamp_bb_feature_ids,
+    stamp_gene_clusters,
+)
+from io_utils import read_snp_mats, write_bb_file
 from matrix_utils import sum_features_to_bbs
 from combine_counts_utils import (
     aggregate_bin_depth_to_bbs,
@@ -88,9 +92,10 @@ out_sample_file = list(snakemake_handle.output["sample_file"])
 out_qc_pdf = list(snakemake_handle.output["qc_pdf"])
 
 sample_df = pd.read_table(sample_file)
-snps, tot_mtx, a_mtx, b_mtx = read_snp_mats_bulk(
-    snp_info, tot_mtx_snp, a_mtx_snp, b_mtx_snp
-)
+snps, tot_mtx, a_mtx, b_mtx = read_snp_mats(snp_info, tot_mtx_snp, a_mtx_snp, b_mtx_snp)
+tot_mtx = tot_mtx.astype(np.int32)
+a_mtx = a_mtx.astype(np.int32)
+b_mtx = b_mtx.astype(np.int32)
 dp_corrected_list = [np.load(f)["mat"] for f in dp_corrected_files]
 bin_df_list = [pd.read_table(f, sep="\t") for f in bin_df_files]
 n_snps = len(snps)
@@ -332,15 +337,8 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     else:
         bbs["switchprobs"] = estimate_switchprobs_PS(bbs, switchprob_ps)
 
-    bb_cols = ["#CHR", "START", "END", "#SNPS", "region_id", "switchprobs"]
-    if "feature_id" in snps_valid.columns:
-        bbs["feature_id"] = (
-            bbs["bb_id"]
-            .map(snps_valid.groupby("bb_id")["feature_id"].agg(merge_feature_ids))
-            .fillna("intergenic")
-        )
-        bb_cols.append("feature_id")
-    bbs[bb_cols].to_csv(out_bb, sep="\t", header=True, index=False)
+    stamp_bb_feature_ids(bbs, snps_valid)
+    write_bb_file(bbs, out_bb)
     np.savez_compressed(out_tot, mat=tot_mtx_bb)
     np.savez_compressed(out_a, mat=a_mtx_bb)
     np.savez_compressed(out_b, mat=b_mtx_bb)

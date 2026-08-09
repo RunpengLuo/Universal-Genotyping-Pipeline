@@ -12,7 +12,7 @@ from const import (
     RANGER_SPATIAL_DIR,
     SAMPLE_ID_COLNAMES,
 )
-from utils import add_chr_prefix, sort_chroms, sort_df_chr
+from utils import add_chr_prefix, sort_chroms
 
 
 def read_chrom_sizes(sz_file: str):
@@ -182,23 +182,48 @@ def read_bcftools_pileup_counts(tsv_file: str, parent_alt_by_key: dict):
     return snps, tot_mtx, ad_mtx
 
 
-def read_snp_mats_bulk(snp_info_file, tot_file, a_file, b_file):
-    """Read the joint bulk SNP table and dense T/A/B matrices, genomically sorted.
+def read_allele_mat(npz_file):
+    """Read one SNP-level allele matrix, dense or sparse, as it was written.
 
-    Returns ``(snps, tot_mtx, a_mtx, b_mtx)`` with SNP rows in ``#CHR``/``POS0``
-    order and the matrices permuted to match.
+    Bulk writes ``np.savez_compressed(mat=...)`` (one ``mat`` key) because its matrices
+    are mostly non-zero; the single-cell path writes ``scipy.sparse.save_npz``. The two
+    are told apart by the archive's keys, so callers pass a path and get back whichever
+    the file holds.
+
+    Args:
+        npz_file: Path to the ``.npz``.
+
+    Returns:
+        ``np.ndarray`` for a dense file, ``scipy.sparse.csr_matrix`` for a sparse one.
+    """
+    from scipy.sparse import load_npz  # scipy is not a runner-env dependency
+
+    with np.load(npz_file) as npz:
+        is_dense = "mat" in npz.files
+        return npz["mat"] if is_dense else load_npz(npz_file)
+
+
+def read_snp_mats(snp_info_file, tot_file, a_file, b_file):
+    """Read a SNP table and its T/A/B allele matrices.
+
+    Row order is the file's. Nothing downstream depends on it: the one step defined
+    over genomic neighbours, ``detect_phase_flips``, orders each cluster itself.
+
+    Args:
+        snp_info_file: ``snps.tsv.gz`` from phase_and_concat.
+        tot_file, a_file, b_file: the total / A-allele / B-allele ``.npz``.
+
+    Returns:
+        ``(snps, tot_mtx, a_mtx, b_mtx)``; the matrices are dense or sparse per
+        ``read_allele_mat``.
     """
     snps = pd.read_table(snp_info_file, sep="\t")
-    tot_mtx = np.load(tot_file)["mat"].astype(np.int32)
-    a_mtx = np.load(a_file)["mat"].astype(np.int32)
-    b_mtx = np.load(b_file)["mat"].astype(np.int32)
-
-    snps["_row"] = np.arange(len(snps))
-    snps = sort_df_chr(snps, ch="#CHR", pos="POS0").reset_index(drop=True)
-    perm = snps["_row"].to_numpy()
-    tot_mtx, a_mtx, b_mtx = tot_mtx[perm], a_mtx[perm], b_mtx[perm]
-    snps = snps.drop(columns="_row")
-    return snps, tot_mtx, a_mtx, b_mtx
+    return (
+        snps,
+        read_allele_mat(tot_file),
+        read_allele_mat(a_file),
+        read_allele_mat(b_file),
+    )
 
 
 def read_BED(bed_file: str, addchr=True, extra_columns=("region_id", "seg_id")):
@@ -491,6 +516,39 @@ def write_sample_ids(
     sample_df = pd.DataFrame(sample_dict)
     sample_df.to_csv(out_file, sep="\t", header=True, index=False)
     return sample_df
+
+
+def write_bb_file(bbs: pd.DataFrame, out_file: str):
+    """Write ``bb.tsv.gz``, the feature axis of every bb matrix.
+
+    The three coordinate columns are required; the rest are written when the frame has
+    them, so one schema covers all three modes. Any other column is dropped: ``bb_id``
+    is the row position, and the binning internals (``BLOCKSIZE``, ``seg_id``, ``PS``,
+    the cluster keys) are not part of the output contract.
+
+    ``switchprobs`` is absent only in ``copytyping_preprocess``, which bins nothing and
+    carries whatever the supplied ``bb_file`` held; ``feature_id`` needs a GTF (see
+    ``feature_utils.stamp_bb_feature_ids``); ``#feature`` is the RNA gene count that
+    only ``combine_counts_fixed_bins`` computes.
+
+    Args:
+        bbs: bbs carrying at least ``#CHR``, ``START``, ``END``.
+        out_file: Output TSV path; ``.gz`` is compressed by pandas.
+
+    Returns:
+        The DataFrame written.
+    """
+    bb_cols = ["#CHR", "START", "END"]
+    missing = [c for c in bb_cols if c not in bbs.columns]
+    assert not missing, f"bb table, missing column(s) {missing}"
+    bb_cols += [
+        c
+        for c in ("#SNPS", "region_id", "switchprobs", "feature_id", "#feature")
+        if c in bbs.columns
+    ]
+    bb_out = bbs[bb_cols]
+    bb_out.to_csv(out_file, sep="\t", header=True, index=False)
+    return bb_out
 
 
 def write_snp_info(

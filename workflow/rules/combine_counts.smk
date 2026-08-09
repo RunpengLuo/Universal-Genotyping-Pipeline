@@ -258,7 +258,7 @@ elif workflow_mode == "copytyping_preprocess":
             genome_size=lambda wc: config["genome_size"],
             bb_file=lambda wc: config["bb_file"] or [],
         output:
-            cnv_segments=config["bb_dir"] + "/{assay_type}/cnv_segments.tsv",
+            bb_file=config["bb_dir"] + "/{assay_type}/bb.tsv.gz",
             x_count=config["bb_dir"] + "/{assay_type}/bb.Xcount.npz",
             tot_mtx_bb=config["bb_dir"] + "/{assay_type}/bb.Tallele.npz",
             a_mtx_bb=config["bb_dir"] + "/{assay_type}/bb.Aallele.npz",

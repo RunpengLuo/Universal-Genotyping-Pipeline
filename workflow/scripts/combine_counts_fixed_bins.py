@@ -9,7 +9,8 @@ Inputs
   bb_file: pre-computed bbs, the feature axis of every output
   h5ad_file / frag_files: the per-cell count source, by modality
 Outputs:
-  cnv_segments: the bbs, with `#SNPS`, `feature_id` and (RNA) `#feature`
+  bb_file: the given bbs, re-stamped with this assay's `#SNPS` / `feature_id`, plus
+    `bb_id` and (RNA) `#feature`; every other column of the input passes through
   bb.{Xcount,Tallele,Aallele,Ballele}.npz: (bb x cell) matrices
   barcodes, barcodes.full, sample_ids: copied through unchanged
 """
@@ -27,16 +28,16 @@ setup_logging(snakemake_handle.log[0])
 
 import numpy as np
 import pandas as pd
-from scipy.sparse import load_npz, save_npz
+from scipy.sparse import save_npz
 import scanpy as sc
 from const import ASSAY_TYPE2MODALITY
-from io_utils import read_barcodes, read_full_barcodes
+from io_utils import read_barcodes, read_full_barcodes, read_snp_mats, write_bb_file
 from combine_counts_utils import observation_cluster_ids
 from matrix_utils import sum_features_to_bbs
 from range_utils import assign_pos_to_range
 from feature_utils import (
     assign_features_to_ranges,
-    merge_feature_ids,
+    stamp_bb_feature_ids,
     sum_atac_fragments_to_bins,
 )
 from matplotlib.backends.backend_pdf import PdfPages
@@ -68,7 +69,7 @@ out_x_count = snakemake_handle.output["x_count"]
 out_tot_mtx_bb = snakemake_handle.output["tot_mtx_bb"]
 out_a_mtx_bb = snakemake_handle.output["a_mtx_bb"]
 out_b_mtx_bb = snakemake_handle.output["b_mtx_bb"]
-out_cnv_segments = snakemake_handle.output["cnv_segments"]
+out_bb_file = snakemake_handle.output["bb_file"]
 out_barcodes = snakemake_handle.output["barcodes_out"]
 out_barcodes_full = snakemake_handle.output["barcodes_full_out"]
 out_sample_file = snakemake_handle.output["sample_file"]
@@ -86,11 +87,7 @@ cell_dataset_ids = observation_cluster_ids(
 
 logging.info(f"cnv segmentation, sample_id={sample_id}, assay_type={assay_type}")
 logging.info(f"dataset_ids={dataset_ids}")
-snps = pd.read_table(snp_info, sep="\t")
-
-tot_mtx = load_npz(tot_mtx_snp)
-a_mtx = load_npz(a_mtx_snp)
-b_mtx = load_npz(b_mtx_snp)
+snps, tot_mtx, a_mtx, b_mtx = read_snp_mats(snp_info, tot_mtx_snp, a_mtx_snp, b_mtx_snp)
 
 bb_df = pd.read_table(bb_file, sep="\t")
 bb_df = sort_df_chr(bb_df, pos="START")
@@ -104,12 +101,7 @@ snps, _ = assign_pos_to_range(snps, bb_df, ref_id="bb_id", dropna=True)
 logging.info(f"#{assay_type}-SNP (remain)={len(snps)}")
 bb_df["#SNPS"] = bb_df["bb_id"].map(snps["bb_id"].value_counts()).fillna(0).astype(int)
 
-if "feature_id" in snps.columns:
-    bb_df["feature_id"] = (
-        bb_df["bb_id"]
-        .map(snps.groupby("bb_id")["feature_id"].agg(merge_feature_ids))
-        .fillna("intergenic")
-    )
+stamp_bb_feature_ids(bb_df, snps)
 
 raw_snp_df_idx = snps["RAW_SNP_DF_IDX"].to_numpy()
 tot_mtx = tot_mtx[raw_snp_df_idx, :]
@@ -190,7 +182,7 @@ save_npz(out_x_count, x_count.astype(COUNT_DTYPE))
 save_npz(out_tot_mtx_bb, tot_mtx_bb.astype(COUNT_DTYPE))
 save_npz(out_a_mtx_bb, a_mtx_bb.astype(COUNT_DTYPE))
 save_npz(out_b_mtx_bb, b_mtx_bb.astype(COUNT_DTYPE))
-bb_df.to_csv(out_cnv_segments, header=True, sep="\t", index=False)
+write_bb_file(bb_df, out_bb_file)
 shutil.copy2(all_barcodes, out_barcodes)
 shutil.copy2(barcodes_full_path, out_barcodes_full)
 shutil.copy2(sample_file, out_sample_file)

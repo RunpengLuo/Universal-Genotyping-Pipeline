@@ -71,11 +71,13 @@ def apply_phase_to_mat(tot_mtx, ref_mtx, alt_mtx, phases):
 def detect_phase_flips(
     snps, a_mtx, b_mtx, cluster_cols, tumor_sidx=0, epsilon=0.05, alpha=0.05
 ):
-    """Detect phase flips between consecutive SNPs using Beta credible intervals.
+    """Detect phase flips between neighbouring SNPs using Beta credible intervals.
 
-    For each pair of consecutive SNPs within a group, compute a 95% Beta(b+1, a+1)
-    credible interval for the BAF. If any tumor sample shows the two intervals
-    confidently on opposite sides of a dead zone around 0.5, mark a phase boundary.
+    For each pair of genomically adjacent SNPs within a group, compute a 95%
+    Beta(b+1, a+1) credible interval for the BAF. If any tumor sample shows the two
+    intervals confidently on opposite sides of a dead zone around 0.5, mark a phase
+    boundary. Each group is ordered by ``POS0`` here, so *snps* need not arrive sorted
+    and the matrices are never permuted.
 
     Parameters
     ----------
@@ -99,6 +101,10 @@ def detect_phase_flips(
     pd.Series
         Globally unique phase-cluster IDs aligned to the snps index.
     """
+    orig_index = snps.index
+    snps = snps.reset_index(drop=True)  # idx below indexes the matrices positionally
+    pos0 = snps["POS0"].to_numpy()
+
     a_tumor = (
         a_mtx[:, tumor_sidx:].toarray() if issparse(a_mtx) else a_mtx[:, tumor_sidx:]
     ).astype(np.float64)
@@ -127,6 +133,8 @@ def detect_phase_flips(
             phase_cluster[idx] = global_pc
             global_pc += 1
             continue
+        # a flip is between genomic neighbours, not between adjacent rows
+        idx = idx[np.argsort(pos0[idx], kind="stable")]
 
         # Vectorized: check all consecutive pairs × all samples at once
         hi_prev, lo_curr = ci_hi[idx[:-1]], ci_lo[idx[1:]]
@@ -180,7 +188,7 @@ def detect_phase_flips(
                 b2s = ",".join(f"{v:.3f}" for v in b2)
                 logging.info(f"  {chrom}:{p1}-{p2}  BAF=[{b1s}]→[{b2s}]  |Δ|={d:.3f}")
 
-    return pd.Series(phase_cluster, index=snps.index, dtype=np.int64)
+    return pd.Series(phase_cluster, index=orig_index, dtype=np.int64)
 
 
 def interp_cM_between_bbs(

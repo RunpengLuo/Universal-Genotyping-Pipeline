@@ -37,9 +37,9 @@ setup_logging(snakemake_handle.log[0])
 
 import numpy as np
 import pandas as pd
-from scipy.sparse import save_npz, load_npz
+from scipy.sparse import save_npz
 
-from io_utils import read_barcodes, read_full_barcodes
+from io_utils import read_barcodes, read_full_barcodes, read_snp_mats, write_bb_file
 from combine_counts_utils import (
     build_union_snps,
     observation_cluster_ids,
@@ -52,7 +52,7 @@ from phasing_utils import (
 )
 from matrix_utils import sum_features_to_bbs, sum_observations_to_pseudobulk
 from feature_utils import (
-    merge_feature_ids,
+    stamp_bb_feature_ids,
     stamp_gene_clusters,
     sum_atac_fragments_to_bins,
     sum_umis_to_bins,
@@ -121,10 +121,17 @@ n_assays = len(nonbulk_assays)
 ##################################################
 # load per-assay inputs
 sample_ids_list = [pd.read_table(f) for f in sample_files]
-snps_list = [pd.read_table(f, sep="\t") for f in snp_info_files]
-tot_mtx_snp_list = [load_npz(f) for f in tot_mtx_snp_files]
-a_mtx_snp_list = [load_npz(f) for f in a_mtx_snp_files]
-b_mtx_snp_list = [load_npz(f) for f in b_mtx_snp_files]
+snps_list, tot_mtx_snp_list, a_mtx_snp_list, b_mtx_snp_list = (
+    list(mats)
+    for mats in zip(
+        *[
+            read_snp_mats(*files)
+            for files in zip(
+                snp_info_files, tot_mtx_snp_files, a_mtx_snp_files, b_mtx_snp_files
+            )
+        ]
+    )
+)
 dataset_ids_list = [s["REP_ID"].tolist() for s in sample_ids_list]
 sample_labels_list = [
     [
@@ -293,15 +300,7 @@ for j, min_snp_reads in enumerate(msr_list):
     else:
         bbs["switchprobs"] = estimate_switchprobs_PS(bbs, switchprob_ps)
 
-    bb_cols = ["#CHR", "START", "END", "#SNPS", "region_id", "switchprobs"]
-    if "feature_id" in snps_bb.columns:
-        bbs["feature_id"] = (
-            bbs["bb_id"]
-            .map(snps_bb.groupby("bb_id")["feature_id"].agg(merge_feature_ids))
-            .fillna("intergenic")
-        )
-        bb_cols.append("feature_id")
-    bb_out = bbs[bb_cols]
+    stamp_bb_feature_ids(bbs, snps_bb)
 
     # union SNP -> shared bb_id map, plus the two frames counts are assigned through
     bb_of_snp = snps_bb[["#CHR", "POS0", "bb_id"]]
@@ -317,7 +316,7 @@ for j, min_snp_reads in enumerate(msr_list):
         # outputs are expanded assay-major over msr_list, so this is (k, j)
         idx = k * n_msr + j
 
-        bb_out.to_csv(out_bb_file[idx], sep="\t", header=True, index=False)
+        write_bb_file(bbs, out_bb_file[idx])
         joint_sids.to_csv(out_sample_file[idx], sep="\t", index=False)
 
         # map this assay's SNPs to the shared bbs

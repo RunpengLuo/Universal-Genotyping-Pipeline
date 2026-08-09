@@ -60,7 +60,7 @@ BB_ALLELES = ("bb.Tallele.npz", "bb.Aallele.npz", "bb.Ballele.npz")
 BB_GRID = ("bb.tsv.gz", "sample_ids.tsv")
 BULK_TARGETS = BB_GRID + BB_ALLELES + ("bb.depth.npz", "bb.rdr.npz")
 SINGLE_CELL_TARGETS = BB_GRID + BB_ALLELES + ("bb.Xcount.npz", "barcodes.tsv.gz")
-COPYTYPING_TARGETS = BB_ALLELES + ("cnv_segments.tsv", "bb.Xcount.npz")
+COPYTYPING_TARGETS = BB_ALLELES + ("bb.tsv.gz", "bb.Xcount.npz")
 
 ##################################################
 # Supported sequencing assays
