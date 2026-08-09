@@ -100,10 +100,14 @@ def log_hist(values, label, bins=20, width=48, fmt=".4g"):
     printed alongside. numpy is imported here, not at module scope, because this module
     loads before ``set_omp_threads`` has capped the BLAS thread count.
 
+    All-integer values (counts) get integer bin edges, one bucket per value while the
+    range fits in *bins*, so a count histogram has no fractional edge and no empty
+    bucket between two attainable values.
+
     Args:
         values: 1-D numeric sequence; non-finite entries are dropped.
         label: Name of the quantity, used in the summary line.
-        bins: Number of histogram bins.
+        bins: Number of histogram bins, or the most for integer values.
         width: Character width of the tallest bar.
         fmt: Format spec for the summary statistics and bin edges.
     """
@@ -118,12 +122,20 @@ def log_hist(values, label, bins=20, width=48, fmt=".4g"):
         f"{label}: n={v.size}  min={v.min():{fmt}}  median={np.median(v):{fmt}}  "
         f"mean={v.mean():{fmt}}  max={v.max():{fmt}}"
     )
+    lo, hi = v.min(), v.max()
+    step = 0
+    if np.all(v == np.floor(v)):
+        step = max(1, int(np.ceil((hi - lo + 1) / bins)))
+        bins = np.arange(lo, hi + step + 1, step)
     counts, edges = np.histogram(v, bins=bins)
     peak = counts.max()
     for i, count in enumerate(counts):
+        bar = "#" * round(width * count / peak) if peak else ""
+        if step == 1:
+            logging.info(f"  {edges[i]:>22{fmt}} {count:>9d} |{bar}")
+            continue
         # np.histogram closes only the last bin on the right
         close = "]" if i == len(counts) - 1 else ")"
-        bar = "#" * round(width * count / peak) if peak else ""
         logging.info(
             f"  [{edges[i]:>10{fmt}}, {edges[i + 1]:>10{fmt}}{close} {count:>9d} |{bar}"
         )

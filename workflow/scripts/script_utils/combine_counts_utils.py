@@ -34,31 +34,6 @@ def observation_cluster_ids(rep2bc: pd.DataFrame, dataset_ids):
     return codes
 
 
-def build_assay_obs_clusters(sample_df, assay_types):
-    """Cluster the joint observations by assay into per-assay descriptors.
-
-    Each cluster records the assay's observation ``offset``, size ``n``, and
-    ``tumor_obs``. Returns ``(assay_obs_clusters, tumor_obs_all)``.
-    """
-    dataset_assays = sample_df["assay_type"].tolist()
-    sample_types = sample_df["sample_type"].tolist()
-    assay_obs_clusters = []
-    for at in assay_types:
-        obs = [i for i, a in enumerate(dataset_assays) if a == at]
-        assert obs, f"joint sample sheet, no sample for assay {at}"
-        stypes = [sample_types[i] for i in obs]
-        assay_obs_clusters.append(
-            {
-                "assay": at,
-                "offset": obs[0],
-                "n": len(obs),
-                "tumor_obs": [obs[i] for i, st in enumerate(stypes) if st == "tumor"],
-            }
-        )
-    tumor_obs_all = [o for c in assay_obs_clusters for o in c["tumor_obs"]]
-    return assay_obs_clusters, tumor_obs_all
-
-
 ##################################################
 # SNP set: the union table across assays
 
@@ -68,7 +43,6 @@ def build_union_snps(snps_list):
 
     Keeps the shared annotation columns (``PS``/``feature_id`` only when present in
     EVERY assay), dedupes on ``(#CHR, POS0)``, sorts, and adds a 0-based ``snp_id``.
-    ``setup_phase_clusters`` reports on ``PS``.
     """
     has_ps = all("PS" in s.columns for s in snps_list)
     has_feature = all("feature_id" in s.columns for s in snps_list)
@@ -94,18 +68,28 @@ def build_union_snps(snps_list):
 
 
 def aggregate_bin_depth_to_bbs(
-    assay_obs_clusters, scaffold, bin_df_list, dp_corrected_list, num_bbs, total_samples
+    assay2dataset_inds, bin_df, dp_bin_dfs, dp_corrected_list, num_bbs, num_datasets
 ):
     """Length-weighted aggregation of corrected fixed-bin depth into bbs.
 
-    Each assay's fixed bins are assigned to a bb by midpoint over the ``scaffold``
-    (the binning fixed bins carrying ``bb_id``), so a finer WES bin set is projected onto
-    the WGS bbs. Returns ``(bb_dp, bb_bases)``: per-bb mean depth and per-bb total
-    aligned bases, both ``(num_bbs, total_samples)``.
+    Two bin frames, on purpose: *bin_df* is the union grid carrying ``bb_id``, and each
+    *dp_bin_dfs* entry is one assay's own fixed bins, row-aligned to its
+    *dp_corrected_list* matrix. Each assay's bins are assigned to a bb by midpoint over
+    *bin_df*, so a finer WES bin set projects onto the WGS bbs.
+
+    Args:
+        assay2dataset_inds: ``{assay_type: bool mask over the datasets}``, in the order
+            of *dp_bin_dfs* and *dp_corrected_list*. Column ``s`` of an assay's matrix
+            goes to the ``s``-th set position of its mask, so the datasets of one assay
+            need not be adjacent.
+
+    Returns:
+        ``(bb_dp, bb_bases)``: per-bb mean depth and per-bb total aligned bases, both
+        ``(num_bbs, num_datasets)``.
     """
 
     bb_spans = (
-        scaffold.groupby("bb_id", sort=True)
+        bin_df.groupby("bb_id", sort=True)
         .agg(
             **{
                 "#CHR": ("#CHR", "first"),
@@ -115,9 +99,11 @@ def aggregate_bin_depth_to_bbs(
         )
         .reset_index()
     )
-    bb_dp = np.full((num_bbs, total_samples), np.nan, dtype=np.float32)
-    bb_bases = np.zeros((num_bbs, total_samples), dtype=np.float64)
-    for clu, bins_a, dp_a in zip(assay_obs_clusters, bin_df_list, dp_corrected_list):
+    bb_dp = np.full((num_bbs, num_datasets), np.nan, dtype=np.float32)
+    bb_bases = np.zeros((num_bbs, num_datasets), dtype=np.float64)
+    for (at, inds), bins_a, dp_a in zip(
+        assay2dataset_inds.items(), dp_bin_dfs, dp_corrected_list
+    ):
         # a finer WES bin set projects onto the WGS bbs by midpoint
         mapped, na_idx = assign_range_to_range(
             bins_a[["#CHR", "START", "END"]], bb_spans, "bb_id", rule="midpoint"
@@ -126,20 +112,20 @@ def aggregate_bin_depth_to_bbs(
         valid = bb_ids >= 0
         if len(na_idx):
             logging.info(
-                f"{clu['assay']}: {len(na_idx)}/{len(bins_a)} fixed bins outside all bbs (dropped)"
+                f"{at}: {len(na_idx)}/{len(bins_a)} fixed bins outside all bbs (dropped)"
             )
         vb = bb_ids[valid]
         bin_lengths = (bins_a["END"] - bins_a["START"]).to_numpy(dtype=np.float64)[
             valid
         ]
         total_len_per_bb = np.bincount(vb, weights=bin_lengths, minlength=num_bbs)
-        for s in range(clu["n"]):
+        for s, obs in enumerate(np.flatnonzero(inds)):
             weighted_sums = np.bincount(
                 vb, weights=dp_a[valid, s] * bin_lengths, minlength=num_bbs
             )
-            bb_bases[:, clu["offset"] + s] = weighted_sums
+            bb_bases[:, obs] = weighted_sums
             with np.errstate(invalid="ignore"):
-                bb_dp[:, clu["offset"] + s] = weighted_sums / total_len_per_bb
+                bb_dp[:, obs] = weighted_sums / total_len_per_bb
     return bb_dp, bb_bases
 
 
@@ -176,11 +162,11 @@ def build_rdr_base_map(sample_df):
 
 
 def compute_bb_rdr(
-    assay_obs_clusters,
-    bin_df_list,
+    assay2dataset_inds,
+    dp_bin_dfs,
     dp_corrected_list,
     bb_dp,
-    tumor_obs_all,
+    tumor_obs,
     base_map,
     rdr_outlier_quantile,
     dataset_ids,
@@ -191,22 +177,24 @@ def compute_bb_rdr(
     base, library-size corrected; a tumor without a base is median-centered. The base
     may be any observation (e.g. a different assay/platform), so library sizes are
     computed globally per observation. Entries above the ``1 - rdr_outlier_quantile``
-    quantile are set to NaN. Returns a ``(num_bbs, len(tumor_obs_all))`` array aligned
-    to ``tumor_obs_all``.
+    quantile are set to NaN. Returns a ``(num_bbs, len(tumor_obs))`` array aligned to
+    ``tumor_obs``; *assay2dataset_inds* is keyed as in ``aggregate_bin_depth_to_bbs``.
     """
-    num_bbs, total_samples = bb_dp.shape
-    bb_rdr = np.full((num_bbs, len(tumor_obs_all)), np.nan, dtype=np.float32)
-    rdr_pos = {o: i for i, o in enumerate(tumor_obs_all)}
+    num_bbs, num_datasets = bb_dp.shape
+    bb_rdr = np.full((num_bbs, len(tumor_obs)), np.nan, dtype=np.float32)
+    rdr_pos = {o: i for i, o in enumerate(tumor_obs)}
 
     # global per-observation total aligned bases for library-size correction
-    obs_total_bases = np.full(total_samples, np.nan, dtype=np.float64)
-    for clu, bins_a, dp_a in zip(assay_obs_clusters, bin_df_list, dp_corrected_list):
+    obs_total_bases = np.full(num_datasets, np.nan, dtype=np.float64)
+    for inds, bins_a, dp_a in zip(
+        assay2dataset_inds.values(), dp_bin_dfs, dp_corrected_list
+    ):
         bin_sizes = (bins_a["END"] - bins_a["START"]).to_numpy(dtype=np.float64)
-        tb = np.nansum(dp_a * bin_sizes[:, None], axis=0)
-        for s in range(clu["n"]):
-            obs_total_bases[clu["offset"] + s] = tb[s]
+        obs_total_bases[np.flatnonzero(inds)] = np.nansum(
+            dp_a * bin_sizes[:, None], axis=0
+        )
 
-    for o in tumor_obs_all:
+    for o in tumor_obs:
         m = base_map.get(o)
         if m is not None:
             lib = obs_total_bases[m] / obs_total_bases[o]

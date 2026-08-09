@@ -14,30 +14,6 @@ from scipy.sparse import issparse
 from scipy.stats import beta as beta_dist
 
 
-def setup_phase_clusters(snps):
-    """Ensure ``seg_id``/``PS`` columns exist; return ``[region_id, seg_id, PS]``.
-
-    These are the ``cluster_cols`` binning uses. ``seg_id`` (the segment from
-    build_segment_bed) is the hard bb boundary; binning clusters by it and never merges
-    across it, while ``region_id`` (the arm) is carried for RDR/QC. When ``seg_id`` is
-    absent (no global BED), it falls back to ``region_id`` so clustering is identical to
-    the pre-seg_id behavior. ``PS`` is the phase cluster (VCF ``PS`` tag); if absent, set
-    ``PS=1``, and when present every SNP must carry a non-null value.
-    """
-    assert "region_id" in snps.columns, "SNP file, missing column(s) region_id"
-    if "seg_id" not in snps.columns:
-        snps["seg_id"] = snps["region_id"]
-    if "PS" not in snps.columns:
-        logging.info("PS not in SNP columns, setting PS=1 for all SNPs")
-        snps["PS"] = 1
-    else:
-        assert snps["PS"].notna().all(), "SNP file, `PS` column has NaNs"
-    logging.info(
-        f"#seg_id={snps['seg_id'].nunique()}, #phase clusters={snps['PS'].nunique()}"
-    )
-    return ["region_id", "seg_id", "PS"]
-
-
 def apply_phase_to_mat(tot_mtx, ref_mtx, alt_mtx, phases):
     """Apply per-SNP phase labels to produce phased A/B allele count matrices.
 

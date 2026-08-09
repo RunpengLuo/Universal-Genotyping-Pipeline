@@ -49,7 +49,6 @@ from phasing_utils import (
     estimate_switchprobs_PS,
     estimate_switchprobs_cM,
     interp_cM_between_bbs,
-    setup_phase_clusters,
 )
 from matrix_utils import sum_features_to_bbs, sum_observations_to_pseudobulk
 from feature_utils import (
@@ -157,7 +156,10 @@ snps = build_union_snps(snps_list)
 n_snps = len(snps)
 logging.info(f"shared SNP set (union): {n_snps} SNPs across {n_assays} assays")
 
-cluster_cols = setup_phase_clusters(snps)
+if "PS" not in snps.columns:
+    snps["PS"] = 1
+assert snps["PS"].notna().all(), "SNP file, `PS` column has NaNs"
+cluster_cols = ["region_id", "seg_id", "PS"]
 logging.info(f"gene_aware_binning={gene_aware_binning}")
 
 ##################################################

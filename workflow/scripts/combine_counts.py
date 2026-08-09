@@ -16,7 +16,7 @@ import logging
 
 snakemake_handle = snakemake
 
-from utils import set_omp_threads, setup_logging, maybe_path
+from utils import set_omp_threads, setup_logging, log_hist, maybe_path
 
 set_omp_threads(snakemake_handle)
 setup_logging(snakemake_handle.log[0])
@@ -39,7 +39,6 @@ from io_utils import read_snp_mats, read_window_bed, write_bb_file
 from matrix_utils import sum_features_to_bbs
 from combine_counts_utils import (
     aggregate_bin_depth_to_bbs,
-    build_assay_obs_clusters,
     build_rdr_base_map,
     compute_bb_rdr,
 )
@@ -48,7 +47,6 @@ from phasing_utils import (
     estimate_switchprobs_PS,
     estimate_switchprobs_cM,
     interp_cM_between_bbs,
-    setup_phase_clusters,
 )
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_combine_counts import plot_rdr_baf, plot_rdr_baf_2d, plot_segmentation_qc
@@ -98,16 +96,19 @@ out_qc_pdf = list(snakemake_handle.output["qc_pdf"])
 ##################################################
 # load inputs
 sample_df = pd.read_table(sample_file)
-bin_df, bin_df_list = read_window_bed(bin_df_files)
+bin_df, dp_bin_dfs = read_window_bed(bin_df_files)
 snps, tot_mtx, a_mtx, b_mtx = read_snp_mats(
     snp_info, tot_mtx_snp, a_mtx_snp, b_mtx_snp, mat_dtype=np.int32
 )
 
 num_datasets = len(sample_df)
-dataset_assays = sample_df["assay_type"].tolist()
+dataset_assays = sample_df["assay_type"].to_numpy()
 dataset_ids = sample_df["REP_ID"].tolist()
-sample_types = sample_df["sample_type"].tolist()
-assay_obs_clusters, tumor_obs_all = build_assay_obs_clusters(sample_df, assay_types)
+sample_types = sample_df["sample_type"].to_numpy()
+assay2dataset_inds = {at: dataset_assays == at for at in assay_types}
+empty = [at for at, inds in assay2dataset_inds.items() if not inds.any()]
+assert not empty, f"joint sample sheet, no dataset for assay(s) {empty}"
+tumor_obs = np.flatnonzero(sample_types == "tumor").tolist()
 base_map = build_rdr_base_map(sample_df)
 logging.info(
     f"combine_counts\n"
@@ -116,16 +117,19 @@ logging.info(
     f"#SNPs={len(snps)}\n"
     f"#windows={len(bin_df)}\n"
     f"#datasets={num_datasets}\n"
-    f"#tumor_datasets={len(tumor_obs_all)}"
+    f"#tumor_datasets={len(tumor_obs)}"
 )
 
-cluster_cols = setup_phase_clusters(snps)
+if "PS" not in snps.columns:
+    snps["PS"] = 1
+assert snps["PS"].notna().all(), "SNP file, `PS` column has NaNs"
+cluster_cols = ["region_id", "seg_id", "PS"]
 
 if phase_flip_test:
     snps["phase_cluster"] = detect_phase_flips(
         snps,
-        a_mtx[:, tumor_obs_all],
-        b_mtx[:, tumor_obs_all],
+        a_mtx[:, tumor_obs],
+        b_mtx[:, tumor_obs],
         cluster_cols=cluster_cols,
         tumor_sidx=0,
         epsilon=phase_flip_epsilon,
@@ -133,17 +137,14 @@ if phase_flip_test:
     )
     cluster_cols.append("phase_cluster")
 
-dp_corrected_list = [np.load(f)["mat"] for f in dp_corrected_files]
-
-tot_tumor = np.ascontiguousarray(tot_mtx[:, tumor_obs_all], dtype=np.float64)
+tot_tumor = np.ascontiguousarray(tot_mtx[:, tumor_obs], dtype=np.float64)
 # assigned once here; every sweep point below reuses it
 snps["_orig_df_idx"] = np.arange(len(snps))
 snps_binned, off_idx = assign_pos_to_range(snps, bin_df, ref_id="bin_id", dropna=True)
 log_off_range_depth(off_idx, tot_tumor)
-snps_per_bin = snps_binned.groupby("bin_id").size()
-logging.info(
-    f"SNPs per fixed bin: {len(snps_per_bin)}/{len(bin_df)} bins have SNPs, "
-    f"mean={snps_per_bin.mean():.1f}, median={snps_per_bin.median():.1f}"
+log_hist(
+    snps_binned.groupby("bin_id").size().reindex(range(len(bin_df)), fill_value=0),
+    "SNPs per fixed bin",
 )
 stamp_bin_label(bin_df, snps_binned, "PS", default=1)
 
@@ -157,8 +158,10 @@ sample_labels = [
     f"{dataset_ids[i]} {dataset_assays[i]} {sample_types[i][0].upper()}"
     for i in range(num_datasets)
 ]
-tumor_labels = [sample_labels[c] for c in tumor_obs_all]
+tumor_labels = [sample_labels[c] for c in tumor_obs]
 genetic_map = pd.read_table(gmap_file, sep="\t") if gmap_file is not None else None
+
+dp_corrected_list = [np.load(f)["mat"] for f in dp_corrected_files]
 
 for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zip(
     msr_list,
@@ -172,7 +175,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     out_qc_pdf,
 ):
     logging.info(f"===== MSR={msr} =====")
-    min_snp_reads_vec = np.full(len(tumor_obs_all), msr, dtype=np.float64)
+    min_snp_reads_vec = np.full(len(tumor_obs), msr, dtype=np.float64)
     bbs, snps_bb = build_adaptive_bins(
         bin_df,
         snps_binned.copy(),
@@ -201,23 +204,23 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
 
     logging.info("aggregating corrected fixed-bin depth into bbs (per assay)")
     bb_dp, bb_bases = aggregate_bin_depth_to_bbs(
-        assay_obs_clusters,
+        assay2dataset_inds,
         bin_df,
-        bin_df_list,
+        dp_bin_dfs,
         dp_corrected_list,
         num_bbs,
         num_datasets,
     )
 
     logging.info(
-        f"compute bb RDR, {len(base_map)}/{len(tumor_obs_all)} tumors with RDR base"
+        f"compute bb RDR, {len(base_map)}/{len(tumor_obs)} tumors with RDR base"
     )
     bb_rdr = compute_bb_rdr(
-        assay_obs_clusters,
-        bin_df_list,
+        assay2dataset_inds,
+        dp_bin_dfs,
         dp_corrected_list,
         bb_dp,
-        tumor_obs_all,
+        tumor_obs,
         base_map,
         rdr_outlier_quantile,
         dataset_ids,
@@ -237,10 +240,10 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     else:
         bb_gene_count = None
 
-    depth_tumor = bb_dp[:, tumor_obs_all]
+    depth_tumor = bb_dp[:, tumor_obs]
     depth_normal = np.full_like(depth_tumor, np.nan, dtype=float)
     rdr_titles, rdr_norm_labels = [], []
-    for j, c in enumerate(tumor_obs_all):
+    for j, c in enumerate(tumor_obs):
         title = f"{sample_id} - {sample_labels[c]}"
         if c in base_map:
             depth_normal[:, j] = bb_dp[:, base_map[c]]
@@ -250,7 +253,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
             rdr_norm_labels.append("median")
             rdr_titles.append(title)
 
-    baf_tumor = baf_mtx_bb[:, tumor_obs_all]
+    baf_tumor = baf_mtx_bb[:, tumor_obs]
 
     with PdfPages(out_pdf) as pdf:
         plot_segmentation_qc(
@@ -281,7 +284,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         )
         plot_rdr_baf_2d(
             bb_rdr,
-            baf_mtx_bb[:, tumor_obs_all],
+            baf_mtx_bb[:, tumor_obs],
             tumor_labels,
             rdr_ylim=rdr_ylim,
             pdf=pdf,
