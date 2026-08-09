@@ -24,7 +24,7 @@ from scipy.sparse import save_npz
 from const import ASSAY_TYPE2MODALITY
 from io_utils import read_BED, read_VCF, write_sample_ids, write_snp_info
 from range_utils import overlaps_any_range
-from combine_counts_utils import (
+from phase_and_concat_utils import (
     apply_masks_to_df,
     build_pos_ranges,
     get_mask_by_blacklist,

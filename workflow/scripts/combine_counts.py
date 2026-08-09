@@ -48,7 +48,6 @@ from phasing_utils import (
 )
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_combine_counts import plot_rdr_baf, plot_rdr_baf_2d, plot_segmentation_qc
-from plot_utils import observation_order
 
 
 # inputs
@@ -259,12 +258,6 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
             rdr_norm_labels.append("median")
             rdr_titles.append(title)
 
-    # page order: assay (WGS<WGS-lr<WES) then dataset_id (all tumors here)
-    t_order = observation_order(
-        [dataset_assays[c] for c in tumor_obs_all],
-        ["tumor"] * len(tumor_obs_all),
-        [dataset_ids[c] for c in tumor_obs_all],
-    )
     baf_tumor = baf_mtx_bb[:, tumor_obs_all]
 
     with PdfPages(out_pdf) as pdf:
@@ -279,12 +272,12 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         )
         plot_rdr_baf(
             bbs,
-            bb_rdr[:, t_order],
-            baf_tumor[:, t_order],
-            depth_tumor[:, t_order],
-            depth_normal[:, t_order],
-            [rdr_titles[i] for i in t_order],
-            [rdr_norm_labels[i] for i in t_order],
+            bb_rdr,
+            baf_tumor,
+            depth_tumor,
+            depth_normal,
+            rdr_titles,
+            rdr_norm_labels,
             genome_size,
             out_pdf,
             feature_label="bb",

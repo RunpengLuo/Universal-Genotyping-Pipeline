@@ -131,7 +131,7 @@ def parse_records(
         config_assay_types: Assay types enabled for this run.
 
     Returns:
-        The selected records, in file order.
+        The selected datasets.
 
     Raises:
         AssertionError: The selection is empty, or a record violates the spec or a
@@ -166,11 +166,17 @@ def parse_records(
             check_local_path(path, f"{dataset_id}: files.{key}")
         rec["files"] = files
         rec["modality"] = ASSAY_TYPE2MODALITY[assay_type]
-        logging_snakemake(f"selected: {dataset_id}\t{rec_refver}\t{assay_type}")
-
         parsed_records.append(rec)
 
     assert parsed_records, "no datasets exist after selection"
+
+    parsed_records.sort(
+        key=lambda r: (
+            GT_ASSAY_ORD.get(r["assay_type"], len(GT_ASSAY_ORD)),
+            r["sample_type"] != "normal",
+            r["dataset_id"],
+        )
+    )
 
     dataset2assays = {}
     for rec in parsed_records:
@@ -259,6 +265,13 @@ def parse_workflow(config):
     records = parse_records(records, sample_id, reference_version, config_assay_types)
     dataset_ids = {r["dataset_id"]: r for r in records}
     assay_types = list(dict.fromkeys(rec["assay_type"] for rec in records))
+
+    logging_snakemake("The following datasets will be processed:")
+    for rec in records:
+        logging_snakemake(
+            f"dataset: {rec['dataset_id']}\t{rec['reference_version']}\t"
+            f"{rec['assay_type']}\t{rec['sample_type']}"
+        )
 
     # === chromosomes ===
     config_chroms_nochr = [strip_chr_prefix(c) for c in config["chromosomes"]]

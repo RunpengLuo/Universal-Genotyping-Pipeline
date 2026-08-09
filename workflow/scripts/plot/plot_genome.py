@@ -38,7 +38,6 @@ def plot_1d_multi_sample(
     min_ylim=0.0,
     max_ylim=None,
     sample_id: str | None = None,
-    obs_order: list | None = None,
     region_bed: str | None = None,
     blacklist_bed: str | None = None,
     pdf: PdfPages | None = None,
@@ -57,12 +56,7 @@ def plot_1d_multi_sample(
         Sample labels, length == mat.shape[1].
     sample_id : str or None
         Sample/patient id for the page super-title.
-    obs_order : list[int] or None
-        Row permutation applied to *labels* and *mat* columns before drawing.
     """
-    if obs_order is not None:
-        labels = [labels[i] for i in obs_order]
-        mat = mat[:, obs_order]
     n_samples = len(labels)
     logging.info(
         f"genome-wide {feature_label}-level {val_type} multi-sample plot "

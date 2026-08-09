@@ -5,7 +5,7 @@ A feature here is a GTF entity, a gene or an exon. Two groups:
 - annotation - stamp SNPs with the genes they sit in (``annotate_feature_type``), collapse
   ``feature_id`` strings (``merge_feature_ids``), and glue each gene's span of fixed bins
   into one cluster so no bb splits a gene (``stamp_gene_clusters``). The filter on the
-  result is ``combine_counts_utils.get_mask_by_exon``, next to the other SNP masks.
+  result is ``phase_and_concat_utils.get_mask_by_exon``, next to the other SNP masks.
 - counting - turn an assay's raw records into a ``(bin, cell)`` count matrix:
   ``sum_umis_to_bins`` for the scRNA/VISIUM h5ad, ``sum_atac_fragments_to_bins`` for 10x
   fragment files. ``assign_features_to_ranges`` is the gene-to-range mapping both the RNA

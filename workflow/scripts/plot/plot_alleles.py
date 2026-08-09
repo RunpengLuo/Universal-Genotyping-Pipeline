@@ -60,7 +60,6 @@ def plot_snp_depth(
     cell_dataset_ids=None,
     name_prefix="",
     pdf: PdfPages | None = None,
-    obs_order=None,
     sample_id=None,
     max_points=50000,
 ):
@@ -90,8 +89,6 @@ def plot_snp_depth(
     cell_dataset_ids : np.ndarray or None
         Length-n_cells dataset_id index per cell, consulted only when ``is_bulk=False``:
         cells are pseudobulked within each dataset_id, else all cells collapse to one.
-    obs_order : list[int] or None
-        Dataset permutation applied before drawing (match the 1-D scatter order).
     sample_id : str or None
         Sample/patient id for the bold page super-title.
     max_points : int
@@ -122,14 +119,6 @@ def plot_snp_depth(
         labels = list(dataset_ids)
     else:
         labels = ["pseudobulk"]
-
-    if obs_order is not None and len(obs_order) == len(labels):
-        labels = [labels[i] for i in obs_order]
-        depth_mat = depth_mat[:, obs_order]
-        if ref_count_mat is not None:
-            ref_count_mat = ref_count_mat[:, obs_order]
-        if b_count_mat is not None:
-            b_count_mat = b_count_mat[:, obs_order]
 
     rng = np.random.default_rng(0)
 
@@ -213,7 +202,6 @@ def plot_allele_freqs(
     cell_dataset_ids=None,
     name_prefix="",
     sample_id=None,
-    obs_order=None,
 ):
     """Generate genome-wide allele-frequency scatter plots.
 
@@ -304,7 +292,6 @@ def plot_allele_freqs(
         feature_label=feature_label,
         val_type=val_type,
         sample_id=sample_id,
-        obs_order=obs_order,
         region_bed=region_bed,
         blacklist_bed=blacklist_bed,
         pdf=pdf,

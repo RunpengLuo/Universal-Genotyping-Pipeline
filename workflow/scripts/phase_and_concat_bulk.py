@@ -30,7 +30,7 @@ from io_utils import (
     write_sample_ids,
     write_snp_info,
 )
-from combine_counts_utils import (
+from phase_and_concat_utils import (
     apply_masks_to_df,
     build_pos_ranges,
     get_mask_by_blacklist,
@@ -45,7 +45,6 @@ from phasing_utils import apply_phase_to_mat
 from feature_utils import annotate_feature_type
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_alleles import plot_allele_freqs, plot_snp_depth
-from plot_utils import observation_order
 
 
 ##################################################
@@ -151,7 +150,6 @@ b_mtx = b_mtx[snp_mask, :]
 
 ##################################################
 sample_labels = [f"{dataset_assays[k]}:{dataset_ids[k]}" for k in range(n_samples)]
-obs_order = observation_order(dataset_assays, sample_types, dataset_ids)
 
 with PdfPages(out_qc_pdf) as pdf:
     plot_snp_depth(
@@ -165,7 +163,6 @@ with PdfPages(out_qc_pdf) as pdf:
         cell_dataset_ids=None,
         name_prefix="phase_and_concat",
         pdf=pdf,
-        obs_order=obs_order,
         sample_id=sample_id,
     )
     plot_allele_freqs(
@@ -183,7 +180,6 @@ with PdfPages(out_qc_pdf) as pdf:
         blacklist_bed=blacklist_bed,
         run_id=run_id,
         sample_id=sample_id,
-        obs_order=obs_order,
         pdf=pdf,
     )
     plot_allele_freqs(
@@ -201,7 +197,6 @@ with PdfPages(out_qc_pdf) as pdf:
         blacklist_bed=blacklist_bed,
         run_id=run_id,
         sample_id=sample_id,
-        obs_order=obs_order,
         pdf=pdf,
     )
 

@@ -16,7 +16,6 @@ import matplotlib.pyplot as plt
 
 from cnplot import GenomeAxis, read_bed, shade_regions
 
-from const import GT_ASSAY_ORD
 from io_utils import read_chrom_sizes
 
 
@@ -138,23 +137,6 @@ def _bold_chrnames(ax):
     """Bold the off-axis chromosome-name texts drawn under an ``mb_ticks`` axis."""
     for t in ax.texts:
         t.set_fontweight("bold")
-
-
-def observation_order(assays, sample_types, dataset_ids):
-    """Row order for stacked sample plots.
-
-    Sorts by assay (WGS < WGS-lr < WES; other assays last), then normal before
-    tumor, then ``dataset_id``. Returns the permutation of row indices.
-    """
-
-    def key(i):
-        return (
-            GT_ASSAY_ORD.get(assays[i], len(GT_ASSAY_ORD)),
-            0 if sample_types[i] == "normal" else 1,
-            str(dataset_ids[i]),
-        )
-
-    return sorted(range(len(dataset_ids)), key=key)
 
 
 def _hist_with_stats(
