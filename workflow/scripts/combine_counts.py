@@ -30,7 +30,7 @@ from aggregation_utils import (
     log_off_range_depth,
 )
 from range_utils import assign_pos_to_range
-from feature_utils import merge_feature_ids, stamp_gene_clusters
+from feature_utils import explode_feature_ids, merge_feature_ids, stamp_gene_clusters
 from io_utils import read_snp_mats_bulk
 from matrix_utils import sum_features_to_bbs
 from combine_counts_utils import (
@@ -60,12 +60,10 @@ bin_df_files = list(snakemake_handle.input["window_df"])
 sample_file = snakemake_handle.input["sample_file"]
 gmap_file = maybe_path(snakemake_handle.input["gmap_file"])
 region_bed = snakemake_handle.input["region_bed"]
-blacklist_bed = maybe_path(snakemake_handle.input.get("blacklist_bed", None))
+blacklist_bed = maybe_path(snakemake_handle.input["blacklist_bed"])
 genome_size = snakemake_handle.input["genome_size"]
 
 # parameters
-qc_dir = snakemake_handle.params["qc_dir"]
-run_id = snakemake_handle.params["run_id"]
 bulk_assays = list(snakemake_handle.params["bulk_assays"])
 phase_flip_test = bool(snakemake_handle.params["phase_flip_test"])
 phase_flip_epsilon = float(snakemake_handle.params["phase_flip_epsilon"])
@@ -128,11 +126,11 @@ if phase_flip_test:
 
 # one shared fixed-bin set: every bulk assay (WGS/WGS-lr/WES) tiles the same segment.bed
 logging.info(f"fixed bins shared across assays {bulk_assays}")
-_bcols = ["#CHR", "START", "END", "region_id"]
+bin_cols = ["#CHR", "START", "END", "region_id"]
 if all("seg_id" in w.columns for w in bin_df_list):
-    _bcols.append("seg_id")
+    bin_cols.append("seg_id")
 bin_df = pd.concat(
-    [w[_bcols] for w in bin_df_list],
+    [w[bin_cols] for w in bin_df_list],
     ignore_index=True,
 ).drop_duplicates(["#CHR", "START", "END"])
 bin_df = sort_df_chr(bin_df, ch="#CHR", pos="START").reset_index(drop=True)
@@ -232,15 +230,10 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
 
     rdr_ylim = (np.round(np.nanquantile(bb_rdr, 0.99)).astype(int) + 1) * 1.1
 
-    if gene_aware_binning and "feature_id" in snps_bb.columns:
-        _genic = snps_bb[
-            snps_bb["feature_id"].notna() & (snps_bb["feature_id"] != "intergenic")
-        ][["bb_id", "feature_id"]].copy()
-        _genic["feature_id"] = _genic["feature_id"].str.split(";")
-        _genic = _genic.explode("feature_id")
-        _genic = _genic[_genic["feature_id"] != "intergenic"]
+    if gene_aware_binning:
+        genic = explode_feature_ids(snps_bb, cols=["bb_id"])
         bb_gene_count = (
-            _genic.groupby("bb_id")["feature_id"]
+            genic.groupby("bb_id")["feature_id"]
             .nunique()
             .reindex(range(num_bbs))
             .fillna(0)
@@ -320,7 +313,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         bb_dp = bb_dp[valid]
         bb_rdr = bb_rdr[valid]
 
-    kept_bb_ids = np.where(~nan_mask)[0] if n_nan_rows > 0 else np.arange(num_bbs)
+    kept_bb_ids = np.where(~nan_mask)[0]
     old_to_new = {old: new for new, old in enumerate(kept_bb_ids)}
     snps_valid = snps_bb[snps_bb["bb_id"].isin(old_to_new)].copy()
     snps_valid["bb_id"] = snps_valid["bb_id"].map(old_to_new)

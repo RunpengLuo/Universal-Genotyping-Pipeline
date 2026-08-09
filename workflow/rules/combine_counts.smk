@@ -255,7 +255,6 @@ elif workflow_mode == "copytyping_preprocess":
                 if wc.assay_type == "scATAC"
                 else []
             ),
-            region_bed=segment_bed,
             genome_size=lambda wc: config["genome_size"],
             bb_file=lambda wc: config["bb_file"] or [],
         output:

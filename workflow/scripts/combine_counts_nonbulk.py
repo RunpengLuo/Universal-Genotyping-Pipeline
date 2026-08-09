@@ -149,7 +149,7 @@ logging.info(f"joint non-bulk binning: sample_id={sample_id}, assays={nonbulk_as
 
 ##################################################
 # 1. shared SNP set (union across assays)
-snps, has_ps, has_feature = build_union_snps(snps_list)
+snps, has_feature = build_union_snps(snps_list)
 n_snps = len(snps)
 logging.info(f"shared SNP set (union): {n_snps} SNPs across {n_assays} assays")
 
@@ -163,7 +163,6 @@ logging.info(f"gene_aware_binning={gene_aware_binning}")
 total_cols = sum(len(r) for r in dataset_ids_list)
 tot_pb = np.zeros((n_snps, total_cols), dtype=np.float64)
 tot_pb_list = []  # per-assay (n_snps_k x n_datasets_k) pseudobulk, in that assay's SNP order
-dataset_assays, dataset_ids, obs_offsets = [], [], []
 offset = 0
 for k in range(n_assays):
     n_datasets_k = len(dataset_ids_list[k])
@@ -180,9 +179,6 @@ for k in range(n_assays):
         .astype(np.int64)
     )
     tot_pb[shared_snp_ids, offset : offset + tot_pb_k.shape[1]] = tot_pb_k
-    dataset_assays += [nonbulk_assays[k]] * n_datasets_k
-    dataset_ids += dataset_ids_list[k]
-    obs_offsets.append(offset)
     offset += n_datasets_k
 logging.info(f"binning on {total_cols} (replicate x assay) pseudobulk observations")
 
@@ -239,11 +235,12 @@ for k in range(n_assays):
         max_blocksize=0,
         gene_aware=False,
     )
-    mo = snps_multi["_orig_df_idx"].to_numpy()
+    snp_rows = snps_multi["_orig_df_idx"].to_numpy()
     multi_ids = snps_multi["bb_id"].to_numpy()
-    tot_multi = sum_features_to_bbs(tot_mtx_snp_list[k][mo], multi_ids, len(multi_snps))
-    a_multi = sum_features_to_bbs(a_mtx_snp_list[k][mo], multi_ids, len(multi_snps))
-    b_multi = sum_features_to_bbs(b_mtx_snp_list[k][mo], multi_ids, len(multi_snps))
+    n_multi = len(multi_snps)
+    tot_multi = sum_features_to_bbs(tot_mtx_snp_list[k][snp_rows], multi_ids, n_multi)
+    a_multi = sum_features_to_bbs(a_mtx_snp_list[k][snp_rows], multi_ids, n_multi)
+    b_multi = sum_features_to_bbs(b_mtx_snp_list[k][snp_rows], multi_ids, n_multi)
     if genetic_map is not None:
         dist_cms_multi = interp_cM_between_bbs(
             multi_snps, snps_multi, genetic_map, bb_id_col="bb_id"
@@ -317,18 +314,19 @@ for j, min_snp_reads in enumerate(msr_list):
 
     for k in range(n_assays):
         assay = nonbulk_assays[k]
+        # outputs are expanded assay-major over msr_list, so this is (k, j)
         idx = k * n_msr + j
 
         bb_out.to_csv(out_bb_file[idx], sep="\t", header=True, index=False)
         joint_sids.to_csv(out_sample_file[idx], sep="\t", index=False)
 
         # map this assay's SNPs to the shared bbs
-        m = snps_list[k][["#CHR", "POS0"]].merge(
+        snp_bbs = snps_list[k][["#CHR", "POS0"]].merge(
             bb_of_snp, on=["#CHR", "POS0"], how="left"
         )
-        keep = m["bb_id"].notna().to_numpy()
+        keep = snp_bbs["bb_id"].notna().to_numpy()
         snp_rows_k = np.where(keep)[0]
-        bb_ids_k = m.loc[keep, "bb_id"].to_numpy().astype(np.int64)
+        bb_ids_k = snp_bbs.loc[keep, "bb_id"].to_numpy().astype(np.int64)
 
         tot_bb = sum_features_to_bbs(tot_mtx_snp_list[k][snp_rows_k], bb_ids_k, num_bbs)
         a_bb = sum_features_to_bbs(a_mtx_snp_list[k][snp_rows_k], bb_ids_k, num_bbs)
@@ -363,46 +361,45 @@ for j, min_snp_reads in enumerate(msr_list):
                 f"{assay} MSR={min_snp_reads} Xcount (h5ad): shape={x_count.shape}, nnz={x_count.nnz}"
             )
 
-        pdf = PdfPages(out_qc_pdf[idx])
-        plot_allele_freqs(
-            bbs,
-            sample_labels_list[k],
-            tot_bb,
-            b_bb,
-            genome_size,
-            qc_dir,
-            apply_pseudobulk=True,
-            cell_dataset_ids=cell_dataset_idx_list[k],
-            allele="B",
-            feature_label="bb",
-            run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
-            name_prefix="combine_counts",
-            sample_id=sample_id,
-            pdf=pdf,
-        )
+        multi = multi_cache[k]
+        multi["df"].to_csv(out_multi_snp_file[idx], sep="\t", header=True, index=False)
+        save_npz(out_tot_mtx_multi[idx], multi["tot"])
+        save_npz(out_a_mtx_multi[idx], multi["a"])
+        save_npz(out_b_mtx_multi[idx], multi["b"])
 
-        mc = multi_cache[k]
-        mc["df"].to_csv(out_multi_snp_file[idx], sep="\t", header=True, index=False)
-        save_npz(out_tot_mtx_multi[idx], mc["tot"])
-        save_npz(out_a_mtx_multi[idx], mc["a"])
-        save_npz(out_b_mtx_multi[idx], mc["b"])
-        plot_allele_freqs(
-            mc["df"],
-            sample_labels_list[k],
-            mc["tot"],
-            mc["b"],
-            genome_size,
-            qc_dir,
-            apply_pseudobulk=True,
-            cell_dataset_ids=cell_dataset_idx_list[k],
-            allele="B",
-            feature_label="multi-snp",
-            run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
-            name_prefix="combine_counts",
-            sample_id=sample_id,
-            pdf=pdf,
-        )
-        pdf.close()
+        with PdfPages(out_qc_pdf[idx]) as pdf:
+            plot_allele_freqs(
+                bbs,
+                sample_labels_list[k],
+                tot_bb,
+                b_bb,
+                genome_size,
+                qc_dir,
+                apply_pseudobulk=True,
+                cell_dataset_ids=cell_dataset_idx_list[k],
+                allele="B",
+                feature_label="bb",
+                run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
+                name_prefix="combine_counts",
+                sample_id=sample_id,
+                pdf=pdf,
+            )
+            plot_allele_freqs(
+                multi["df"],
+                sample_labels_list[k],
+                multi["tot"],
+                multi["b"],
+                genome_size,
+                qc_dir,
+                apply_pseudobulk=True,
+                cell_dataset_ids=cell_dataset_idx_list[k],
+                allele="B",
+                feature_label="multi-snp",
+                run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
+                name_prefix="combine_counts",
+                sample_id=sample_id,
+                pdf=pdf,
+            )
 
         shutil.copy2(barcode_files[k], out_all_barcodes[idx])
         shutil.copy2(barcode_full_files[k], out_barcodes_full[idx])

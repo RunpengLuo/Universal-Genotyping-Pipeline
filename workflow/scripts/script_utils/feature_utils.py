@@ -68,6 +68,27 @@ def annotate_feature_type(snps, gtf_file):
     return snps
 
 
+def explode_feature_ids(df, cols=None, sep=";"):
+    """One row per (row, gene) from the *sep*-joined ``feature_id`` column.
+
+    Rows with no gene (NaN or ``intergenic``) are dropped, so the result carries only
+    real gene ids.
+
+    Args:
+        df: Frame with a ``feature_id`` column.
+        cols: Columns to keep besides ``feature_id``; ``None`` keeps all.
+        sep: Separator joining the gene ids, matching ``merge_feature_ids``.
+
+    Returns:
+        A copy of the kept rows, one per gene.
+    """
+    genic = df[df["feature_id"].notna() & (df["feature_id"] != "intergenic")]
+    genic = genic[list(cols) + ["feature_id"]].copy() if cols else genic.copy()
+    genic["feature_id"] = genic["feature_id"].str.split(sep)
+    genic = genic.explode("feature_id")
+    return genic[genic["feature_id"] != "intergenic"]
+
+
 def stamp_gene_clusters(bin_df, snps_binned):
     """Glue each gene's span of fixed bins into one cluster, so no bb splits a gene.
 
@@ -82,12 +103,7 @@ def stamp_gene_clusters(bin_df, snps_binned):
     Returns:
         *bin_df* with ``gene_cluster`` added.
     """
-    genic = snps_binned[
-        snps_binned["feature_id"].notna() & (snps_binned["feature_id"] != "intergenic")
-    ].copy()
-    genic["feature_id"] = genic["feature_id"].str.split(";")
-    genic = genic.explode("feature_id")
-    genic = genic[genic["feature_id"] != "intergenic"]
+    genic = explode_feature_ids(snps_binned, cols=["bin_id"])
     rng = genic.groupby("feature_id")["bin_id"].agg(["min", "max"])
     bin_df["gene_cluster"] = merge_ranges_to_clusters(
         len(bin_df), zip(rng["min"].to_numpy(), rng["max"].to_numpy() + 1)

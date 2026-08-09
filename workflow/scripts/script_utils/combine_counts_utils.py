@@ -68,7 +68,8 @@ def build_union_snps(snps_list):
 
     Keeps the shared annotation columns (``PS``/``feature_id`` only when present in
     EVERY assay), dedupes on ``(#CHR, POS0)``, sorts, and adds a 0-based
-    ``snp_id``. Returns ``(snps, has_ps, has_feature)``.
+    ``snp_id``. Returns ``(snps, has_feature)``; ``setup_phase_clusters`` reports on
+    ``PS``.
     """
     has_ps = all("PS" in s.columns for s in snps_list)
     has_feature = all("feature_id" in s.columns for s in snps_list)
@@ -86,7 +87,7 @@ def build_union_snps(snps_list):
     ).drop_duplicates(["#CHR", "POS0"])
     snps = sort_df_chr(snps, ch="#CHR", pos="POS0").reset_index(drop=True)
     snps["snp_id"] = np.arange(len(snps))
-    return snps, has_ps, has_feature
+    return snps, has_feature
 
 
 ##################################################
