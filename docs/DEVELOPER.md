@@ -158,6 +158,7 @@ them uses the canonical word.
 | `sum_*` | collapse a matrix along one axis using a cluster-id array |
 | `count_*` | tally events into units |
 | `aggregate_*` | collapse with weighting or a non-trivial reduction |
+| `interp_*` | derive a value or bound between known points (`interp_pos_ranges`, `interp_cM_between_bbs`) |
 | `compute_*` | derive a numeric quantity from already-aggregated data |
 | `estimate_*` | statistical estimate |
 | `mask_*` | return a boolean selection |

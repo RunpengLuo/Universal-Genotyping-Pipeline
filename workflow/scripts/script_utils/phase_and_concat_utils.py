@@ -127,7 +127,7 @@ def hstack_replicate_mats(tot_list: list, ad_list: list):
 # SNP ranges: the per-SNP range split
 
 
-def build_pos_ranges(snps: pd.DataFrame, regions: pd.DataFrame, colname="region_id"):
+def interp_pos_ranges(snps: pd.DataFrame, regions: pd.DataFrame, colname="region_id"):
     """Split each region into one ``[START, END)`` range per position it contains.
 
     A position owns the span between the midpoints of its neighbours, bounded by the

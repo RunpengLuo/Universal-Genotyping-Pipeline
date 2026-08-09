@@ -32,13 +32,13 @@ from io_utils import (
 )
 from phase_and_concat_utils import (
     apply_masks_to_df,
-    build_pos_ranges,
     get_mask_by_blacklist,
     get_mask_by_depth,
     get_mask_by_exon,
     get_mask_by_het_balanced,
     get_mask_by_region,
     hstack_replicate_mats,
+    interp_pos_ranges,
     map_allele_mat_to_snps,
 )
 from phasing_utils import apply_phase_to_mat
@@ -139,7 +139,7 @@ if exon_only:
     masks.append(get_mask_by_exon(snps))
 
 snps, snp_mask = apply_masks_to_df(snps, *masks)
-snps = build_pos_ranges(snps, regions, colname="region_id")
+snps = interp_pos_ranges(snps, regions, colname="region_id")
 
 logging.info(f"#SNPs={np.sum(snp_mask)}/{num_snps_before} after filtering")
 
