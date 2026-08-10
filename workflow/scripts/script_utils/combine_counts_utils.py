@@ -68,7 +68,7 @@ def build_union_snps(snps_list):
 
 
 def aggregate_bin_depth_to_bbs(
-    assay2dataset_inds, bin_df, dp_bin_dfs, dp_corrected_list, num_bbs, num_datasets
+    assay2dataset_indices, bin_df, dp_bin_dfs, dp_corrected_list, num_bbs, num_datasets
 ):
     """Length-weighted aggregation of corrected fixed-bin depth into bbs.
 
@@ -78,10 +78,9 @@ def aggregate_bin_depth_to_bbs(
     *bin_df*, so a finer WES bin set projects onto the WGS bbs.
 
     Args:
-        assay2dataset_inds: ``{assay_type: bool mask over the datasets}``, in the order
-            of *dp_bin_dfs* and *dp_corrected_list*. Column ``s`` of an assay's matrix
-            goes to the ``s``-th set position of its mask, so the datasets of one assay
-            need not be adjacent.
+        assay2dataset_indices: ``{assay_type: dataset indices}``, in the order of
+            *dp_bin_dfs* and *dp_corrected_list*. Column ``s`` of an assay's matrix goes
+            to its ``s``-th index, so one assay's datasets need not be adjacent.
 
     Returns:
         ``(bb_dp, bb_bases)``: per-bb mean depth and per-bb total aligned bases, both
@@ -101,8 +100,8 @@ def aggregate_bin_depth_to_bbs(
     )
     bb_dp = np.full((num_bbs, num_datasets), np.nan, dtype=np.float32)
     bb_bases = np.zeros((num_bbs, num_datasets), dtype=np.float64)
-    for (at, inds), bins_a, dp_a in zip(
-        assay2dataset_inds.items(), dp_bin_dfs, dp_corrected_list
+    for (at, dataset_indices), bins_a, dp_a in zip(
+        assay2dataset_indices.items(), dp_bin_dfs, dp_corrected_list
     ):
         # a finer WES bin set projects onto the WGS bbs by midpoint
         mapped, na_idx = assign_range_to_range(
@@ -119,7 +118,7 @@ def aggregate_bin_depth_to_bbs(
             valid
         ]
         total_len_per_bb = np.bincount(vb, weights=bin_lengths, minlength=num_bbs)
-        for s, obs in enumerate(np.flatnonzero(inds)):
+        for s, obs in enumerate(dataset_indices):
             weighted_sums = np.bincount(
                 vb, weights=dp_a[valid, s] * bin_lengths, minlength=num_bbs
             )
@@ -133,8 +132,9 @@ def build_rdr_base_map(sample_df):
     """Map each tumor observation to its RDR base (denominator) observation.
 
     A tumor row's optional ``RDR_BASE_REP_ID`` names the ``REP_ID`` of the
-    sample used as its RDR baseline. Returns ``{tumor_obs: base_obs}``; a tumor
-    with an unset ``RDR_BASE_REP_ID`` is omitted (median-normalized downstream).
+    sample used as its RDR baseline. Returns ``{tumor dataset index: base dataset
+    index}``; a tumor with an unset ``RDR_BASE_REP_ID`` is omitted (median-normalized
+    downstream).
     """
     dataset_ids = sample_df["REP_ID"].tolist()
     sample_types = sample_df["sample_type"].tolist()
@@ -162,11 +162,11 @@ def build_rdr_base_map(sample_df):
 
 
 def compute_bb_rdr(
-    assay2dataset_inds,
+    assay2dataset_indices,
     dp_bin_dfs,
     dp_corrected_list,
     bb_dp,
-    tumor_obs,
+    tumor_dataset_indices,
     base_map,
     rdr_outlier_quantile,
     dataset_ids,
@@ -177,24 +177,23 @@ def compute_bb_rdr(
     base, library-size corrected; a tumor without a base is median-centered. The base
     may be any observation (e.g. a different assay/platform), so library sizes are
     computed globally per observation. Entries above the ``1 - rdr_outlier_quantile``
-    quantile are set to NaN. Returns a ``(num_bbs, len(tumor_obs))`` array aligned to
-    ``tumor_obs``; *assay2dataset_inds* is keyed as in ``aggregate_bin_depth_to_bbs``.
+    quantile are set to NaN. Returns a ``(num_bbs, len(tumor_dataset_indices))`` array
+    aligned to *tumor_dataset_indices*; *assay2dataset_indices* is as in
+    ``aggregate_bin_depth_to_bbs``.
     """
     num_bbs, num_datasets = bb_dp.shape
-    bb_rdr = np.full((num_bbs, len(tumor_obs)), np.nan, dtype=np.float32)
-    rdr_pos = {o: i for i, o in enumerate(tumor_obs)}
+    bb_rdr = np.full((num_bbs, len(tumor_dataset_indices)), np.nan, dtype=np.float32)
+    rdr_pos = {o: i for i, o in enumerate(tumor_dataset_indices)}
 
     # global per-observation total aligned bases for library-size correction
     obs_total_bases = np.full(num_datasets, np.nan, dtype=np.float64)
-    for inds, bins_a, dp_a in zip(
-        assay2dataset_inds.values(), dp_bin_dfs, dp_corrected_list
+    for dataset_indices, bins_a, dp_a in zip(
+        assay2dataset_indices.values(), dp_bin_dfs, dp_corrected_list
     ):
         bin_sizes = (bins_a["END"] - bins_a["START"]).to_numpy(dtype=np.float64)
-        obs_total_bases[np.flatnonzero(inds)] = np.nansum(
-            dp_a * bin_sizes[:, None], axis=0
-        )
+        obs_total_bases[dataset_indices] = np.nansum(dp_a * bin_sizes[:, None], axis=0)
 
-    for o in tumor_obs:
+    for o in tumor_dataset_indices:
         m = base_map.get(o)
         if m is not None:
             lib = obs_total_bases[m] / obs_total_bases[o]

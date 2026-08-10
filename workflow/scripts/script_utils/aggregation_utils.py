@@ -20,6 +20,7 @@ from scipy.sparse import issparse
 
 from range_utils import assign_pos_to_range
 from matrix_utils import cluster_sum
+from utils import log_hist
 
 
 def build_fixedwidth_bins(segments, bin_size, chroms=None):
@@ -68,31 +69,6 @@ def build_fixedwidth_bins(segments, bin_size, chroms=None):
         if col not in ("#CHR", "START", "END"):
             out[col] = segments[col].to_numpy()[seg_idx]
     return pd.DataFrame(out)
-
-
-def stamp_bin_label(bin_df, snps_binned, col, default):
-    """Carry a per-SNP label onto the fixed bins as a never-null cluster key.
-
-    Each bin takes the modal value of *col* over its SNPs, then bins with no SNP inherit
-    from their neighbours (forward, then backward), and a frame with no SNP at all falls
-    back to *default*. The fill must cover both ends: ``build_adaptive_bins`` groups the
-    bins by ``cluster_cols`` and pandas drops null keys, so a null-keyed bin would never
-    enter the merge loop and would keep the initialized ``bb_id`` of 0.
-
-    Args:
-        bin_df: Fixed bins with ``bin_id``. Modified in place.
-        snps_binned: SNPs carrying ``bin_id`` and *col*.
-        col: Label column to carry over.
-        default: Value for bins when no SNP in the frame has one.
-
-    Returns:
-        *bin_df* with *col* added.
-    """
-    per_bin = snps_binned.groupby("bin_id")[col].agg(lambda x: x.mode().iloc[0])
-    bin_df[col] = bin_df["bin_id"].map(per_bin)
-    if bin_df[col].isna().any():
-        bin_df[col] = bin_df[col].ffill().bfill().fillna(default)
-    return bin_df
 
 
 @numba.njit
@@ -200,27 +176,6 @@ def _merge_bins_to_bbs(
     return bb_ids, bb_id
 
 
-def log_off_range_depth(na_idx, tot_mtx, label=""):
-    """Log the depth carried by the positions an assignment dropped.
-
-    *na_idx* is the second return of any ``assign_*`` and indexes *tot_mtx* rows
-    directly, so this reports how much signal falls outside the reference grid.
-
-    Args:
-        na_idx: Positional indices of the unassigned rows.
-        tot_mtx: Per-position total counts, rows aligned to the pre-assignment frame.
-        label: Prefix for the log line.
-    """
-    if not len(na_idx):
-        return
-    off_depth = tot_mtx[na_idx].sum(axis=1)
-    logging.info(
-        f"{label}off-range depth over {len(na_idx)} dropped positions: "
-        f"min={off_depth.min()}, max={off_depth.max()}, "
-        f"mean={off_depth.mean():.1f}, median={np.median(off_depth):.1f}"
-    )
-
-
 def build_adaptive_bins(
     bins: pd.DataFrame,
     snps: pd.DataFrame,
@@ -238,8 +193,8 @@ def build_adaptive_bins(
     ----------
     bins : pd.DataFrame
         Fixed bins with ``#CHR``, ``START``, ``END``, ``bin_id``, and the clustering
-        columns. When ``gene_aware``, must also carry a ``gene_cluster`` column (see
-        ``feature_utils.stamp_gene_clusters``) so bbs never split a gene.
+        columns. When ``gene_aware``, must also carry a ``gene_cluster`` column, so a
+        bb never splits a gene.
     snps : pd.DataFrame
         SNP DataFrame with ``POS0`` and ``#CHR`` columns.
     tot_mtx : (n_snps, M) ndarray
@@ -280,7 +235,8 @@ def build_adaptive_bins(
     if "bin_id" not in snps.columns:
         snps["_orig_df_idx"] = np.arange(len(snps))
         snps, na_idx = assign_pos_to_range(snps, bins, ref_id="bin_id", dropna=True)
-        log_off_range_depth(na_idx, tot_mtx)
+        if len(na_idx):
+            log_hist(tot_mtx[na_idx].sum(axis=1), "depth of SNPs outside every bin")
 
     # 2. Compute per-fixed-bin stats
     B = len(bins)

@@ -24,7 +24,7 @@ import shutil
 
 snakemake_handle = snakemake
 
-from utils import maybe_path, set_omp_threads, setup_logging
+from utils import log_hist, maybe_path, set_omp_threads, setup_logging
 
 set_omp_threads(snakemake_handle)
 setup_logging(snakemake_handle.log[0])
@@ -52,17 +52,13 @@ from phasing_utils import (
 )
 from matrix_utils import sum_features_to_bbs, sum_observations_to_pseudobulk
 from feature_utils import (
-    stamp_bb_feature_ids,
-    stamp_gene_clusters,
+    explode_feature_ids,
+    merge_feature_ids,
     sum_atac_fragments_to_bins,
     sum_umis_to_bins,
 )
-from aggregation_utils import (
-    build_adaptive_bins,
-    log_off_range_depth,
-    stamp_bin_label,
-)
-from range_utils import assign_pos_to_range
+from aggregation_utils import build_adaptive_bins
+from range_utils import assign_pos_to_range, merge_ranges_to_clusters
 from plot_alleles import plot_allele_freqs
 from matplotlib.backends.backend_pdf import PdfPages
 
@@ -209,10 +205,23 @@ tot_pb_cont = np.ascontiguousarray(tot_pb)
 # assigned once here; every MSR below reuses it
 snps["_orig_df_idx"] = np.arange(len(snps))
 snps_binned, off_idx = assign_pos_to_range(snps, bin_df, ref_id="bin_id", dropna=True)
-log_off_range_depth(off_idx, tot_pb_cont)
-stamp_bin_label(bin_df, snps_binned, "PS", default=1)
+if len(off_idx):
+    log_hist(tot_pb_cont[off_idx].sum(axis=1), "depth of SNPs outside every bin")
+modal = snps_binned.groupby("bin_id")["PS"].agg(lambda x: x.mode().iloc[0])
+bin_df["PS"] = bin_df["bin_id"].map(modal).ffill().bfill().fillna(1)
 if gene_aware_binning:
-    stamp_gene_clusters(bin_df, snps_binned)
+    gene_spans = (
+        explode_feature_ids(snps_binned, cols=["bin_id"])
+        .groupby("feature_id")["bin_id"]
+        .agg(["min", "max"])
+    )
+    bin_df["gene_cluster"] = merge_ranges_to_clusters(
+        len(bin_df), zip(gene_spans["min"].to_numpy(), gene_spans["max"].to_numpy() + 1)
+    )
+    logging.info(
+        f"gene-aware binning: {len(gene_spans)} genes over {len(bin_df)} fixed bins -> "
+        f"{bin_df['gene_cluster'].nunique()} clusters"
+    )
 
 # per-assay multi-SNP pre-grouping (diagnostic; every nsnp_multi SNPs)
 multi_cache = []
@@ -294,7 +303,11 @@ for j, min_snp_reads in enumerate(msr_list):
     else:
         bbs["switchprobs"] = estimate_switchprobs_PS(bbs, switchprob_ps)
 
-    stamp_bb_feature_ids(bbs, snps_bb)
+    bbs["feature_id"] = (
+        bbs["bb_id"]
+        .map(snps_bb.groupby("bb_id")["feature_id"].agg(merge_feature_ids))
+        .fillna("intergenic")
+    )
 
     # union SNP -> shared bb_id map, plus the two frames counts are assigned through
     bb_of_snp = snps_bb[["#CHR", "POS0", "bb_id"]]

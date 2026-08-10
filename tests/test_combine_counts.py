@@ -243,7 +243,8 @@ def test_leading_snp_free_bin_keeps_a_cluster_key(agg):
     snps["PS"] = 1
     tot = np.full((len(snps), 2), 100.0)
     binned = _bin_snps(snps, win)
-    agg.stamp_bin_label(win, binned, "PS", default=1)
+    modal = binned.groupby("bin_id")["PS"].agg(lambda x: x.mode().iloc[0])
+    win["PS"] = win["bin_id"].map(modal).ffill().bfill().fillna(1)
 
     assert win["PS"].notna().all(), "leading SNP-free bins lost their cluster key"
     bbs, _ = agg.build_adaptive_bins(
@@ -271,7 +272,8 @@ def test_snp_free_segment_gets_its_own_bb(agg):
     snps["PS"] = 1
     tot = np.full((len(snps), 2), 100.0)
     binned = _bin_snps(snps, win)
-    agg.stamp_bin_label(win, binned, "PS", default=1)
+    modal = binned.groupby("bin_id")["PS"].agg(lambda x: x.mode().iloc[0])
+    win["PS"] = win["bin_id"].map(modal).ffill().bfill().fillna(1)
     bbs, _ = agg.build_adaptive_bins(
         win,
         binned,
@@ -320,7 +322,14 @@ def test_gene_cluster_over_bins_never_splits_a_gene(agg, feat):
     snps = _snps_in(win, [3, 7])  # one gene, SNPs only at its two ends
     snps["feature_id"] = ["G", "G"]
     binned = _bin_snps(snps, win)
-    feat.stamp_gene_clusters(win, binned)
+    spans = (
+        feat.explode_feature_ids(binned, cols=["bin_id"])
+        .groupby("feature_id")["bin_id"]
+        .agg(["min", "max"])
+    )
+    win["gene_cluster"] = ru.merge_ranges_to_clusters(
+        len(win), zip(spans["min"].to_numpy(), spans["max"].to_numpy() + 1)
+    )
     inside = win.loc[3:7, "gene_cluster"].to_numpy()
     assert len(set(inside)) == 1, "bins 3..7 of one gene fell into several clusters"
     assert win.loc[2, "gene_cluster"] != inside[0]

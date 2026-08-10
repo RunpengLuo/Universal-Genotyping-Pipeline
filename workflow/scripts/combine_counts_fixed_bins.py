@@ -37,7 +37,7 @@ from matrix_utils import sum_features_to_bbs
 from range_utils import assign_pos_to_range
 from feature_utils import (
     assign_features_to_ranges,
-    stamp_bb_feature_ids,
+    merge_feature_ids,
     sum_atac_fragments_to_bins,
 )
 from matplotlib.backends.backend_pdf import PdfPages
@@ -106,7 +106,11 @@ snps, _ = assign_pos_to_range(snps, bb_df, ref_id="bb_id", dropna=True)
 logging.info(f"#SNPs in a bb={len(snps)}")
 bb_df["#SNPS"] = bb_df["bb_id"].map(snps["bb_id"].value_counts()).fillna(0).astype(int)
 
-stamp_bb_feature_ids(bb_df, snps)
+bb_df["feature_id"] = (
+    bb_df["bb_id"]
+    .map(snps.groupby("bb_id")["feature_id"].agg(merge_feature_ids))
+    .fillna("intergenic")
+)
 
 raw_snp_df_idx = snps["RAW_SNP_DF_IDX"].to_numpy()
 tot_mtx = tot_mtx[raw_snp_df_idx, :]

@@ -574,7 +574,7 @@ def write_bb_file(bbs: pd.DataFrame, out_file: str):
 
     ``switchprobs`` is absent only in ``copytyping_preprocess``, which bins nothing and
     carries whatever the supplied ``bb_file`` held; ``feature_id`` needs a GTF (see
-    ``feature_utils.stamp_bb_feature_ids``); ``#feature`` is the RNA gene count that
+    a GTF); ``#feature`` is the RNA gene count that
     only ``combine_counts_fixed_bins`` computes.
 
     Args:

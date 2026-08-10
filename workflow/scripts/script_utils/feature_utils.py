@@ -2,10 +2,10 @@
 
 A feature here is a GTF entity, a gene or an exon. Two groups:
 
-- annotation - stamp SNPs with the genes they sit in (``annotate_feature_type``), collapse
-  ``feature_id`` strings (``merge_feature_ids``), and glue each gene's span of fixed bins
-  into one cluster so no bb splits a gene (``stamp_gene_clusters``). The filter on the
-  result is ``phase_and_concat_utils.get_mask_by_exon``, next to the other SNP masks.
+- annotation - stamp SNPs with the genes they sit in (``annotate_feature_type``), then
+  collapse or explode the ``;``-joined ``feature_id`` (``merge_feature_ids``,
+  ``explode_feature_ids``). The filter on the result is
+  ``phase_and_concat_utils.get_mask_by_exon``, next to the other SNP masks.
 - counting - turn an assay's raw records into a ``(bin, cell)`` count matrix:
   ``sum_umis_to_bins`` for the scRNA/VISIUM h5ad, ``sum_atac_fragments_to_bins`` for 10x
   fragment files. ``assign_features_to_ranges`` is the gene-to-range mapping both the RNA
@@ -27,7 +27,6 @@ from matrix_utils import sum_features_to_bbs
 from range_utils import (
     assign_pos_to_range_ovlp,
     assign_range_to_range,
-    merge_ranges_to_clusters,
     overlaps_any_range,
 )
 from utils import add_chr_prefix
@@ -87,54 +86,6 @@ def explode_feature_ids(df, cols=None, sep=";"):
     genic["feature_id"] = genic["feature_id"].str.split(sep)
     genic = genic.explode("feature_id")
     return genic[genic["feature_id"] != "intergenic"]
-
-
-def stamp_bb_feature_ids(bbs, snps_bb, bb_id_col="bb_id"):
-    """Carry each bb's genes onto it as one ``;``-joined ``feature_id``.
-
-    A bb holding no genic SNP becomes ``intergenic``. ``gtf_file`` is required, so every
-    ``snps.tsv.gz`` carries ``feature_id`` and no caller needs a guard.
-
-    Args:
-        bbs: bbs with *bb_id_col*. Modified in place.
-        snps_bb: SNPs carrying *bb_id_col* and ``feature_id``.
-        bb_id_col: The bb identifier column, in both frames.
-
-    Returns:
-        *bbs*, with ``feature_id`` added.
-    """
-    bbs["feature_id"] = (
-        bbs[bb_id_col]
-        .map(snps_bb.groupby(bb_id_col)["feature_id"].agg(merge_feature_ids))
-        .fillna("intergenic")
-    )
-    return bbs
-
-
-def stamp_gene_clusters(bin_df, snps_binned):
-    """Glue each gene's span of fixed bins into one cluster, so no bb splits a gene.
-
-    The ``;``-joined multi-gene ``feature_id`` is exploded so each gene gets its own
-    first..last bin span. Spans cover the SNP-free bins between a gene's SNPs too, so a
-    bb boundary cannot land in an intronic gap.
-
-    Args:
-        bin_df: Fixed bins with ``bin_id``. Modified in place.
-        snps_binned: SNPs carrying ``bin_id`` and ``feature_id``.
-
-    Returns:
-        *bin_df* with ``gene_cluster`` added.
-    """
-    genic = explode_feature_ids(snps_binned, cols=["bin_id"])
-    rng = genic.groupby("feature_id")["bin_id"].agg(["min", "max"])
-    bin_df["gene_cluster"] = merge_ranges_to_clusters(
-        len(bin_df), zip(rng["min"].to_numpy(), rng["max"].to_numpy() + 1)
-    )
-    logging.info(
-        f"gene-aware binning: {len(rng)} genes over {len(bin_df)} fixed bins -> "
-        f"{bin_df['gene_cluster'].nunique()} gene/intergenic clusters (bbs never split a gene)"
-    )
-    return bin_df
 
 
 def assign_features_to_ranges(
