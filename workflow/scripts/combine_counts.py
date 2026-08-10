@@ -110,10 +110,12 @@ logging.info(
     f"#tumor_datasets={len(tumor_dataset_indices)}"
 )
 
-if "PS" not in snps.columns:
-    snps["PS"] = 1
-assert snps["PS"].notna().all(), "SNP file, `PS` column has NaNs"
-cluster_cols = ["region_id", "seg_id", "PS"]
+##################################################
+
+cluster_cols = ["region_id", "seg_id"]
+if "PS" in snps.columns:
+    assert snps["PS"].notna().all(), "SNP file, `PS` column has NaNs"
+    cluster_cols.append("PS")
 
 if phase_flip_test:
     snps["phase_cluster"] = detect_phase_flips(
@@ -121,7 +123,6 @@ if phase_flip_test:
         a_mtx[:, tumor_dataset_indices],
         b_mtx[:, tumor_dataset_indices],
         cluster_cols=cluster_cols,
-        tumor_sidx=0,
         epsilon=phase_flip_epsilon,
         alpha=phase_flip_alpha,
     )
@@ -190,7 +191,6 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         min_snp_reads_vec,
         min_snp_per_bin,
         cluster_cols=cluster_cols,
-        tumor_sidx=0,
         max_blocksize=max_blocksize,
         gene_aware=gene_aware_binning,
     )

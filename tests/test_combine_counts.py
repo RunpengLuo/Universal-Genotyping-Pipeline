@@ -177,7 +177,6 @@ def test_bbs_frame_joins_on_bb_id(agg):
         50,
         2,
         cluster_cols=["region_id"],
-        tumor_sidx=0,
     )
     assert bbs.index.name is None, "bb_id index name shadows the bb_id column"
     assert "bb_id" in bbs.columns and "bb_id" in snps_bb.columns
@@ -254,7 +253,6 @@ def test_leading_snp_free_bin_keeps_a_cluster_key(agg):
         50,
         1,
         cluster_cols=["region_id", "seg_id", "PS"],
-        tumor_sidx=0,
         max_blocksize=0,
         gene_aware=False,
     )
@@ -281,7 +279,6 @@ def test_snp_free_segment_gets_its_own_bb(agg):
         50,
         1,
         cluster_cols=["region_id", "seg_id", "PS"],
-        tumor_sidx=0,
         max_blocksize=0,
         gene_aware=False,
     )

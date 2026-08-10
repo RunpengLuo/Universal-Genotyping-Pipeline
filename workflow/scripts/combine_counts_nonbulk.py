@@ -241,7 +241,6 @@ for k in range(n_assays):
         0,
         nsnp_multi,
         cluster_cols=[c for c in ("region_id", "seg_id") if c in bins_k.columns],
-        tumor_sidx=0,
         max_blocksize=0,
         gene_aware=False,
     )
@@ -281,7 +280,6 @@ for j, min_snp_reads in enumerate(msr_list):
         min_snp_reads,
         min_snp_per_bin,
         cluster_cols=cluster_cols,
-        tumor_sidx=0,
         max_blocksize=0,
         gene_aware=gene_aware_binning,
     )

@@ -183,7 +183,6 @@ def build_adaptive_bins(
     min_snp_reads,
     min_snp_per_bin: int,
     cluster_cols: list,
-    tumor_sidx=0,
     max_blocksize=0,
     gene_aware=False,
 ):
@@ -198,18 +197,15 @@ def build_adaptive_bins(
     snps : pd.DataFrame
         SNP DataFrame with ``POS0`` and ``#CHR`` columns.
     tot_mtx : (n_snps, M) ndarray
-        Per-SNP total read counts over M observations.
+        Per-SNP total read counts over the M TUMOR observations; the caller slices.
     min_snp_reads : int or array-like
         Minimum total tumor reads for a bb, per tumor observation. A scalar is
-        broadcast to every tumor observation; an array of length ``M - tumor_sidx``
-        sets a per-observation threshold.
+        broadcast to every observation; an array of length M sets one threshold each.
     min_snp_per_bin : int
         Minimum number of SNPs per bb.
     cluster_cols : list of str
         Columns to cluster fixed bins by (e.g. ``["region_id"]``); a bb never spans
         two clusters.
-    tumor_sidx : int
-        Index of the first tumor observation.
 
     Returns
     -------
@@ -221,7 +217,7 @@ def build_adaptive_bins(
         any fixed bin are dropped.
     """
 
-    M_tumor = tot_mtx.shape[1] - tumor_sidx
+    M_tumor = tot_mtx.shape[1]
     min_snp_reads_vec = np.ascontiguousarray(
         np.broadcast_to(np.asarray(min_snp_reads, dtype=np.float64), (M_tumor,))
     )
@@ -243,10 +239,7 @@ def build_adaptive_bins(
     snp_bin_ids = snps["bin_id"].to_numpy()
     snp_orig_df_idx = snps["_orig_df_idx"].to_numpy()
 
-    if issparse(tot_mtx):
-        tot_tumor = tot_mtx[:, tumor_sidx:].toarray().astype(np.float64)
-    else:
-        tot_tumor = tot_mtx[:, tumor_sidx:].astype(np.float64)
+    tot_tumor = (tot_mtx.toarray() if issparse(tot_mtx) else tot_mtx).astype(np.float64)
 
     bin_nsnps = np.bincount(snp_bin_ids, minlength=B).astype(np.int64)
     bin_reads = np.asarray(

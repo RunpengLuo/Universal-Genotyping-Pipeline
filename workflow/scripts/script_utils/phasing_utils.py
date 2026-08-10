@@ -44,9 +44,7 @@ def apply_phase_to_mat(tot_mtx, ref_mtx, alt_mtx, phases):
     return a_mtx, b_mtx
 
 
-def detect_phase_flips(
-    snps, a_mtx, b_mtx, cluster_cols, tumor_sidx=0, epsilon=0.05, alpha=0.05
-):
+def detect_phase_flips(snps, a_mtx, b_mtx, cluster_cols, epsilon=0.05, alpha=0.05):
     """Detect phase flips between neighbouring SNPs using Beta credible intervals.
 
     For each pair of genomically adjacent SNPs within a group, compute a 95%
@@ -59,14 +57,10 @@ def detect_phase_flips(
     ----------
     snps : pd.DataFrame
         SNP DataFrame with grouping columns.
-    a_mtx : (N, M) ndarray
-        A-allele counts (N SNPs, M samples).
-    b_mtx : (N, M) ndarray
-        B-allele counts (N SNPs, M samples).
+    a_mtx, b_mtx : (N, M) ndarray
+        A- and B-allele counts over the M TUMOR observations; the caller slices.
     cluster_cols : list of str
         Columns to group SNPs by (e.g. ["region_id", "PS"]).
-    tumor_sidx : int
-        Index of first tumor sample column.
     epsilon : float
         Half-width of dead zone around 0.5. Default 0.05 → dead zone [0.45, 0.55].
     alpha : float
@@ -81,12 +75,8 @@ def detect_phase_flips(
     snps = snps.reset_index(drop=True)  # idx below indexes the matrices positionally
     pos0 = snps["POS0"].to_numpy()
 
-    a_tumor = (
-        a_mtx[:, tumor_sidx:].toarray() if issparse(a_mtx) else a_mtx[:, tumor_sidx:]
-    ).astype(np.float64)
-    b_tumor = (
-        b_mtx[:, tumor_sidx:].toarray() if issparse(b_mtx) else b_mtx[:, tumor_sidx:]
-    ).astype(np.float64)
+    a_tumor = (a_mtx.toarray() if issparse(a_mtx) else a_mtx).astype(np.float64)
+    b_tumor = (b_mtx.toarray() if issparse(b_mtx) else b_mtx).astype(np.float64)
 
     ci_lo = beta_dist.ppf(alpha / 2, b_tumor + 1, a_tumor + 1)
     ci_hi = beta_dist.ppf(1 - alpha / 2, b_tumor + 1, a_tumor + 1)
