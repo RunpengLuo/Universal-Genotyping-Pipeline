@@ -124,7 +124,9 @@ def log_hist(values, label, bins=20, width=48, fmt=".4g"):
     )
     lo, hi = v.min(), v.max()
     step = 0
-    if np.all(v == np.floor(v)):
+    if hi == lo:
+        bins = 1
+    elif np.all(v == np.floor(v)):
         step = max(1, int(np.ceil((hi - lo + 1) / bins)))
         bins = np.arange(lo, hi + step + 1, step)
     counts, edges = np.histogram(v, bins=bins)
