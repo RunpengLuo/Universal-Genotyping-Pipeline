@@ -18,9 +18,7 @@ import numba
 
 from scipy.sparse import issparse
 
-from range_utils import assign_pos_to_range
 from matrix_utils import cluster_sum
-from utils import log_hist
 
 
 def build_fixedwidth_bins(segments, bin_size, chroms=None):
@@ -195,9 +193,11 @@ def build_adaptive_bins(
         columns. When ``gene_aware``, must also carry a ``gene_cluster`` column, so a
         bb never splits a gene.
     snps : pd.DataFrame
-        SNP DataFrame with ``POS0`` and ``#CHR`` columns.
+        SNP DataFrame with ``POS0``, ``#CHR`` and ``bin_id``; the caller assigns the
+        fixed bins and drops the SNPs that land in none.
     tot_mtx : (n_snps, M) ndarray
-        Per-SNP total read counts over the M TUMOR observations; the caller slices.
+        Per-SNP total read counts over the M TUMOR observations, row-aligned to *snps*;
+        the caller slices both.
     min_snp_reads : int or array-like
         Minimum total tumor reads for a bb, per tumor observation. A scalar is
         broadcast to every observation; an array of length M sets one threshold each.
@@ -213,9 +213,14 @@ def build_adaptive_bins(
         bb definitions with ``#CHR``, ``START``, ``END``, ``#SNPS``, ``BLOCKSIZE``,
         ``bb_id``, and the clustering columns.
     snps : pd.DataFrame
-        Input SNPs with ``bb_id`` and ``bin_id`` columns added. SNPs not falling in
-        any fixed bin are dropped.
+        Input SNPs with a ``bb_id`` column added; rows and order are unchanged.
     """
+    assert "bin_id" in snps.columns, (
+        "snps, no bin_id column; assign the fixed bins first"
+    )
+    assert len(snps) == tot_mtx.shape[0], (
+        f"tot_mtx has {tot_mtx.shape[0]} rows for {len(snps)} SNPs"
+    )
 
     M_tumor = tot_mtx.shape[1]
     min_snp_reads_vec = np.ascontiguousarray(
@@ -227,27 +232,19 @@ def build_adaptive_bins(
         f"max_blocksize={max_blocksize}"
     )
 
-    # 1. Assign SNPs to fixed bins, unless the caller already did
-    if "bin_id" not in snps.columns:
-        snps["_orig_df_idx"] = np.arange(len(snps))
-        snps, na_idx = assign_pos_to_range(snps, bins, ref_id="bin_id", dropna=True)
-        if len(na_idx):
-            log_hist(tot_mtx[na_idx].sum(axis=1), "depth of SNPs outside every bin")
-
-    # 2. Compute per-fixed-bin stats
+    # 1. Compute per-fixed-bin stats
     B = len(bins)
     snp_bin_ids = snps["bin_id"].to_numpy()
-    snp_orig_df_idx = snps["_orig_df_idx"].to_numpy()
 
     tot_tumor = (tot_mtx.toarray() if issparse(tot_mtx) else tot_mtx).astype(np.float64)
 
     bin_nsnps = np.bincount(snp_bin_ids, minlength=B).astype(np.int64)
     bin_reads = np.asarray(
-        cluster_sum(tot_tumor[snp_orig_df_idx], snp_bin_ids, B, axis=0),
+        cluster_sum(tot_tumor, snp_bin_ids, B, axis=0),
         dtype=np.float64,
     )
 
-    # 3. Cluster the fixed bins and run the numba kernel
+    # 2. Cluster the fixed bins and run the numba kernel
     bb_id = 0
     bins["bb_id"] = 0
     all_bin_starts = bins["START"].to_numpy(dtype=np.int64)
@@ -285,11 +282,11 @@ def build_adaptive_bins(
         bins.loc[idxs, "bb_id"] = local_bb_ids
         bb_id += max(n_bbs, 1)
 
-    # 4. Propagate bb_id to the SNPs
+    # 3. Propagate bb_id to the SNPs
     bin_bb_map = bins["bb_id"].to_numpy()
     snps["bb_id"] = bin_bb_map[snps["bin_id"].to_numpy()]
 
-    # 5. Build the bbs frame from the fixed bins
+    # 4. Build the bbs frame from the fixed bins
     pos_dict = {
         "#CHR": ("#CHR", "first"),
         "START": ("START", "min"),

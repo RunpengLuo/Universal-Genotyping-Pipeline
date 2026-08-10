@@ -35,15 +35,12 @@ def plot_segmentation_qc(
     tot_count_mat,
     out_file: str | None = None,
     pdf: PdfPages | None = None,
-    gene_count=None,
-    gene_col: str = "feature_id",
     sample_id: str = "",
     dpi: int = 150,
 ):
     """Two-page segmentation QC histograms for combine_counts output.
 
-    Page 1 — two histograms over all segments:
-      (i) segment length (kbp), (ii) per-segment gene count.
+    Page 1 — segment length (kbp) over all segments.
     Page 2 — one row per REP_ID, three histograms of raw counts: native read counts,
       B-allele counts, total-allele counts. The count axes use scientific notation
       (matplotlib's offset multiplier) rather than a scaled axis label.
@@ -54,16 +51,12 @@ def plot_segmentation_qc(
     ----------
     seg_df : pd.DataFrame
         Segmentation table with ``#CHR``, ``START``, ``END`` (bb.tsv.gz schema).
-        For the gene-count panel it may carry a ``;``-joined ``gene_col`` or a numeric
-        ``n_genes`` column; otherwise pass *gene_count* explicitly.
     sample_df : pd.DataFrame
         One row per count-matrix column (per REP_ID), with ``REP_ID``, ``assay_type``
         and ``sample_type``. Row order must match the columns of the count matrices.
     x_count_mat, b_count_mat, tot_count_mat : ndarray or sparse, (n_seg, n_datasets)
         Native, B-allele, and total-allele counts per segment per dataset_id; columns aligned
         to *sample_df* rows.
-    gene_count : array-like (n_seg,) or None
-        Optional explicit per-segment gene count (overrides derivation from *seg_df*).
     out_file, pdf : see the other ``plot_*`` functions. Exactly one is used.
     """
     logging.info("QC analysis - plot segmentation QC histograms")
@@ -73,38 +66,11 @@ def plot_segmentation_qc(
     _own_pdf = pdf is None
     pdf_pages = PdfPages(out_file) if _own_pdf else pdf
 
-    # ---- page 1: segment length + per-segment gene count ----
+    # ---- page 1: segment length ----
     lengths_kbp = (seg_df["END"].to_numpy() - seg_df["START"].to_numpy()) / 1000.0
 
-    def _seg_gene_counts(seg_df, gene_count, gene_col):
-        """Resolve a per-segment gene count from an explicit array or a seg_df column."""
-        if gene_count is not None:
-            return np.asarray(gene_count, dtype=float)
-        if "n_genes" in seg_df.columns:
-            return seg_df["n_genes"].to_numpy(dtype=float)
-        if gene_col in seg_df.columns:
-
-            def _count(v):
-                if not isinstance(v, str) or v == "":
-                    return 0
-                return sum(1 for g in v.split(";") if g and g != "intergenic")
-
-            return seg_df[gene_col].map(_count).to_numpy(dtype=float)
-        return None
-
-    genes_per_seg = _seg_gene_counts(seg_df, gene_count, gene_col)
-    fig1, ax1 = plt.subplots(1, 2, figsize=(11, 4))
-    _hist_with_stats(ax1[0], lengths_kbp, "segment length (kbp)", "Segment length")
-    if genes_per_seg is not None:
-        _hist_with_stats(
-            ax1[1], genes_per_seg, "# genes / segment", "Genes per segment"
-        )
-    else:
-        ax1[1].set_title(
-            "Genes per segment\n(no gene annotation)", fontsize=8, fontweight="bold"
-        )
-        ax1[1].set_xlabel("# genes / segment")
-        ax1[1].set_ylabel("# segments")
+    fig1, ax1 = plt.subplots(1, 1, figsize=(5.5, 4))
+    _hist_with_stats(ax1, lengths_kbp, "segment length (kbp)", "Segment length")
     fig1.suptitle(
         f"Segmentation QC — {len(seg_df)} segments", fontsize=11, fontweight="bold"
     )
@@ -168,6 +134,11 @@ def plot_segmentation_qc(
         logging.info(f"saved segmentation QC histograms to {out_file}")
 
 
+def _rdr_ylim(rdr_mat):
+    """Upper RDR axis limit: the 99th percentile rounded to an integer, +1, +10%."""
+    return (np.round(np.nanquantile(rdr_mat, 0.99)).astype(int) + 1) * 1.1
+
+
 def plot_rdr_baf(
     pos_df: pd.DataFrame,
     rdr_mat: np.ndarray,
@@ -182,7 +153,6 @@ def plot_rdr_baf(
     s=4,
     dpi=72,
     alpha=0.7,
-    rdr_ylim=None,
     region_bed: str | None = None,
     blacklist_bed: str | None = None,
     pdf: PdfPages | None = None,
@@ -210,7 +180,6 @@ def plot_rdr_baf(
         genome_size: Path to chromosome sizes file.
         out_file: Output PDF path; used only when ``pdf`` is ``None``.
         feature_label: Feature named in the x-label (e.g. ``"bb"``).
-        rdr_ylim: Upper y-axis limit for the RDR row. No limit if ``None``.
         region_bed: Path to whitelist BED for background shading.
         blacklist_bed: Path to blacklist BED for background shading.
         pdf: External ``PdfPages``; pages are appended and the caller closes it.
@@ -222,6 +191,7 @@ def plot_rdr_baf(
         f"genome-wide {feature_label}-level depth+RDR+BAF plot "
         f"({n_tumors} tumors), out_file={out_file}"
     )
+    rdr_ylim = _rdr_ylim(rdr_mat)
     axis = _get_axis(genome_size, pos_df["#CHR"])
     region_df, blacklist_df = _load_shading(region_bed, blacklist_bed)
     s_plot = adaptive_dot_size(len(pos_df), s_base=s)
@@ -291,7 +261,7 @@ def plot_rdr_baf(
             colors=tumor_color,
             alphas=alphas,
             markersize=s_plot,
-            ylim=(0, rdr_ylim) if rdr_ylim is not None else None,
+            ylim=(0, rdr_ylim),
             ylabel=f"RDR ({rdr_norm_labels[si]})",
             plot_chrname=False,
             mb_ticks=True,
@@ -326,7 +296,6 @@ def plot_rdr_baf_2d(
     baf_mat,
     labels,
     out_file: str | None = None,
-    rdr_ylim: float = 3.0,
     dpi: int = 150,
     pdf: PdfPages | None = None,
 ):
@@ -339,11 +308,11 @@ def plot_rdr_baf_2d(
         rdr_mat, baf_mat: (n_bins, n_samples) RDR and BAF per bin per sample.
         labels: Sample labels, length n_samples.
         out_file: Output PDF path; used only when ``pdf`` is None.
-        rdr_ylim: Upper y-axis limit for RDR.
         dpi: Raster resolution.
         pdf: External PdfPages; pages are appended and the caller closes it.
     """
     logging.info(f"QC analysis - RDR-vs-BAF 2D scatter ({len(labels)} samples)")
+    rdr_ylim = _rdr_ylim(rdr_mat)
     _own_pdf = pdf is None
     pdf_pages = PdfPages(out_file) if _own_pdf else pdf
     for si, label in enumerate(labels):

@@ -203,10 +203,12 @@ logging.info(f"fixed bins: {len(bin_df)} windows from {window_bed}")
 
 tot_pb_cont = np.ascontiguousarray(tot_pb)
 # assigned once here; every MSR below reuses it
-snps["_orig_df_idx"] = np.arange(len(snps))
 snps_binned, off_idx = assign_pos_to_range(snps, bin_df, ref_id="bin_id", dropna=True)
 if len(off_idx):
     log_hist(tot_pb_cont[off_idx].sum(axis=1), "depth of SNPs outside every bin")
+keep_snps = np.ones(len(snps), dtype=bool)
+keep_snps[off_idx] = False
+tot_pb_cont = np.ascontiguousarray(tot_pb_cont[keep_snps])
 modal = snps_binned.groupby("bin_id")["PS"].agg(lambda x: x.mode().iloc[0])
 bin_df["PS"] = bin_df["bin_id"].map(modal).ffill().bfill().fillna(1)
 if gene_aware_binning:
@@ -234,22 +236,26 @@ for k in range(n_assays):
         k_cols.append("seg_id")
     bins_k = snps_k[k_cols].copy()
     bins_k["bin_id"] = np.arange(len(bins_k))
+    snps_k, off_k = assign_pos_to_range(snps_k, bins_k, ref_id="bin_id", dropna=True)
+    keep_k = np.ones(len(bins_k), dtype=bool)
+    keep_k[off_k] = False
+    if len(off_k):
+        log_hist(tot_pb_list[k][off_k].sum(axis=1), "depth of SNPs outside every bin")
     multi_snps, snps_multi = build_adaptive_bins(
         bins_k,
         snps_k,
-        np.ascontiguousarray(tot_pb_list[k]),
+        np.ascontiguousarray(tot_pb_list[k][keep_k]),
         0,
         nsnp_multi,
         cluster_cols=[c for c in ("region_id", "seg_id") if c in bins_k.columns],
         max_blocksize=0,
         gene_aware=False,
     )
-    snp_rows = snps_multi["_orig_df_idx"].to_numpy()
     multi_ids = snps_multi["bb_id"].to_numpy()
     n_multi = len(multi_snps)
-    tot_multi = sum_features_to_bbs(tot_mtx_snp_list[k][snp_rows], multi_ids, n_multi)
-    a_multi = sum_features_to_bbs(a_mtx_snp_list[k][snp_rows], multi_ids, n_multi)
-    b_multi = sum_features_to_bbs(b_mtx_snp_list[k][snp_rows], multi_ids, n_multi)
+    tot_multi = sum_features_to_bbs(tot_mtx_snp_list[k][keep_k], multi_ids, n_multi)
+    a_multi = sum_features_to_bbs(a_mtx_snp_list[k][keep_k], multi_ids, n_multi)
+    b_multi = sum_features_to_bbs(b_mtx_snp_list[k][keep_k], multi_ids, n_multi)
     if genetic_map is not None:
         dist_cms_multi = interp_cM_between_bbs(
             multi_snps, snps_multi, genetic_map, bb_id_col="bb_id"

@@ -29,11 +29,7 @@ from range_utils import assign_pos_to_range, merge_ranges_to_clusters
 from feature_utils import explode_feature_ids, merge_feature_ids
 from io_utils import read_snp_mats, read_window_bed, write_bb_file
 from matrix_utils import sum_features_to_bbs
-from combine_counts_utils import (
-    aggregate_bin_depth_to_bbs,
-    build_rdr_get_rdr_base_dataset_id,
-    compute_bb_rdr,
-)
+from combine_counts_utils import aggregate_bin_depth_to_bbs, compute_bb_rdr
 from phasing_utils import (
     detect_phase_flips,
     estimate_switchprobs_PS,
@@ -92,14 +88,31 @@ bin_df, dp_bin_dfs = read_window_bed(bin_df_files)
 snps, tot_mtx, a_mtx, b_mtx = read_snp_mats(
     snp_info, tot_mtx_snp, a_mtx_snp, b_mtx_snp, mat_dtype=np.int32
 )
+dp_corrected_list = [np.load(f)["mat"] for f in dp_corrected_files]
+genetic_map = pd.read_table(gmap_file, sep="\t") if gmap_file is not None else None
 
+##################################################
+# observation order, labels and RDR bases
 num_datasets = len(sample_df)
 dataset_assays = sample_df["assay_type"].to_numpy()
 dataset_ids = sample_df["REP_ID"].tolist()
 sample_types = sample_df["sample_type"].to_numpy()
 assay2dataset_indices = {at: np.flatnonzero(dataset_assays == at) for at in assay_types}
 tumor_dataset_indices = np.flatnonzero(sample_types == "tumor").tolist()
-get_rdr_base_dataset_id = build_rdr_get_rdr_base_dataset_id(sample_df)
+sample_labels = [
+    f"{dataset_ids[i]} {dataset_assays[i]} {sample_types[i][0].upper()}"
+    for i in range(num_datasets)
+]
+tumor_labels = [sample_labels[c] for c in tumor_dataset_indices]
+
+get_rdr_base_dataset_id = {}
+if "RDR_BASE_REP_ID" in sample_df.columns:
+    obs_of = {rid: i for i, rid in enumerate(dataset_ids)}
+    for i in tumor_dataset_indices:
+        base = sample_df["RDR_BASE_REP_ID"].iloc[i]
+        if pd.notna(base):
+            get_rdr_base_dataset_id[i] = obs_of[base]
+
 logging.info(
     f"combine_counts\n"
     f"sample_id={sample_id}\n"
@@ -111,27 +124,8 @@ logging.info(
 )
 
 ##################################################
-
-cluster_cols = ["region_id", "seg_id"]
-if "PS" in snps.columns:
-    assert snps["PS"].notna().all(), "SNP file, `PS` column has NaNs"
-    cluster_cols.append("PS")
-
-if phase_flip_test:
-    snps["phase_cluster"] = detect_phase_flips(
-        snps,
-        a_mtx[:, tumor_dataset_indices],
-        b_mtx[:, tumor_dataset_indices],
-        cluster_cols=cluster_cols,
-        epsilon=phase_flip_epsilon,
-        alpha=phase_flip_alpha,
-    )
-    cluster_cols.append("phase_cluster")
-
-##################################################
-# assign SNPs to windows
+# assign SNPs to fixed bins, then drop the misses from the matrices too
 tot_tumor = np.ascontiguousarray(tot_mtx[:, tumor_dataset_indices], dtype=np.float64)
-snps["_orig_df_idx"] = np.arange(len(snps))
 snps_binned, off_idx = assign_pos_to_range(snps, bin_df, ref_id="bin_id", dropna=True)
 if len(off_idx):
     log_hist(tot_tumor[off_idx].sum(axis=1), "depth of SNPs outside every bin")
@@ -139,10 +133,31 @@ log_hist(
     snps_binned.groupby("bin_id").size().reindex(range(len(bin_df)), fill_value=0),
     "SNPs per fixed bin",
 )
-modal = snps_binned.groupby("bin_id")["PS"].agg(lambda x: x.mode().iloc[0])
-bin_df["PS"] = bin_df["bin_id"].map(modal).ffill().bfill().fillna(1)
+keep_snps = np.ones(len(snps), dtype=bool)
+keep_snps[off_idx] = False
+tot_mtx, a_mtx, b_mtx = tot_mtx[keep_snps], a_mtx[keep_snps], b_mtx[keep_snps]
+tot_tumor = np.ascontiguousarray(tot_tumor[keep_snps])
+
+##################################################
+# fixed-bin cluster keys, stamped per bin as the modal value of the SNPs it holds
+cluster_cols = ["region_id", "seg_id"]
+
+if "PS" in snps.columns:
+    assert snps["PS"].notna().all(), "SNP file, `PS` column has NaNs"
+    cluster_cols.append("PS")
+    modal = snps_binned.groupby("bin_id")["PS"].agg(lambda x: x.mode().iloc[0])
+    bin_df["PS"] = bin_df["bin_id"].map(modal).ffill().bfill().fillna(1)
 
 if phase_flip_test:
+    snps_binned["phase_cluster"] = detect_phase_flips(
+        snps_binned,
+        a_mtx[:, tumor_dataset_indices],
+        b_mtx[:, tumor_dataset_indices],
+        cluster_cols=cluster_cols,
+        epsilon=phase_flip_epsilon,
+        alpha=phase_flip_alpha,
+    )
+    cluster_cols.append("phase_cluster")
     modal = snps_binned.groupby("bin_id")["phase_cluster"].agg(
         lambda x: x.mode().iloc[0]
     )
@@ -162,15 +177,8 @@ if gene_aware_binning:
         f"{bin_df['gene_cluster'].nunique()} clusters"
     )
 
-sample_labels = [
-    f"{dataset_ids[i]} {dataset_assays[i]} {sample_types[i][0].upper()}"
-    for i in range(num_datasets)
-]
-tumor_labels = [sample_labels[c] for c in tumor_dataset_indices]
-genetic_map = pd.read_table(gmap_file, sep="\t") if gmap_file is not None else None
-
-dp_corrected_list = [np.load(f)["mat"] for f in dp_corrected_files]
-
+##################################################
+# one adaptive binning per min_snp_reads, on the shared fixed bins
 for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zip(
     msr_list,
     out_bb_file,
@@ -197,10 +205,9 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     num_bbs = len(bbs)
 
     bb_ids = snps_bb["bb_id"].to_numpy()
-    snp_orig_df_idx = snps_bb["_orig_df_idx"].to_numpy()
-    a_mtx_bb = sum_features_to_bbs(a_mtx[snp_orig_df_idx], bb_ids, num_bbs)
-    b_mtx_bb = sum_features_to_bbs(b_mtx[snp_orig_df_idx], bb_ids, num_bbs)
-    tot_mtx_bb = sum_features_to_bbs(tot_mtx[snp_orig_df_idx], bb_ids, num_bbs)
+    a_mtx_bb = sum_features_to_bbs(a_mtx, bb_ids, num_bbs)
+    b_mtx_bb = sum_features_to_bbs(b_mtx, bb_ids, num_bbs)
+    tot_mtx_bb = sum_features_to_bbs(tot_mtx, bb_ids, num_bbs)
 
     baf_mtx_bb = np.divide(
         b_mtx_bb,
@@ -233,20 +240,6 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         dataset_ids,
     )
 
-    rdr_ylim = (np.round(np.nanquantile(bb_rdr, 0.99)).astype(int) + 1) * 1.1
-
-    if gene_aware_binning:
-        genic = explode_feature_ids(snps_bb, cols=["bb_id"])
-        bb_gene_count = (
-            genic.groupby("bb_id")["feature_id"]
-            .nunique()
-            .reindex(range(num_bbs))
-            .fillna(0)
-            .to_numpy()
-        )
-    else:
-        bb_gene_count = None
-
     depth_tumor = bb_dp[:, tumor_dataset_indices]
     depth_normal = np.full_like(depth_tumor, np.nan, dtype=float)
     rdr_titles, rdr_norm_labels = [], []
@@ -270,7 +263,6 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
             b_mtx_bb,
             tot_mtx_bb,
             pdf=pdf,
-            gene_count=bb_gene_count,
             sample_id=sample_id,
         )
         plot_rdr_baf(
@@ -284,7 +276,6 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
             genome_size,
             out_pdf,
             feature_label="bb",
-            rdr_ylim=rdr_ylim,
             region_bed=region_bed,
             blacklist_bed=blacklist_bed,
             pdf=pdf,
@@ -293,7 +284,6 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
             bb_rdr,
             baf_mtx_bb[:, tumor_dataset_indices],
             tumor_labels,
-            rdr_ylim=rdr_ylim,
             pdf=pdf,
         )
     logging.info(f"saved QC PDF to {out_pdf}")

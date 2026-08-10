@@ -128,53 +128,20 @@ def aggregate_bin_depth_to_bbs(
     return bb_dp, bb_bases
 
 
-def build_rdr_base_map(sample_df):
-    """Map each tumor observation to its RDR base (denominator) observation.
-
-    A tumor row's optional ``RDR_BASE_REP_ID`` names the ``REP_ID`` of the
-    sample used as its RDR baseline. Returns ``{tumor dataset index: base dataset
-    index}``; a tumor with an unset ``RDR_BASE_REP_ID`` is omitted (median-normalized
-    downstream).
-    """
-    dataset_ids = sample_df["REP_ID"].tolist()
-    sample_types = sample_df["sample_type"].tolist()
-    dataset_id_to_obs = {rid: i for i, rid in enumerate(dataset_ids)}
-
-    has_col = "RDR_BASE_REP_ID" in sample_df.columns
-    base_dataset_ids = (
-        sample_df["RDR_BASE_REP_ID"].tolist() if has_col else [None] * len(dataset_ids)
-    )
-
-    base_map = {}
-    for i in range(len(dataset_ids)):
-        if sample_types[i] != "tumor":
-            continue
-        base_dataset_id = base_dataset_ids[i]
-        if has_col and pd.notna(base_dataset_id) and str(base_dataset_id) != "":
-            assert base_dataset_id in dataset_id_to_obs, (
-                f"{dataset_ids[i]}: RDR_BASE_REP_ID {base_dataset_id!r} is not a REP_ID"
-            )
-            assert dataset_id_to_obs[base_dataset_id] != i, (
-                f"{dataset_ids[i]}: RDR_BASE_REP_ID {base_dataset_id!r} is itself"
-            )
-            base_map[i] = dataset_id_to_obs[base_dataset_id]
-    return base_map
-
-
 def compute_bb_rdr(
     assay2dataset_indices,
     dp_bin_dfs,
     dp_corrected_list,
     bb_dp,
     tumor_dataset_indices,
-    base_map,
+    get_rdr_base_dataset_id,
     rdr_outlier_quantile,
     dataset_ids,
 ):
     """Per-bb RDR for every tumor observation.
 
-    Each tumor with an RDR base observation (from ``base_map``) is normalized by that
-    base, library-size corrected; a tumor without a base is median-centered. The base
+    Each tumor with an RDR base observation (``{tumor index: base index}``) is normalized
+    by that base, library-size corrected; a tumor without a base is median-centered. The base
     may be any observation (e.g. a different assay/platform), so library sizes are
     computed globally per observation. Entries above the ``1 - rdr_outlier_quantile``
     quantile are set to NaN. Returns a ``(num_bbs, len(tumor_dataset_indices))`` array
@@ -194,7 +161,7 @@ def compute_bb_rdr(
         obs_total_bases[dataset_indices] = np.nansum(dp_a * bin_sizes[:, None], axis=0)
 
     for o in tumor_dataset_indices:
-        m = base_map.get(o)
+        m = get_rdr_base_dataset_id.get(o)
         if m is not None:
             lib = obs_total_bases[m] / obs_total_bases[o]
             logging.info(

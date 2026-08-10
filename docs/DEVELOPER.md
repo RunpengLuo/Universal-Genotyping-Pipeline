@@ -90,7 +90,7 @@ Three suffixes, three meanings:
 | Suffix | Meaning | Examples |
 |---|---|---|
 | `_id` | a unit's identifier | `region_id`, `seg_id`, `bin_id`, `bb_id`, `snp_id`, `feature_id`, `cluster_ids` |
-| `_df_idx` | a row index into a DataFrame, and into any matrix aligned to it | `_orig_df_idx`, `RAW_SNP_DF_IDX` |
+| `_df_idx` | a row index into a DataFrame, and into any matrix aligned to it | `RAW_SNP_DF_IDX`, `_df_idx` |
 | `_idx` | a positional index local to one function, into neither | `hit_idx`, `ideal_idx`, `gc_bin_idx` |
 
 An id survives a reindex; a `_df_idx` does not. Anything crossing a function or column

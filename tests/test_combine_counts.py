@@ -54,9 +54,7 @@ def feat():
 
 
 def _bin_snps(snps, bins):
-    """Stamp _orig_df_idx, assign to fixed bins, drop the misses (ex assign_snps_to_bins)."""
-    snps = snps.copy()
-    snps["_orig_df_idx"] = np.arange(len(snps))
+    """Assign SNPs to fixed bins, dropping the ones that land in none."""
     binned, _ = ru.assign_pos_to_range(snps, bins, ref_id="bin_id", dropna=True)
     return binned
 
