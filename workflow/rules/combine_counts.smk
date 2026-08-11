@@ -15,11 +15,11 @@ if workflow_mode == "bulk_genotyping":
             window_df=[
                 config["pileup_dir"] + f"/{at}/window.tsv.gz" for at in assay_types
             ],
-            snp_info=config["allele_dir"] + "/bulk/snps.tsv.gz",
-            tot_mtx_snp=config["allele_dir"] + "/bulk/snp.Tallele.npz",
-            a_mtx_snp=config["allele_dir"] + "/bulk/snp.Aallele.npz",
-            b_mtx_snp=config["allele_dir"] + "/bulk/snp.Ballele.npz",
-            sample_file=config["allele_dir"] + "/bulk/sample_ids.tsv",
+            snp_info=config["allele_dir"] + "/snps.tsv.gz",
+            tot_mtx_snp=config["allele_dir"] + "/snp.Tallele.npz",
+            a_mtx_snp=config["allele_dir"] + "/snp.Aallele.npz",
+            b_mtx_snp=config["allele_dir"] + "/snp.Ballele.npz",
+            sample_file=config["allele_dir"] + "/sample_ids.tsv",
             gmap_file=lambda wc: (
                 config["phase_dir"] + "/genetic_map.tsv.gz"
                 if require_genetic_map
@@ -94,26 +94,12 @@ elif workflow_mode == "single_cell_genotyping":
 
     rule combine_counts_nonbulk:
         input:
-            snp_info=[config["allele_dir"] + f"/{at}/snps.tsv.gz" for at in assay_types],
-            tot_mtx_snp=[
-                config["allele_dir"] + f"/{at}/snp.Tallele.npz" for at in assay_types
-            ],
-            a_mtx_snp=[
-                config["allele_dir"] + f"/{at}/snp.Aallele.npz" for at in assay_types
-            ],
-            b_mtx_snp=[
-                config["allele_dir"] + f"/{at}/snp.Ballele.npz" for at in assay_types
-            ],
-            sample_file=[
-                config["allele_dir"] + f"/{at}/sample_ids.tsv" for at in assay_types
-            ],
-            all_barcodes=[
-                config["allele_dir"] + f"/{at}/barcodes.tsv.gz" for at in assay_types
-            ],
-            barcodes_full=[
-                config["allele_dir"] + f"/{at}/barcodes.full.tsv.gz"
-                for at in assay_types
-            ],
+            snp_info=config["allele_dir"] + "/snps.tsv.gz",
+            tot_mtx_snp=config["allele_dir"] + "/snp.Tallele.npz",
+            a_mtx_snp=config["allele_dir"] + "/snp.Aallele.npz",
+            b_mtx_snp=config["allele_dir"] + "/snp.Ballele.npz",
+            sample_file=config["allele_dir"] + "/sample_ids.tsv",
+            all_barcodes=config["allele_dir"] + "/barcodes.tsv.gz",
             frag_files=file_input(
                 [
                     get_data[("scATAC", rid)]["fragments"]
@@ -183,11 +169,6 @@ elif workflow_mode == "single_cell_genotyping":
                 for at in assay_types
                 for msr in msr_list
             ],
-            barcodes_full=[
-                config["bb_dir"] + f"/MSR{msr}/{at}/barcodes.full.tsv.gz"
-                for at in assay_types
-                for msr in msr_list
-            ],
             x_count=[
                 config["bb_dir"] + f"/MSR{msr}/{at}/bb.Xcount.npz"
                 for at in assay_types
@@ -231,17 +212,12 @@ elif workflow_mode == "copytyping_preprocess":
 
     rule combine_counts_fixed_bins:
         input:
-            snp_info=lambda wc: config["allele_dir"] + f"/{wc.assay_type}/snps.tsv.gz",
-            tot_mtx_snp=lambda wc: config["allele_dir"]
-            + f"/{wc.assay_type}/snp.Tallele.npz",
-            a_mtx_snp=lambda wc: config["allele_dir"]
-            + f"/{wc.assay_type}/snp.Aallele.npz",
-            b_mtx_snp=lambda wc: config["allele_dir"]
-            + f"/{wc.assay_type}/snp.Ballele.npz",
-            sample_file=lambda wc: config["allele_dir"]
-            + f"/{wc.assay_type}/sample_ids.tsv",
-            all_barcodes=config["allele_dir"] + "/{assay_type}/barcodes.tsv.gz",
-            barcodes_full=config["allele_dir"] + "/{assay_type}/barcodes.full.tsv.gz",
+            snp_info=config["allele_dir"] + "/snps.tsv.gz",
+            tot_mtx_snp=config["allele_dir"] + "/snp.Tallele.npz",
+            a_mtx_snp=config["allele_dir"] + "/snp.Aallele.npz",
+            b_mtx_snp=config["allele_dir"] + "/snp.Ballele.npz",
+            sample_file=config["allele_dir"] + "/sample_ids.tsv",
+            all_barcodes=config["allele_dir"] + "/barcodes.tsv.gz",
             h5ad_file=lambda wc: (
                 config["bb_dir"] + f"/{wc.assay_type}.h5ad"
                 if ASSAY_TYPE2MODALITY[wc.assay_type] == "RNA"
@@ -264,7 +240,6 @@ elif workflow_mode == "copytyping_preprocess":
             a_mtx_bb=config["bb_dir"] + "/{assay_type}/bb.Aallele.npz",
             b_mtx_bb=config["bb_dir"] + "/{assay_type}/bb.Ballele.npz",
             barcodes_out=config["bb_dir"] + "/{assay_type}/barcodes.tsv.gz",
-            barcodes_full_out=config["bb_dir"] + "/{assay_type}/barcodes.full.tsv.gz",
             sample_file=config["bb_dir"] + "/{assay_type}/sample_ids.tsv",
             qc_pdf=report(
                 config["qc_dir"] + "/combine_counts_fixed_bins.{assay_type}.pdf",

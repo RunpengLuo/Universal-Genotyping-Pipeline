@@ -7,8 +7,8 @@ replicate, ordered assay-by-assay) instead of per-assay matrices that combine_co
 would have to re-union.
 
 Parent het SNPs are kept when they are: in a region, not blacklisted, het-balanced in
-EVERY normal pileup, and >= min_depth in EVERY sample. Outputs (under one per-stream
-allele_dir/{bulkWGS,bulkWES}/ subdir) feed combine_counts directly.
+EVERY normal pileup, and >= min_depth in EVERY sample. Outputs land flat in
+``allele_dir/`` and feed combine_counts directly.
 """
 
 import logging
@@ -149,15 +149,12 @@ a_mtx = a_mtx[snp_mask, :]
 b_mtx = b_mtx[snp_mask, :]
 
 ##################################################
-sample_labels = [
-    f"{dataset_ids[k]} {dataset_assays[k]} {sample_types[k][0].upper()}"
-    for k in range(n_samples)
-]
-
 with PdfPages(out_qc_pdf) as pdf:
     plot_snp_depth(
         tot_mtx,
-        sample_labels,
+        dataset_ids,
+        dataset_assays,
+        sample_types,
         qc_dir,
         f"bulk.{run_id}",
         ref_mtx=ref_mtx,
@@ -170,7 +167,9 @@ with PdfPages(out_qc_pdf) as pdf:
     )
     plot_allele_freqs(
         snps,
-        sample_labels,
+        dataset_ids,
+        dataset_assays,
+        sample_types,
         tot_mtx,
         ref_mtx,
         genome_size,
@@ -187,7 +186,9 @@ with PdfPages(out_qc_pdf) as pdf:
     )
     plot_allele_freqs(
         snps,
-        sample_labels,
+        dataset_ids,
+        dataset_assays,
+        sample_types,
         tot_mtx,
         b_mtx,
         genome_size,

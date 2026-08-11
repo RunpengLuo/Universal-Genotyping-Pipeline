@@ -1,8 +1,16 @@
-"""Adaptive binning: merge fixed bins into bbs, and the SNP filtering around it.
+"""Fixed bins, clustered sums, and the adaptive merge of bins into bbs.
 
-A fixed bin is one row of the window BED (a ``window_size`` tile); a bb is the merged
-bin that binning emits. ``build_adaptive_bins`` walks consecutive fixed bins inside one
-``seg_id`` and closes a bb once every tumor observation meets its read target.
+Three groups, in pipeline order:
+
+1. fixed bins    - ``build_fixedwidth_bins`` tiles each segment into ``window_size``
+   pieces; one row of the result is a fixed bin, and no bin spans two segments.
+2. clustered sums - ``cluster_sum`` and its two wrappers. Every matrix is
+   ``(n_features, n_observations)``: binning sums FEATURES (SNPs/bins -> bbs),
+   pseudobulking sums OBSERVATIONS (cells -> datasets); both are one sparse one-hot
+   multiply.
+3. adaptive binning - ``build_adaptive_bins`` walks consecutive fixed bins inside one
+   ``seg_id`` and closes a bb once every tumor observation meets its read target. It
+   sums the SNP depth per bin through group 2.
 
 The config keys ``min_snp_reads`` / ``min_snp_per_bin`` / ``max_blocksize`` speak of
 "bin" in the bb sense; they keep their published names.
@@ -16,9 +24,11 @@ import numpy as np
 import pandas as pd
 import numba
 
-from scipy.sparse import issparse
+from scipy.sparse import csr_matrix, issparse
 
-from matrix_utils import cluster_sum
+
+##################################################
+# 1. fixed bins: tile the segments
 
 
 def build_fixedwidth_bins(segments, bin_size, chroms=None):
@@ -67,6 +77,65 @@ def build_fixedwidth_bins(segments, bin_size, chroms=None):
         if col not in ("#CHR", "START", "END"):
             out[col] = segments[col].to_numpy()[seg_idx]
     return pd.DataFrame(out)
+
+
+##################################################
+# 2. clustered sums over a count matrix, on either axis
+
+
+def cluster_sum(X, cluster_ids, n_clusters, axis=0):
+    """Sum the features (``axis=0``) or observations (``axis=1``) of *X* within each cluster.
+
+    Args:
+        X: ``(n_features, n_observations)`` dense or sparse matrix.
+        cluster_ids: Cluster id per feature (``axis=0``) or per observation
+            (``axis=1``), in ``[0, n_clusters)``.
+        n_clusters: Number of clusters, i.e. the size of the collapsed axis in the output.
+        axis: Axis to collapse.
+
+    Returns:
+        ``(n_clusters, n_observations)`` for ``axis=0``, ``(n_features, n_clusters)``
+        for ``axis=1``; sparse when *X* is sparse.
+
+    Raises:
+        ValueError: *cluster_ids* has the wrong length or holds an id outside the range.
+    """
+    X = X.tocsr() if issparse(X) else np.asarray(X)
+    cluster_ids = np.asarray(cluster_ids, dtype=np.int64)
+    n = X.shape[axis]
+    if cluster_ids.shape[0] != n:
+        raise ValueError(
+            f"cluster_ids length {cluster_ids.shape[0]} != axis-{axis} size {n}"
+        )
+    if n and (cluster_ids.min() < 0 or cluster_ids.max() >= n_clusters):
+        raise ValueError("cluster_ids out of range")
+
+    onehot = csr_matrix(
+        (np.ones(n, dtype=np.int8), (cluster_ids, np.arange(n, dtype=np.int64))),
+        shape=(n_clusters, n),
+    )
+    return onehot @ X if axis == 0 else X @ onehot.T
+
+
+def sum_features_to_bbs(X, bb_ids, n_bbs):
+    """Sum an SNP- or bin-level matrix into ``(n_bbs, n_observations)``."""
+    return cluster_sum(X, bb_ids, n_bbs, axis=0)
+
+
+def sum_observations_to_pseudobulk(mat, cluster_ids, n_clusters):
+    """Sum observations into ``(n_features, n_clusters)`` pseudobulks, always dense."""
+    out = cluster_sum(mat, cluster_ids, n_clusters, axis=1)
+    return out.toarray() if issparse(out) else np.asarray(out)
+
+
+def dense_observation(mat, i: int):
+    """Observation *i* of a dense or sparse matrix, as a 1-D array over features."""
+    obs = mat[:, i]
+    return obs.toarray().ravel() if issparse(obs) else np.asarray(obs).ravel()
+
+
+##################################################
+# 3. adaptive binning: merge consecutive fixed bins into bbs
 
 
 @numba.njit
@@ -186,6 +255,10 @@ def build_adaptive_bins(
 ):
     """Merge consecutive fixed bins into bbs until the SNP thresholds are met.
 
+    Both *bins* and *snps* gain a ``bb_id`` column IN PLACE, overwritten in full on
+    every call, so a caller sweeping several ``min_snp_reads`` reuses the same two
+    frames and needs no defensive copy.
+
     Parameters
     ----------
     bins : pd.DataFrame
@@ -213,7 +286,7 @@ def build_adaptive_bins(
         bb definitions with ``#CHR``, ``START``, ``END``, ``#SNPS``, ``BLOCKSIZE``,
         ``bb_id``, and the clustering columns.
     snps : pd.DataFrame
-        Input SNPs with a ``bb_id`` column added; rows and order are unchanged.
+        The *snps* argument itself, now carrying ``bb_id``; rows and order unchanged.
     """
     assert "bin_id" in snps.columns, (
         "snps, no bin_id column; assign the fixed bins first"

@@ -29,6 +29,30 @@ _VAL_TYPE_FULL = {
 }
 
 
+def _observation_labels(dataset_ids, assay_types, sample_types):
+    """One display label per observation: ``"{dataset_id} {assay_type} {T|N}"``.
+
+    The single place this string is built. Plot functions take the three identifying
+    columns and compose it here, so no caller assembles display text.
+
+    Args:
+        dataset_ids: Dataset id per observation.
+        assay_types: Assay type per observation; pass ``[assay_type] * n`` for a
+            single-assay frame.
+        sample_types: ``tumor``/``normal`` per observation; only its first letter is
+            shown, uppercased.
+
+    Returns:
+        List of labels, one per observation, in the given order.
+    """
+    return [
+        f"{dataset_id} {assay_type} {str(sample_type)[0].upper()}"
+        for dataset_id, assay_type, sample_type in zip(
+            dataset_ids, assay_types, sample_types
+        )
+    ]
+
+
 def _val_full(val_type):
     """Full title name for a value-type abbreviation (falls back to the input)."""
     return _VAL_TYPE_FULL.get(val_type, val_type)

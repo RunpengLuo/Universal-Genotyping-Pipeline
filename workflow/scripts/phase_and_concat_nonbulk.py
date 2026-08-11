@@ -1,9 +1,20 @@
-"""Phase-and-concat allele counts for a single non-bulk assay (per assay_type).
+"""Joint phase-and-concat for ALL non-bulk assays on one shared SNP set.
 
-Merges the assay's replicate pileups onto the shared parent SNP set, phases ref/alt
-into A/B, filters SNPs (region, blacklist, RNA gene overlap / ATAC none), and writes
-sparse (SNPs x cells) matrices plus per-cell barcode bookkeeping. Joint binning across
-the sample's assays happens downstream in combine_counts_nonbulk.
+Every non-bulk replicate (across every non-bulk assay) is piled up against the same phased
+het-SNP VCF, so ``map_allele_mat_to_snps`` aligns them all to ONE shared parent SNP set.
+The SNP filters are therefore applied once, to that shared set, and every assay's matrices
+carry the same rows -- combine_counts_nonbulk reads them directly instead of re-unioning.
+
+Parent het SNPs are kept when they are: in a region, not blacklisted, and (when
+``exon_only``) exonic. An RNA assay's own coverage filter cannot drop a shared row, so it
+ZEROES instead: SNPs outside that assay's h5ad feature set keep their row and lose their
+counts, which is what the downstream union produced before.
+
+Everything is written once, flat in ``allele_dir/``: ``snps.tsv.gz`` (the rows),
+``snp.{T,A,B}allele.npz`` (one matrix over every assay's cells), ``barcodes.tsv.gz`` (the
+column axis, ``{raw}_{dataset_id}_{assay_type}`` per column) and ``sample_ids.tsv`` (a
+roster, one row per ``(dataset_id, assay_type)`` -- NOT column-aligned). Only the QC PDFs
+stay per assay, since their cells differ. Joint binning happens downstream in combine_counts_nonbulk.
 """
 
 import logging
@@ -19,7 +30,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 from scipy.io import mmread
-from scipy.sparse import save_npz
+from scipy.sparse import hstack, save_npz
 
 from const import ASSAY_TYPE2MODALITY
 from io_utils import read_BED, read_VCF, write_sample_ids, write_snp_info
@@ -40,84 +51,113 @@ from feature_utils import annotate_feature_type
 
 
 ##################################################
-logging.info("phase and concat allele-level count matrices")
 
-# inputs
-vcf_files = snakemake_handle.input["vcfs"]
-sample_tsvs = snakemake_handle.input["sample_tsvs"]
-tot_mtx_files = snakemake_handle.input["tot_mtxs"]
-ad_mtx_files = snakemake_handle.input["ad_mtxs"]
+# inputs, one entry per (assay, replicate) except h5ads (one per RNA assay)
+vcf_files = list(snakemake_handle.input["vcfs"])
+sample_tsvs = list(snakemake_handle.input["sample_tsvs"])
+tot_mtx_files = list(snakemake_handle.input["tot_mtxs"])
+ad_mtx_files = list(snakemake_handle.input["ad_mtxs"])
+h5ad_files = list(snakemake_handle.input["h5ad_files"])
 snp_vcf = snakemake_handle.input["snp_vcf"]
 region_bed = snakemake_handle.input["region_bed"]
 genome_size = snakemake_handle.input["genome_size"]
 gtf_file = maybe_path(snakemake_handle.input["gtf_file"])
 blacklist_bed = maybe_path(snakemake_handle.input["blacklist_bed"])
-h5ad_file = snakemake_handle.input["h5ad_file"]
 
 # parameters
 qc_dir = snakemake_handle.params["qc_dir"]
 sample_id = snakemake_handle.params["sample_id"]
-assay_type = snakemake_handle.params["assay_type"]
-dataset_ids = snakemake_handle.params["dataset_ids"]
-sample_types = snakemake_handle.params["sample_types"]
+assay_types = list(snakemake_handle.params["assay_types"])
+dataset_assays = list(snakemake_handle.params["dataset_assays"])
+dataset_ids = list(snakemake_handle.params["dataset_ids"])
+sample_types = list(snakemake_handle.params["sample_types"])
 exon_only = snakemake_handle.params["exon_only"]
 run_id = snakemake_handle.params["run_id"]
 
-# outputs
+# outputs; only the QC PDFs are per assay
 out_snp_info = snakemake_handle.output["snp_info"]
 out_tot_mtx_snp = snakemake_handle.output["tot_mtx_snp"]
 out_a_mtx_snp = snakemake_handle.output["a_mtx_snp"]
 out_b_mtx_snp = snakemake_handle.output["b_mtx_snp"]
-out_unique_snp_ids = snakemake_handle.output["unique_snp_ids"]
 out_all_barcodes = snakemake_handle.output["all_barcodes"]
-out_barcodes_full = snakemake_handle.output["barcodes_full"]
 out_sample_file = snakemake_handle.output["sample_file"]
-out_qc_pdf = snakemake_handle.output["qc_pdf"]
+out_qc_pdf = list(snakemake_handle.output["qc_pdf"])
 
-is_rna_assay = ASSAY_TYPE2MODALITY[assay_type] == "RNA"
+n_assays = len(assay_types)
+rna_assay_types = [at for at in assay_types if ASSAY_TYPE2MODALITY[at] == "RNA"]
+assert len(h5ad_files) == len(rna_assay_types), (
+    f"h5ad_files, {len(h5ad_files)} files for {len(rna_assay_types)} RNA assays"
+)
+h5ad_by_assay = dict(zip(rna_assay_types, h5ad_files))
+assay2dataset_indices = {
+    at: [i for i, a in enumerate(dataset_assays) if a == at] for at in assay_types
+}
+empty = [at for at, ind in assay2dataset_indices.items() if not ind]
+assert not empty, f"no replicate for assay(s) {empty}"
 
-##################################################
 logging.info(
-    f"sample_id={sample_id}, assay_type={assay_type}, dataset_ids={dataset_ids}"
+    f"phase_and_concat_nonbulk\n"
+    f"sample_id={sample_id}\n"
+    f"assay_types={assay_types}\n"
+    f"#datasets={len(dataset_ids)}\n"
+    f"#datasets(per assay)={[len(assay2dataset_indices[at]) for at in assay_types]}"
 )
 
+##################################################
+# 1. every replicate of every assay onto the shared parent SNP set
 snps = read_VCF(snp_vcf, addkey=True, add_phase1=True, add_pos0=True)
 parent_keys = pd.Index(snps["KEY"])
 assert not parent_keys.duplicated().any(), "SNP VCF, duplicate keys (not bi-allelic)"
 
-barcodes_list = []
-tot_mtx_list = []
-ad_mtx_list = []
+barcodes_list = [None] * len(dataset_ids)
+tot_by_dataset = [None] * len(dataset_ids)
+ad_by_dataset = [None] * len(dataset_ids)
 for idx, dataset_id in enumerate(dataset_ids):
     barcodes = pd.read_table(sample_tsvs[idx], sep="\t", header=None, names=["BARCODE"])
-    barcodes["BARCODE"] = barcodes["BARCODE"].astype(str) + f"_{dataset_id}"
-    barcodes_list.append(barcodes)
+    barcodes["BARCODE"] = barcodes["BARCODE"].astype(str)
+    # readers split on the FIRST "_" to recover the raw barcode, so it must hold none
+    assert not barcodes["BARCODE"].str.contains("_").any(), (
+        f"{dataset_id}: barcodes must not contain '_'"
+    )
+    barcodes["BARCODE"] += f"_{dataset_id}_{dataset_assays[idx]}"
+    barcodes_list[idx] = barcodes
     # cellsnp-lite emits one VCF + two MatrixMarket files per replicate
-    tot_canon, ad_canon = map_allele_mat_to_snps(
+    tot_by_dataset[idx], ad_by_dataset[idx] = map_allele_mat_to_snps(
         parent_keys,
         read_VCF(vcf_files[idx], addkey=True),
         mmread(tot_mtx_files[idx]).tocsr(),
         mmread(ad_mtx_files[idx]).tocsr(),
         len(barcodes),
     )
-    tot_mtx_list.append(tot_canon)
-    ad_mtx_list.append(ad_canon)
 
-all_barcodes = pd.concat(barcodes_list, axis=0, ignore_index=True)
-cell_dataset_ids = np.repeat(
-    np.arange(len(dataset_ids), dtype=np.int64),
-    [len(b) for b in barcodes_list],
-)
-barcodes_full = pd.DataFrame(
-    {
-        "REP_ID": np.array(dataset_ids, dtype=str)[cell_dataset_ids],
-        "BARCODE": all_barcodes["BARCODE"].to_numpy(),
-    }
-)
-tot_mtx, ref_mtx, alt_mtx = hstack_replicate_mats(tot_mtx_list, ad_mtx_list)
-a_mtx, b_mtx = apply_phase_to_mat(tot_mtx, ref_mtx, alt_mtx, snps["PHASE"].to_numpy())
+tot_list, ref_list, alt_list = [], [], []
+barcodes_by_assay, cell_dataset_ids_list = [], []
+dataset_ids_by_assay, sample_types_by_assay = [], []
+for at in assay_types:
+    dataset_indices = assay2dataset_indices[at]
+    tot_a, ref_a, alt_a = hstack_replicate_mats(
+        [tot_by_dataset[i] for i in dataset_indices],
+        [ad_by_dataset[i] for i in dataset_indices],
+    )
+    tot_list.append(tot_a)
+    ref_list.append(ref_a)
+    alt_list.append(alt_a)
+
+    all_barcodes = pd.concat(
+        [barcodes_list[i] for i in dataset_indices], ignore_index=True
+    )
+    cell_dataset_ids = np.repeat(
+        np.arange(len(dataset_indices), dtype=np.int64),
+        [len(barcodes_list[i]) for i in dataset_indices],
+    )
+    barcodes_by_assay.append(all_barcodes)
+    cell_dataset_ids_list.append(cell_dataset_ids)
+    dataset_ids_by_assay.append([dataset_ids[i] for i in dataset_indices])
+    sample_types_by_assay.append([sample_types[i] for i in dataset_indices])
+logging.info(f"#cells(per assay)={[m.shape[1] for m in tot_list]}")
 
 ##################################################
+# 2. SNP filters, applied once to the shared set
 num_snps_before = len(snps)
 regions = read_BED(region_bed)
 
@@ -130,98 +170,116 @@ masks = [
 ]
 if exon_only:
     masks.append(get_mask_by_exon(snps))
-if is_rna_assay:
-    # coverage filter only: RNA reads cover expressed genes, so drop SNPs outside
-    # the h5ad feature set (feature_id itself stays GTF-derived from above)
-    adata: sc.AnnData = sc.read_h5ad(h5ad_file)
-    cov_mask = overlaps_any_range(snps, adata.var)
+
+# RNA coverage is per assay: RNA reads cover expressed genes, so an RNA assay ignores
+# SNPs outside its h5ad feature set. On a shared grid that cannot drop a row for one
+# assay, so it zeroes below; only a SNP no assay covers is dropped, which keeps the
+# shared set equal to the union of the per-assay sets.
+cov_masks = []
+for at in assay_types:
+    if at not in h5ad_by_assay:
+        cov_masks.append(np.ones(len(snps), dtype=bool))
+        continue
+    adata: sc.AnnData = sc.read_h5ad(h5ad_by_assay[at])
+    cov = overlaps_any_range(snps, adata.var)
     logging.info(
-        f"{assay_type} feature overlap: {np.sum(cov_mask)}/{len(snps)} "
-        f"({np.sum(cov_mask) / len(snps):.3%})"
+        f"{at} feature overlap: {np.sum(cov)}/{len(snps)} "
+        f"({np.sum(cov) / len(snps):.3%}); the rest zeroed"
     )
-    masks.append(cov_mask)
+    cov_masks.append(cov)
+masks.append(np.logical_or.reduce(cov_masks))
 
 snps, snp_mask = apply_masks_to_df(snps, *masks)
 snps = interp_pos_ranges(snps, regions, colname="region_id")
-
 logging.info(f"#SNPs={np.sum(snp_mask)}/{num_snps_before} after filtering")
 
-tot_mtx = tot_mtx[snp_mask, :]
-ref_mtx = ref_mtx[snp_mask, :]
-a_mtx = a_mtx[snp_mask, :]
-b_mtx = b_mtx[snp_mask, :]
+tot_list = [m[snp_mask, :] for m in tot_list]
+ref_list = [m[snp_mask, :] for m in ref_list]
+alt_list = [m[snp_mask, :] for m in alt_list]
 
-sample_labels = [
-    f"{dataset_id} {assay_type} {sample_type[0].upper()}"
-    for dataset_id, sample_type in zip(dataset_ids, sample_types)
-]
 
-with PdfPages(out_qc_pdf) as pdf:
-    plot_snp_depth(
-        tot_mtx,
-        sample_labels,
-        qc_dir,
-        f"{assay_type}.{run_id}",
-        ref_mtx=ref_mtx,
-        b_mtx=b_mtx,
-        is_bulk=False,
-        cell_dataset_ids=cell_dataset_ids,
-        name_prefix="phase_and_concat",
-        pdf=pdf,
-        sample_id=sample_id,
-    )
-    plot_allele_freqs(
-        snps,
-        sample_labels,
-        tot_mtx,
-        ref_mtx,
-        genome_size,
-        qc_dir,
-        apply_pseudobulk=True,
-        allele="ref",
-        feature_label="SNP",
-        suffix=".unphased",
-        region_bed=region_bed,
-        blacklist_bed=blacklist_bed,
-        run_id=run_id,
-        sample_id=sample_id,
-        pdf=pdf,
-        cell_dataset_ids=cell_dataset_ids,
-    )
-    plot_allele_freqs(
-        snps,
-        sample_labels,
-        tot_mtx,
-        b_mtx,
-        genome_size,
-        qc_dir,
-        apply_pseudobulk=True,
-        allele="B",
-        feature_label="SNP",
-        suffix=".phased",
-        region_bed=region_bed,
-        blacklist_bed=blacklist_bed,
-        run_id=run_id,
-        sample_id=sample_id,
-        pdf=pdf,
-        cell_dataset_ids=cell_dataset_ids,
-    )
+def zero_uncovered(mat, cov):
+    """Zero the rows of a sparse matrix where *cov* is False, keeping its dtype."""
+    return mat.multiply(cov[:, None]).tocsr().astype(mat.dtype)
+
+
+for k, cov in enumerate(c[snp_mask] for c in cov_masks):
+    if cov.all():
+        continue
+    tot_list[k] = zero_uncovered(tot_list[k], cov)
+    ref_list[k] = zero_uncovered(ref_list[k], cov)
+    alt_list[k] = zero_uncovered(alt_list[k], cov)
+
+phases = snps["PHASE"].to_numpy()
+a_list, b_list = [], []
+for tot_a, ref_a, alt_a in zip(tot_list, ref_list, alt_list):
+    a_a, b_a = apply_phase_to_mat(tot_a, ref_a, alt_a, phases)
+    a_list.append(a_a)
+    b_list.append(b_a)
 
 ##################################################
+# 3. QC, one page-set per assay: the cells differ, so the plots cannot merge
+for k, assay_type in enumerate(assay_types):
+    at_dataset_ids = dataset_ids_by_assay[k]
+    at_sample_types = sample_types_by_assay[k]
+    at_assay_types = [assay_type] * len(at_dataset_ids)
+    cell_dataset_ids = cell_dataset_ids_list[k]
+
+    with PdfPages(out_qc_pdf[k]) as pdf:
+        plot_snp_depth(
+            tot_list[k],
+            at_dataset_ids,
+            at_assay_types,
+            at_sample_types,
+            qc_dir,
+            f"{assay_type}.{run_id}",
+            ref_mtx=ref_list[k],
+            b_mtx=b_list[k],
+            is_bulk=False,
+            cell_dataset_ids=cell_dataset_ids,
+            name_prefix="phase_and_concat",
+            pdf=pdf,
+            sample_id=sample_id,
+        )
+        for allele, mat, suffix in (
+            ("ref", ref_list[k], ".unphased"),
+            ("B", b_list[k], ".phased"),
+        ):
+            plot_allele_freqs(
+                snps,
+                at_dataset_ids,
+                at_assay_types,
+                at_sample_types,
+                tot_list[k],
+                mat,
+                genome_size,
+                qc_dir,
+                apply_pseudobulk=True,
+                allele=allele,
+                feature_label="SNP",
+                suffix=suffix,
+                region_bed=region_bed,
+                blacklist_bed=blacklist_bed,
+                run_id=run_id,
+                sample_id=sample_id,
+                pdf=pdf,
+                cell_dataset_ids=cell_dataset_ids,
+            )
+
+##################################################
+# 4. one matrix over every assay's cells; barcodes.tsv.gz is that column axis, while
+# sample_ids.tsv is the (dataset_id, assay_type) roster and is NOT column-aligned
 logging.info("saving output files")
 write_snp_info(snps, out_snp_info)
-save_npz(out_tot_mtx_snp, tot_mtx)
-save_npz(out_a_mtx_snp, a_mtx)
-save_npz(out_b_mtx_snp, b_mtx)
-snp_ids = snps["#CHR"].astype(str) + "_" + snps["POS"].astype(str)
-np.save(out_unique_snp_ids, snp_ids.to_numpy())
+
+all_barcodes = pd.concat(barcodes_by_assay, ignore_index=True)
+save_npz(out_tot_mtx_snp, hstack(tot_list, format="csr"))
+save_npz(out_a_mtx_snp, hstack(a_list, format="csr"))
+save_npz(out_b_mtx_snp, hstack(b_list, format="csr"))
 all_barcodes.to_csv(out_all_barcodes, sep="\t", header=False, index=False)
-barcodes_full.to_csv(out_barcodes_full, sep="\t", header=True, index=False)
-write_sample_ids(
-    sample_id,
-    dataset_ids,
-    sample_types,
-    [assay_type] * len(dataset_ids),
-    out_sample_file,
+write_sample_ids(sample_id, dataset_ids, sample_types, dataset_assays, out_sample_file)
+logging.info(
+    f"union matrix: {len(snps)} SNPs x {len(all_barcodes)} cells over "
+    f"{len(dataset_ids)} (dataset x assay) observations"
 )
-logging.info("finished.")
+logging.info("finished joint non-bulk phase_and_concat.")

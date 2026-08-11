@@ -15,10 +15,10 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import seaborn as sns
 
-from matrix_utils import dense_observation, sum_observations_to_pseudobulk
+from segmentation_utils import dense_observation, sum_observations_to_pseudobulk
 
 from plot_genome import plot_1d_sample, plot_1d_multi_sample
-from plot_utils import _suptitle
+from plot_utils import _observation_labels, _suptitle
 
 
 def _af(num, den):
@@ -52,6 +52,8 @@ def compute_af_pseudobulk(tot_mtx, b_mtx):
 def plot_snp_depth(
     tot_mtx,
     dataset_ids,
+    assay_types,
+    sample_types,
     qc_dir,
     run_id,
     ref_mtx=None,
@@ -81,8 +83,9 @@ def plot_snp_depth(
     tot_mtx, ref_mtx, b_mtx : ndarray or sparse
         Total depth, ref-allele, and B-allele count matrices (SNPs x samples/cells).
         *ref_mtx* / *b_mtx* are optional; each adds its own violin row.
-    dataset_ids : list[str]
-        Sample / replicate identifiers (violin x-order).
+    dataset_ids, assay_types, sample_types : list[str]
+        Per-dataset identifying columns, in violin x-order; the axis label is composed
+        from them by ``_observation_labels``.
     is_bulk : bool
         If True, matrix columns are samples. If False, columns are cells; see
         *cell_dataset_ids*.
@@ -116,7 +119,7 @@ def plot_snp_depth(
     ref_count_mat = _resolve(ref_mtx)
     b_count_mat = _resolve(b_mtx)
     if is_bulk or cell_dataset_ids is not None:
-        labels = list(dataset_ids)
+        labels = _observation_labels(dataset_ids, assay_types, sample_types)
     else:
         labels = ["pseudobulk"]
 
@@ -186,6 +189,8 @@ def plot_snp_depth(
 def plot_allele_freqs(
     pos_df,
     dataset_ids,
+    assay_types,
+    sample_types,
     tot_mtx,
     b_mtx,
     genome_size,
@@ -219,8 +224,9 @@ def plot_allele_freqs(
     ----------
     pos_df : pd.DataFrame
         SNP/bin position DataFrame with ``#CHR`` and ``POS`` (or ``START``/``END``).
-    dataset_ids : list[str]
-        Replicate identifiers; used as row labels.
+    dataset_ids, assay_types, sample_types : list[str]
+        Per-dataset identifying columns; the row label is composed from them by
+        ``_observation_labels``.
     tot_mtx, b_mtx : sparse or ndarray
         Total depth and B-allele count matrices.
     cell_dataset_ids : np.ndarray or None
@@ -286,7 +292,7 @@ def plot_allele_freqs(
     plot_1d_multi_sample(
         pos_df,
         af_mat,
-        list(dataset_ids),
+        _observation_labels(dataset_ids, assay_types, sample_types),
         genome_size,
         plot_file,
         feature_label=feature_label,

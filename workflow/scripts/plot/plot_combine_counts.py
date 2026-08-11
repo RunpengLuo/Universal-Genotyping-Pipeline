@@ -15,7 +15,7 @@ from matplotlib.lines import Line2D
 
 from cnplot import adaptive_dot_size, plot_scatter_1d, plot_scatter_2d
 
-from matrix_utils import dense_observation
+from segmentation_utils import dense_observation
 
 from plot_utils import (
     _bold_chrnames,
@@ -23,6 +23,7 @@ from plot_utils import (
     _get_axis,
     _hist_with_stats,
     _load_shading,
+    _observation_labels,
     _shade,
 )
 
@@ -41,10 +42,10 @@ def plot_segmentation_qc(
     """Two-page segmentation QC histograms for combine_counts output.
 
     Page 1 — segment length (kbp) over all segments.
-    Page 2 — one row per REP_ID, three histograms of raw counts: native read counts,
+    Page 2 — one row per dataset_id, three histograms of raw counts: native read counts,
       B-allele counts, total-allele counts. The count axes use scientific notation
       (matplotlib's offset multiplier) rather than a scaled axis label.
-      Each row is labelled ``{REP_ID}\\n{assay_type} {T|N}`` on the rotated row axis;
+      Each row is labelled ``{dataset_id}\\n{assay_type} {T|N}`` on the rotated row axis;
       the patient id is the page super-title.
 
     Parameters
@@ -52,7 +53,7 @@ def plot_segmentation_qc(
     seg_df : pd.DataFrame
         Segmentation table with ``#CHR``, ``START``, ``END`` (bb.tsv.gz schema).
     sample_df : pd.DataFrame
-        One row per count-matrix column (per REP_ID), with ``REP_ID``, ``assay_type``
+        One row per count-matrix column (per dataset_id), with ``dataset_id``, ``assay_type``
         and ``sample_type``. Row order must match the columns of the count matrices.
     x_count_mat, b_count_mat, tot_count_mat : ndarray or sparse, (n_seg, n_datasets)
         Native, B-allele, and total-allele counts per segment per dataset_id; columns aligned
@@ -89,7 +90,7 @@ def plot_segmentation_qc(
         row = sample_df.iloc[ri]
         # shown once per row as a bold vertical "row super-title"
         row_label = (
-            f"{row.get('REP_ID', '')}\n{row.get('assay_type', '')} "
+            f"{row.get('dataset_id', '')}\n{row.get('assay_type', '')} "
             f"{str(row.get('sample_type', ''))[:1].upper()}"
         )
         _hist_with_stats(
@@ -145,8 +146,10 @@ def plot_rdr_baf(
     baf_mat: np.ndarray,
     depth_tumor_mat: np.ndarray,
     depth_normal_mat: np.ndarray,
-    titles: list,
-    rdr_norm_labels: list,
+    sample_id: str,
+    dataset_ids: list,
+    assay_types: list,
+    rdr_base_dataset_ids: list,
     genome_size: str,
     out_file: str,
     feature_label="bb",
@@ -174,9 +177,12 @@ def plot_rdr_baf(
         depth_normal_mat: (N, T) matched-normal read depth per bin; an all-NaN
             column means the tumor has no matched normal and only tumor depth is
             drawn.
-        titles: Per-tumor page super-title, length T.
-        rdr_norm_labels: Per-tumor RDR normalization method (e.g. ``"normal"``,
-            ``"median"``), length T; shown in the RDR y-label.
+        sample_id: Sample/patient id, opening every page super-title.
+        dataset_ids: Tumor dataset id per column, length T.
+        assay_types: Tumor assay type per column, length T.
+        rdr_base_dataset_ids: The dataset id each tumor's RDR is divided by, or
+            ``None`` for a median-normalized tumor; length T. Sets both the ``/ base``
+            half of the page title and the RDR y-label.
         genome_size: Path to chromosome sizes file.
         out_file: Output PDF path; used only when ``pdf`` is ``None``.
         feature_label: Feature named in the x-label (e.g. ``"bb"``).
@@ -186,11 +192,12 @@ def plot_rdr_baf(
         tumor_color: Tumor dot color.
         normal_color: Normal dot color.
     """
-    n_tumors = len(titles)
+    n_tumors = len(dataset_ids)
     logging.info(
         f"genome-wide {feature_label}-level depth+RDR+BAF plot "
         f"({n_tumors} tumors), out_file={out_file}"
     )
+    labels = _observation_labels(dataset_ids, assay_types, ["tumor"] * n_tumors)
     rdr_ylim = _rdr_ylim(rdr_mat)
     axis = _get_axis(genome_size, pos_df["#CHR"])
     region_df, blacklist_df = _load_shading(region_bed, blacklist_bed)
@@ -200,6 +207,10 @@ def plot_rdr_baf(
     _own_pdf = pdf is None
     pdf_pages = PdfPages(out_file) if _own_pdf else pdf
     for si in range(n_tumors):
+        base = rdr_base_dataset_ids[si]
+        title = f"{sample_id} - {labels[si]}"
+        if base:
+            title = f"{title} / {base}"
         fig, (ax_dp, ax_rdr, ax_baf) = plt.subplots(
             nrows=3, ncols=1, figsize=(20, 9), sharex=True
         )
@@ -262,7 +273,7 @@ def plot_rdr_baf(
             alphas=alphas,
             markersize=s_plot,
             ylim=(0, rdr_ylim),
-            ylabel=f"RDR ({rdr_norm_labels[si]})",
+            ylabel=f"RDR ({'normal' if base else 'median'})",
             plot_chrname=False,
             mb_ticks=True,
             show_gaps=False,
@@ -286,7 +297,7 @@ def plot_rdr_baf(
         )
         _bold_chrnames(ax_baf)
 
-        _finish_page(fig, titles[si], feature_label, dpi=dpi, pdf=pdf_pages)
+        _finish_page(fig, title, feature_label, dpi=dpi, pdf=pdf_pages)
     if _own_pdf:
         pdf_pages.close()
 
@@ -294,24 +305,29 @@ def plot_rdr_baf(
 def plot_rdr_baf_2d(
     rdr_mat,
     baf_mat,
-    labels,
+    sample_id: str,
+    dataset_ids: list,
+    assay_types: list,
     out_file: str | None = None,
     dpi: int = 150,
     pdf: PdfPages | None = None,
 ):
-    """RDR-vs-BAF joint scatter, one page per sample (no copy-number landmarks).
+    """RDR-vs-BAF joint scatter, one page per tumor (no copy-number landmarks).
 
     A diagnostic companion to the genome-wide ``plot_rdr_baf``: the observed
     per-bin cloud with marginal densities, via ``cnplot.plot_scatter_2d``.
 
     Args:
-        rdr_mat, baf_mat: (n_bins, n_samples) RDR and BAF per bin per sample.
-        labels: Sample labels, length n_samples.
+        rdr_mat, baf_mat: (n_bins, T) RDR and BAF per bin per tumor.
+        sample_id: Sample/patient id, opening every page title.
+        dataset_ids: Tumor dataset id per column, length T.
+        assay_types: Tumor assay type per column, length T.
         out_file: Output PDF path; used only when ``pdf`` is None.
         dpi: Raster resolution.
         pdf: External PdfPages; pages are appended and the caller closes it.
     """
-    logging.info(f"QC analysis - RDR-vs-BAF 2D scatter ({len(labels)} samples)")
+    labels = _observation_labels(dataset_ids, assay_types, ["tumor"] * len(dataset_ids))
+    logging.info(f"QC analysis - RDR-vs-BAF 2D scatter ({len(labels)} tumors)")
     rdr_ylim = _rdr_ylim(rdr_mat)
     _own_pdf = pdf is None
     pdf_pages = PdfPages(out_file) if _own_pdf else pdf
@@ -330,7 +346,7 @@ def plot_rdr_baf_2d(
             refline_y=1.0,
             xlabel="BAF",
             ylabel="RDR",
-            title=str(label),
+            title=f"{sample_id} - {label}",
         )
         pdf_pages.savefig(grid.figure, dpi=dpi)
         plt.close(grid.figure)

@@ -1,10 +1,9 @@
-"""Observation, SNP-set and RDR helpers for the combine_counts scripts.
+"""Observation and RDR helpers for the combine_counts scripts.
 
-Three groups, in pipeline order:
+Two groups, in pipeline order:
 
 1. observations  - which matrix column belongs to which replicate/assay
-2. SNP set       - the union SNP table across assays
-3. depth and RDR - fixed-bin depth onto bbs, then the RDR ratio
+2. depth and RDR - fixed-bin depth onto bbs, then the RDR ratio
 
 The upstream half of the pipeline is ``phase_and_concat_utils``; nothing is shared.
 """
@@ -15,59 +14,43 @@ import numpy as np
 import pandas as pd
 
 from range_utils import assign_range_to_range
-from utils import sort_df_chr
 
 
 ##################################################
 # observations: which matrix column is which replicate/assay
 
 
-def observation_cluster_ids(rep2bc: pd.DataFrame, dataset_ids):
-    """Cluster id per observation: REP_ID,BARCODE -> int64 index into dataset_ids.
+OBS_KEY = ["dataset_id", "assay_type"]
 
-    Categorical mapping with explicit ``dataset_ids`` order ensures the codes
-    align with the position of each dataset_id in the caller's dataset_ids list.
+
+def observation_cluster_ids(cells: pd.DataFrame, roster: pd.DataFrame):
+    """Cluster id per matrix column: its row index in the *roster*.
+
+    A multiome pair shares one ``dataset_id``, so the cluster key is the
+    ``(dataset_id, assay_type)`` pair, not the dataset alone.
+
+    Args:
+        cells: One row per matrix column, from ``read_barcodes_by_dataset``.
+        roster: ``sample_ids.tsv``, one row per pseudobulk observation; its row order
+            defines the codes.
+
+    Returns:
+        int64 index into *roster*, one per column of *cells*.
     """
-    cats = pd.Categorical(rep2bc["REP_ID"], categories=list(dataset_ids))
-    codes = np.asarray(cats.codes, dtype=np.int64)
-    assert (codes >= 0).all(), "barcodes.full, REP_ID values outside dataset_ids"
-    return codes
-
-
-##################################################
-# SNP set: the union table across assays
-
-
-def build_union_snps(snps_list):
-    """Union per-assay SNP tables into one genomically-sorted set.
-
-    Keeps the shared annotation columns (``PS``/``feature_id`` only when present in
-    EVERY assay), dedupes on ``(#CHR, POS0)``, sorts, and adds a 0-based ``snp_id``.
-    """
-    has_ps = all("PS" in s.columns for s in snps_list)
-    has_feature = all("feature_id" in s.columns for s in snps_list)
-    has_seg = all("seg_id" in s.columns for s in snps_list)
-    annot_cols = (
-        ["#CHR", "POS", "POS0", "START", "END", "region_id"]
-        + (["seg_id"] if has_seg else [])
-        + (["PS"] if has_ps else [])
-        + (["feature_id"] if has_feature else [])
+    keys = pd.MultiIndex.from_frame(roster[OBS_KEY].astype(str))
+    assert keys.is_unique, "sample_ids.tsv, duplicate (dataset_id, assay_type)"
+    codes = keys.get_indexer(pd.MultiIndex.from_frame(cells[OBS_KEY].astype(str)))
+    assert (codes >= 0).all(), (
+        "barcodes, (dataset_id, assay_type) absent from sample_ids.tsv"
     )
-    # feature_id is GTF-derived per assay, so the same SNP carries an identical
-    # string in every assay -> keep-first dedup is already a correct cross-assay union
-    snps = pd.concat(
-        [s[annot_cols] for s in snps_list], ignore_index=True
-    ).drop_duplicates(["#CHR", "POS0"])
-    snps = sort_df_chr(snps, ch="#CHR", pos="POS0").reset_index(drop=True)
-    snps["snp_id"] = np.arange(len(snps))
-    return snps
+    return codes.astype(np.int64)
 
 
 ##################################################
 # bulk read depth and RDR
 
 
-def aggregate_bin_depth_to_bbs(
+def summarize_read_depth_bb(
     assay2dataset_indices, bin_df, dp_bin_dfs, dp_corrected_list, num_bbs, num_datasets
 ):
     """Length-weighted aggregation of corrected fixed-bin depth into bbs.
@@ -128,7 +111,7 @@ def aggregate_bin_depth_to_bbs(
     return bb_dp, bb_bases
 
 
-def compute_bb_rdr(
+def summarize_rdr_bb(
     assay2dataset_indices,
     dp_bin_dfs,
     dp_corrected_list,
@@ -146,7 +129,7 @@ def compute_bb_rdr(
     computed globally per observation. Entries above the ``1 - rdr_outlier_quantile``
     quantile are set to NaN. Returns a ``(num_bbs, len(tumor_dataset_indices))`` array
     aligned to *tumor_dataset_indices*; *assay2dataset_indices* is as in
-    ``aggregate_bin_depth_to_bbs``.
+    ``summarize_read_depth_bb``.
     """
     num_bbs, num_datasets = bb_dp.shape
     bb_rdr = np.full((num_bbs, len(tumor_dataset_indices)), np.nan, dtype=np.float32)

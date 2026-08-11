@@ -90,7 +90,7 @@ for idx, dataset_id in enumerate(dataset_ids):
 
     adata.obs_names = adata.obs_names.astype(str)
     adata = adata[adata.obs_names.isin(barcodes), :].copy()
-    adata.obs_names = adata.obs_names + f"_{dataset_id}"
+    adata.obs_names = adata.obs_names + f"_{dataset_id}_{assay_type}"
     adatas[dataset_id] = adata
     logging.info(f"#barcodes={adata.n_obs}, #features={adata.n_vars}")
 
@@ -98,7 +98,7 @@ if len(adatas) > 1:
     adata = anndata.concat(
         adatas,
         join="outer",  # union of var (genes)
-        label="REP_ID",
+        label="dataset_id",
         merge="same",
         uns_merge="unique",
         fill_value=0,

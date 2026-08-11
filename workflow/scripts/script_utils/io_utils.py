@@ -6,12 +6,7 @@ from collections import OrderedDict
 import pandas as pd
 import numpy as np
 
-from const import (
-    GTF_COLUMNS,
-    RANGER_MATRIX_H5,
-    RANGER_SPATIAL_DIR,
-    SAMPLE_ID_COLNAMES,
-)
+from const import GTF_COLUMNS, RANGER_MATRIX_H5, RANGER_SPATIAL_DIR
 from utils import add_chr_prefix, sort_chroms, sort_df_chr
 
 
@@ -352,9 +347,46 @@ def read_barcodes(bc_file: str):
     return barcodes
 
 
-def read_full_barcodes(path: str):
-    """Read a 2-column REP_ID,BARCODE TSV (with header) into a DataFrame."""
-    return pd.read_table(path, sep="\t", header=0, dtype=str)
+def read_barcodes_by_dataset(bc_file: str):
+    """Read ``barcodes.tsv.gz`` and split each key back into its three fields.
+
+    ``phase_and_concat_nonbulk`` writes ``"{raw}_{dataset_id}_{assay_type}"``. The parse is
+    positional, with no lookup: no assay_type contains ``_``, so the LAST one ends the key,
+    and the raw barcode contains none either (asserted at write), so the FIRST one ends it.
+    Everything between is the dataset_id, which may hold underscores freely.
+
+    Args:
+        bc_file: One ``{raw}_{dataset_id}_{assay_type}`` per line, no header, in
+            matrix-column order.
+
+    Returns:
+        DataFrame with ``raw``, ``dataset_id``, ``assay_type`` and ``BARCODE`` (the full
+        key), one row per matrix column, in file order.
+    """
+    full = pd.read_table(bc_file, sep="\t", header=None, dtype=str).iloc[:, 0]
+    head, assay_type = _split_once(full, bc_file, from_right=True)
+    raw, dataset_id = _split_once(head, bc_file, from_right=False)
+    return pd.DataFrame(
+        {
+            "raw": raw,
+            "dataset_id": dataset_id,
+            "assay_type": assay_type,
+            "BARCODE": full,
+        }
+    )
+
+
+def _split_once(values: pd.Series, bc_file: str, from_right: bool):
+    """Split every barcode field on one ``_``, asserting each side is non-empty."""
+    parts = (
+        values.str.rsplit("_", n=1, expand=True)
+        if from_right
+        else values.str.split("_", n=1, expand=True)
+    )
+    assert parts.shape[1] == 2 and parts.notna().all().all(), (
+        f"{bc_file}, every barcode must be '{{raw}}_{{dataset_id}}_{{assay_type}}'"
+    )
+    return parts[0], parts[1]
 
 
 def read_chunks_from_atac_fragments(frag_file: str, chunksize=5_000_000):
@@ -526,13 +558,12 @@ def write_sample_ids(
     assay_types: list,
     out_file: str,
     rdr_base_dataset_ids=None,
-    colnames=None,
 ):
     """Write ``sample_ids.tsv``, one row per observation of the bb matrices.
 
-    Every column but the leading ``SAMPLE`` is a sample-file record key renamed through
-    ``SAMPLE_ID_COLNAMES``; ``SAMPLE`` is derived (``{sample_id}_{dataset_id}``) and has
-    no record key. Column order follows the argument order.
+    Every column is a sample-file record key spelled the same way, except the leading
+    ``SAMPLE``, which is derived (``{sample_id}_{dataset_id}``). Column order follows
+    the argument order.
 
     Args:
         sample_id: Sample (patient) id, one per file.
@@ -542,12 +573,10 @@ def write_sample_ids(
         out_file: Output TSV path.
         rdr_base_dataset_ids: RDR baseline dataset id per observation; the column is
             omitted when None.
-        colnames: Record key -> column name overrides on top of ``SAMPLE_ID_COLNAMES``.
 
     Returns:
         The DataFrame written.
     """
-    cols = {**SAMPLE_ID_COLNAMES, **(colnames or {})}
     record = {
         "sample_id": sample_id,
         "dataset_id": dataset_ids,
@@ -555,10 +584,17 @@ def write_sample_ids(
         "assay_type": assay_types,
         "rdr_base_dataset_id": rdr_base_dataset_ids,
     }
-    sample_dict = {"SAMPLE": [f"{sample_id}_{d}" for d in dataset_ids]}
-    sample_dict.update(
-        {cols[key]: val for key, val in record.items() if val is not None}
+    # a multiome pair shares one dataset_id, so the assay is what keeps SAMPLE unique
+    repeated = len(set(dataset_ids)) != len(dataset_ids)
+    samples = [
+        f"{sample_id}_{d}_{a}" if repeated else f"{sample_id}_{d}"
+        for d, a in zip(dataset_ids, assay_types)
+    ]
+    assert len(set(samples)) == len(samples), (
+        f"sample_ids.tsv, duplicate SAMPLE: {sorted(samples)}"
     )
+    sample_dict = {"SAMPLE": samples}
+    sample_dict.update({key: val for key, val in record.items() if val is not None})
     sample_df = pd.DataFrame(sample_dict)
     sample_df.to_csv(out_file, sep="\t", header=True, index=False)
     return sample_df

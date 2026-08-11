@@ -23,7 +23,7 @@ import pandas as pd
 from scipy.sparse import csr_matrix
 
 from io_utils import read_chunks_from_atac_fragments, read_gtf
-from matrix_utils import sum_features_to_bbs
+from segmentation_utils import sum_features_to_bbs
 from range_utils import (
     assign_pos_to_range_ovlp,
     assign_range_to_range,
@@ -141,7 +141,7 @@ def sum_umis_to_bins(h5ad_file, barcodes, bb_df, num_bbs, assay_type):
     h5ad_file : str
         AnnData (cells x genes) with ``var`` carrying ``#CHR``, ``START``, ``END``.
     barcodes : sequence of str
-        Cell barcodes (``"{raw}_{dataset_id}"``) in matrix-observation order (that assay's
+        Cell barcodes (``"{raw}_{dataset_id}_{assay_type}"``) in matrix-observation order (that assay's
         allele observations).
     bb_df : pd.DataFrame
         bbs with ``#CHR``, ``START``, ``END`` (0-based half-open) and ``bb_id``.
@@ -167,7 +167,7 @@ def sum_umis_to_bins(h5ad_file, barcodes, bb_df, num_bbs, assay_type):
 
 
 def sum_atac_fragments_to_bins(
-    frag_files, dataset_ids, barcodes_full, bb_ranges, num_bbs, chunksize=5_000_000
+    frag_files, dataset_ids, barcodes, bb_ranges, num_bbs, chunksize=5_000_000
 ):
     """Count deduped ATAC fragments per bb per cell from 10x fragment files.
 
@@ -180,9 +180,10 @@ def sum_atac_fragments_to_bins(
     ----------
     frag_files, dataset_ids : parallel lists
         ``frag_files[i]`` is the fragment file for replicate ``dataset_ids[i]``.
-    barcodes_full : pd.DataFrame
-        Columns ``REP_ID``, ``BARCODE`` (``BARCODE`` = ``"{raw}_{dataset_id}"``) giving the observation
-        order (identical to that assay's ``bb.*allele.npz`` observations).
+    barcodes : pd.DataFrame
+        Columns ``dataset_id`` and ``raw`` (the barcode as the fragment file spells it),
+        one row per observation and in observation order (identical to that assay's
+        ``bb.*allele.npz`` columns), as ``read_barcodes_by_dataset`` returns it.
     bb_ranges : pd.DataFrame
         Non-overlapping ``#CHR``, ``START``, ``END`` (0-based half-open) ranges carrying
         ``bb_id``; several ranges may share a ``bb_id``. Pass the FIXED BINS stamped with
@@ -195,17 +196,11 @@ def sum_atac_fragments_to_bins(
     -------
     scipy.sparse.csr_matrix, shape ``(num_bbs, n_cells)``, dtype int32.
     """
-    n_cells = len(barcodes_full)
-    bc_dataset = barcodes_full["REP_ID"].to_numpy().astype(str)
-    bc_full = barcodes_full["BARCODE"].to_numpy().astype(str)
-    # global observation index keyed by (dataset_id, raw_barcode); strip the "_{dataset_id}" suffix
-    obs_of = {}
-    for i in range(n_cells):
-        dataset_id, raw = bc_dataset[i], bc_full[i]
-        sfx = "_" + dataset_id
-        if raw.endswith(sfx):
-            raw = raw[: -len(sfx)]
-        obs_of[(dataset_id, raw)] = i
+    n_cells = len(barcodes)
+    bc_dataset = barcodes["dataset_id"].to_numpy().astype(str)
+    bc_raw = barcodes["raw"].to_numpy().astype(str)
+    # global observation index keyed by (dataset_id, raw barcode), as the fragments spell it
+    obs_of = {(d, r): i for i, (d, r) in enumerate(zip(bc_dataset, bc_raw))}
 
     bb_all, obs_all = [], []
     for frag_file, dataset_id in zip(frag_files, dataset_ids):

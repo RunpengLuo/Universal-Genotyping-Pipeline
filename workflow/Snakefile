@@ -63,7 +63,7 @@ if _has_config:
     modality2files = _wf["modality2files"]
     assay2dataset_ids = _wf["assay2dataset_ids"]
     assay2sample_types = _wf["assay2sample_types"]
-    assay2base_reps = _wf["assay2base_reps"]
+    assay2base_dataset_ids = _wf["assay2base_dataset_ids"]
     phaser = _wf["phaser"]
     run_genotyping = _wf["run_genotyping"]
     run_phasing = _wf["run_phasing"]

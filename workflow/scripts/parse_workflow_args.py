@@ -521,12 +521,12 @@ def parse_workflow(config):
     by_assay = {}
     for rec in records:
         by_assay.setdefault(rec["assay_type"], []).append(rec)
-    assay2dataset_ids, assay2sample_types, assay2base_reps = {}, {}, {}
+    assay2dataset_ids, assay2sample_types, assay2base_dataset_ids = {}, {}, {}
     for assay_type in ALLOWED_ASSAY_TYPES:
         rows = by_assay.get(assay_type, [])
         assay2dataset_ids[assay_type] = [rec["dataset_id"] for rec in rows]
         assay2sample_types[assay_type] = [rec["sample_type"] for rec in rows]
-        assay2base_reps[assay_type] = [
+        assay2base_dataset_ids[assay_type] = [
             rec.get("rdr_base_dataset_id", "") for rec in rows
         ]
     get_data = {(rec["assay_type"], rec["dataset_id"]): rec["files"] for rec in records}
@@ -577,7 +577,7 @@ def parse_workflow(config):
         "modality2files": modality2files,
         "assay2dataset_ids": assay2dataset_ids,
         "assay2sample_types": assay2sample_types,
-        "assay2base_reps": assay2base_reps,
+        "assay2base_dataset_ids": assay2base_dataset_ids,
         "genotype_files": genotype_files,
         "phase_files": phase_files,
         "get_genetic_map": get_genetic_map,

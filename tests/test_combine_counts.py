@@ -2,7 +2,7 @@
 
 Targets the two functions that decide bb-level BAF correctness:
 
-- `matrix_utils.sum_features_to_bbs`: sum SNP-by-observation counts into
+- `segmentation_utils.sum_features_to_bbs`: sum SNP-by-observation counts into
   bb-by-observation counts.
 - `phasing_utils.detect_phase_flips`: split SNPs into phase clusters at
   haplotype-orientation switches so a bb never sums across a flip.
@@ -11,8 +11,8 @@ bb BAF is `sum(B) / sum(total)` over a bb's SNPs, which is only correct when the
 SNPs are haplotype-consistent. These tests show the phase-flip split preserves an LOH
 signal that naive (phase-blind) summation cancels to 0.5.
 
-Both modules need only numpy/pandas/scipy, so every test here runs wherever that stack
-exists; each skips on its own if it does not.
+`segmentation_utils` needs numba for its binning kernel, so its tests skip where numba is
+absent; the `phasing_utils` ones need only numpy/pandas/scipy.
 
 Run in the base.yaml env for full coverage:
   python -m pytest tests/test_combine_counts.py -v
@@ -35,16 +35,10 @@ ru = pytest.importorskip("range_utils")
 
 
 @pytest.fixture
-def mat():
-    """matrix_utils, the module holding the summation kernel."""
-    return pytest.importorskip("matrix_utils")
-
-
-@pytest.fixture
-def agg():
-    """aggregation_utils; its binning kernel needs numba."""
+def seg():
+    """segmentation_utils: the summation kernel and the binning kernel (numba)."""
     pytest.importorskip("numba")
-    return pytest.importorskip("aggregation_utils")
+    return pytest.importorskip("segmentation_utils")
 
 
 @pytest.fixture
@@ -76,20 +70,20 @@ def _dense(x):
     return np.asarray(x.todense()) if hasattr(x, "todense") else np.asarray(x)
 
 
-def test_sum_features_to_bbs_sums_per_bb(mat):
+def test_sum_features_to_bbs_sums_per_bb(seg):
     x = np.array([[3.0, 0.0], [1.0, 0.0], [2.0, 5.0]])
-    out = _dense(mat.sum_features_to_bbs(x, np.array([0, 0, 1]), 2))
+    out = _dense(seg.sum_features_to_bbs(x, np.array([0, 0, 1]), 2))
     assert out.tolist() == [[4.0, 0.0], [2.0, 5.0]]
 
 
-def test_same_orientation_bb_baf_no_cancellation(mat):
+def test_same_orientation_bb_baf_no_cancellation(seg):
     # 3 LOH SNPs, all B-skewed (BAF 0.8) -> bin BAF stays 0.8
     b = np.array([[8.0], [7.0], [9.0]])
     tot = b + np.array([[2.0], [3.0], [1.0]])
     bins = np.array([0, 0, 0])
     baf = (
-        _dense(mat.sum_features_to_bbs(b, bins, 1))[0, 0]
-        / _dense(mat.sum_features_to_bbs(tot, bins, 1))[0, 0]
+        _dense(seg.sum_features_to_bbs(b, bins, 1))[0, 0]
+        / _dense(seg.sum_features_to_bbs(tot, bins, 1))[0, 0]
     )
     assert abs(baf - 0.8) < 1e-9
 
@@ -116,7 +110,7 @@ def test_no_flip_when_balanced():
     assert len(np.unique(pg)) == 1
 
 
-def test_loh_cancelled_when_merged_but_preserved_when_split(mat):
+def test_loh_cancelled_when_merged_but_preserved_when_split(seg):
     # LOH with a mid-segment orientation flip: SNPs 0-2 B=0.8, SNPs 3-5 B=0.2
     b = np.array([[80], [80], [80], [20], [20], [20]], float)
     a = np.array([[20], [20], [20], [80], [80], [80]], float)
@@ -124,8 +118,8 @@ def test_loh_cancelled_when_merged_but_preserved_when_split(mat):
 
     # naive: one bin ignoring phase -> B and A cancel -> BAF 0.5 (LOH lost)
     merged = (
-        _dense(mat.sum_features_to_bbs(b, np.zeros(6, int), 1))[0, 0]
-        / _dense(mat.sum_features_to_bbs(tot, np.zeros(6, int), 1))[0, 0]
+        _dense(seg.sum_features_to_bbs(b, np.zeros(6, int), 1))[0, 0]
+        / _dense(seg.sum_features_to_bbs(tot, np.zeros(6, int), 1))[0, 0]
     )
     assert abs(merged - 0.5) < 1e-9
 
@@ -135,13 +129,13 @@ def test_loh_cancelled_when_merged_but_preserved_when_split(mat):
     ).to_numpy()
     bins, _ = pd.factorize(pg)
     k = int(bins.max()) + 1
-    bsum = _dense(mat.sum_features_to_bbs(b, bins, k))[:, 0]
-    tsum = _dense(mat.sum_features_to_bbs(tot, bins, k))[:, 0]
+    bsum = _dense(seg.sum_features_to_bbs(b, bins, k))[:, 0]
+    tsum = _dense(seg.sum_features_to_bbs(tot, bins, k))[:, 0]
     folded = np.minimum(bsum / tsum, 1 - bsum / tsum)
     assert np.allclose(folded, 0.2, atol=1e-9)
 
 
-def test_bbs_frame_joins_on_bb_id(agg):
+def test_bbs_frame_joins_on_bb_id(seg):
     """`bbs` must be join-able on bb_id: the index name must not shadow the column.
 
     build_adaptive_bins groups the fixed bins by bb_id and then adds a bb_id column.
@@ -168,7 +162,7 @@ def test_bbs_frame_joins_on_bb_id(agg):
         }
     )
     tot = np.full((80, 2), 10.0)
-    bbs, snps_bb = agg.build_adaptive_bins(
+    bbs, snps_bb = seg.build_adaptive_bins(
         bins,
         _bin_snps(snps, bins),
         tot,
@@ -228,7 +222,7 @@ def _snps_in(windows, rows):
     )
 
 
-def test_leading_snp_free_bin_keeps_a_cluster_key(agg):
+def test_leading_snp_free_bin_keeps_a_cluster_key(seg):
     """A bin with no SNP must still carry every cluster key.
 
     build_adaptive_bins groups the bins by cluster_cols and pandas drops null keys, so a
@@ -244,7 +238,7 @@ def test_leading_snp_free_bin_keeps_a_cluster_key(agg):
     win["PS"] = win["bin_id"].map(modal).ffill().bfill().fillna(1)
 
     assert win["PS"].notna().all(), "leading SNP-free bins lost their cluster key"
-    bbs, _ = agg.build_adaptive_bins(
+    bbs, _ = seg.build_adaptive_bins(
         win,
         binned,
         tot,
@@ -257,7 +251,7 @@ def test_leading_snp_free_bin_keeps_a_cluster_key(agg):
     assert win["bb_id"].between(0, len(bbs) - 1).all()
 
 
-def test_snp_free_segment_gets_its_own_bb(agg):
+def test_snp_free_segment_gets_its_own_bb(seg):
     """Windows exist without SNPs, so a SNP-free segment still yields a bb."""
     win = pd.concat(
         [_windows(5), _windows(5, start=100_000).assign(seg_id="seg2")],
@@ -270,7 +264,7 @@ def test_snp_free_segment_gets_its_own_bb(agg):
     binned = _bin_snps(snps, win)
     modal = binned.groupby("bin_id")["PS"].agg(lambda x: x.mode().iloc[0])
     win["PS"] = win["bin_id"].map(modal).ffill().bfill().fillna(1)
-    bbs, _ = agg.build_adaptive_bins(
+    bbs, _ = seg.build_adaptive_bins(
         win,
         binned,
         tot,
@@ -284,7 +278,7 @@ def test_snp_free_segment_gets_its_own_bb(agg):
     assert sorted(bbs["bb_id"]) == list(range(len(bbs))), "bb_ids are not contiguous"
 
 
-def test_switchprobs_finite_across_a_snp_free_bb(agg):
+def test_switchprobs_finite_across_a_snp_free_bb(seg):
     """A bb holding no SNP must not interpolate to NaN, nor poison the next bb."""
     bbs = pd.DataFrame(
         {
@@ -311,7 +305,7 @@ def test_switchprobs_finite_across_a_snp_free_bb(agg):
     assert np.isfinite(probs).all()
 
 
-def test_gene_cluster_over_bins_never_splits_a_gene(agg, feat):
+def test_gene_cluster_over_bins_never_splits_a_gene(seg, feat):
     """A gene's whole span of bins is one cluster, including its SNP-free interior."""
     win = _windows(10)
     snps = _snps_in(win, [3, 7])  # one gene, SNPs only at its two ends
@@ -354,7 +348,14 @@ def test_window_frame_routes_fragments_to_the_owning_bb(feat, tmp_path):
             "bb_id": [0, 0, 1],
         }
     )
-    barcodes = pd.DataFrame({"REP_ID": ["R1", "R1"], "BARCODE": ["AAA_R1", "BBB_R1"]})
+    barcodes = pd.DataFrame(
+        {
+            "raw": ["AAA", "BBB"],
+            "dataset_id": ["R1", "R1"],
+            "assay_type": ["scATAC", "scATAC"],
+            "BARCODE": ["AAA_R1_scATAC", "BBB_R1_scATAC"],
+        }
+    )
     mtx = feat.sum_atac_fragments_to_bins([str(frag)], ["R1"], barcodes, win, 2)
     dense = mtx.toarray()
     assert dense.shape == (2, 2)
@@ -395,18 +396,18 @@ def _tile_loop(start, end, size):
         (7_000_000, 7_002_450),  # nonzero offset
     ],
 )
-def test_fixedwidth_bins_match_the_tiling_loop(agg, start, end):
+def test_fixedwidth_bins_match_the_tiling_loop(seg, start, end):
     """Vectorized tiling reproduces the loop it replaced, remainder rule included."""
-    seg = pd.DataFrame(
+    segments = pd.DataFrame(
         {"#CHR": ["chr1"], "START": [start], "END": [end], "seg_id": ["s"]}
     )
-    got = agg.build_fixedwidth_bins(seg, 1000)[["START", "END"]].values.tolist()
+    got = seg.build_fixedwidth_bins(segments, 1000)[["START", "END"]].values.tolist()
     assert got == _tile_loop(start, end, 1000)
 
 
-def test_fixedwidth_bins_carry_segment_ids(agg):
+def test_fixedwidth_bins_carry_segment_ids(seg):
     """Each bin inherits its source segment's ids, so no assignment pass is needed."""
-    seg = pd.DataFrame(
+    segments = pd.DataFrame(
         {
             "#CHR": ["chr1", "chr1", "chr2"],
             "START": [0, 5000, 0],
@@ -415,20 +416,20 @@ def test_fixedwidth_bins_carry_segment_ids(agg):
             "seg_id": ["a", "b", "c"],
         }
     )
-    out = agg.build_fixedwidth_bins(seg, 1000, chroms=["chr1"])
+    out = seg.build_fixedwidth_bins(segments, 1000, chroms=["chr1"])
     assert out["#CHR"].unique().tolist() == ["chr1"]
     assert out["seg_id"].tolist() == ["a", "a", "b", "b", "b"]
     assert out["region_id"].tolist() == ["1p", "1p", "1q", "1q", "1q"]
     # every bin lies inside the segment it came from
-    span = seg.set_index("seg_id")
+    span = segments.set_index("seg_id")
     for _, r in out.iterrows():
         assert span.loc[r["seg_id"], "START"] <= r["START"]
         assert r["END"] <= span.loc[r["seg_id"], "END"]
 
 
-def test_fixedwidth_bins_on_empty_and_zero_length(agg):
+def test_fixedwidth_bins_on_empty_and_zero_length(seg):
     """A zero-length segment yields no bin; an empty frame yields an empty frame."""
     zero = pd.DataFrame({"#CHR": ["chr1"], "START": [5], "END": [5], "seg_id": ["s"]})
-    assert len(agg.build_fixedwidth_bins(zero, 1000)) == 0
+    assert len(seg.build_fixedwidth_bins(zero, 1000)) == 0
     empty = pd.DataFrame({"#CHR": [], "START": [], "END": [], "seg_id": []})
-    assert len(agg.build_fixedwidth_bins(empty, 1000)) == 0
+    assert len(seg.build_fixedwidth_bins(empty, 1000)) == 0

@@ -5,7 +5,7 @@ All bulk assays (WGS/WGS-lr/WES) share ONE set of fixed bins tiled from ``segmen
 meets ``min_snp_reads``, clustered by ``seg_id`` (the segment). Fixed-bin depth is
 aggregated per assay onto the same bbs. Allele counts are aggregated per bb across all
 samples; RDR is computed per assay, normalizing each tumor by the RDR base observation
-named in its ``RDR_BASE_REP_ID`` (median-normalized when unset).
+named in its ``rdr_base_dataset_id`` (median-normalized when unset).
 
 The allele matrices come as one joint set from phase_and_concat_bulk (read directly, no
 union); depth/fixed-bin inputs stay per-assay (index-aligned to ``params.assay_types``).
@@ -24,12 +24,11 @@ setup_logging(snakemake_handle.log[0])
 import numpy as np
 import pandas as pd
 
-from aggregation_utils import build_adaptive_bins
+from segmentation_utils import build_adaptive_bins, sum_features_to_bbs
 from range_utils import assign_pos_to_range, merge_ranges_to_clusters
 from feature_utils import explode_feature_ids, merge_feature_ids
 from io_utils import read_snp_mats, read_window_bed, write_bb_file
-from matrix_utils import sum_features_to_bbs
-from combine_counts_utils import aggregate_bin_depth_to_bbs, compute_bb_rdr
+from combine_counts_utils import summarize_read_depth_bb, summarize_rdr_bb
 from phasing_utils import (
     detect_phase_flips,
     estimate_switchprobs_PS,
@@ -95,23 +94,24 @@ genetic_map = pd.read_table(gmap_file, sep="\t") if gmap_file is not None else N
 # observation order, labels and RDR bases
 num_datasets = len(sample_df)
 dataset_assays = sample_df["assay_type"].to_numpy()
-dataset_ids = sample_df["REP_ID"].tolist()
+dataset_ids = sample_df["dataset_id"].tolist()
 sample_types = sample_df["sample_type"].to_numpy()
 assay2dataset_indices = {at: np.flatnonzero(dataset_assays == at) for at in assay_types}
 tumor_dataset_indices = np.flatnonzero(sample_types == "tumor").tolist()
-sample_labels = [
-    f"{dataset_ids[i]} {dataset_assays[i]} {sample_types[i][0].upper()}"
-    for i in range(num_datasets)
-]
-tumor_labels = [sample_labels[c] for c in tumor_dataset_indices]
+tumor_dataset_ids = [dataset_ids[c] for c in tumor_dataset_indices]
+tumor_assays = [dataset_assays[c] for c in tumor_dataset_indices]
 
 get_rdr_base_dataset_id = {}
-if "RDR_BASE_REP_ID" in sample_df.columns:
+if "rdr_base_dataset_id" in sample_df.columns:
     obs_of = {rid: i for i, rid in enumerate(dataset_ids)}
     for i in tumor_dataset_indices:
-        base = sample_df["RDR_BASE_REP_ID"].iloc[i]
+        base = sample_df["rdr_base_dataset_id"].iloc[i]
         if pd.notna(base):
             get_rdr_base_dataset_id[i] = obs_of[base]
+tumor_base_dataset_ids = [
+    dataset_ids[get_rdr_base_dataset_id[c]] if c in get_rdr_base_dataset_id else None
+    for c in tumor_dataset_indices
+]
 
 logging.info(
     f"combine_counts\n"
@@ -124,14 +124,14 @@ logging.info(
 )
 
 ##################################################
-# assign SNPs to fixed bins, then drop the misses from the matrices too
+# assign SNPs to windows, then drop the misses from the matrices too
 tot_tumor = np.ascontiguousarray(tot_mtx[:, tumor_dataset_indices], dtype=np.float64)
 snps_binned, off_idx = assign_pos_to_range(snps, bin_df, ref_id="bin_id", dropna=True)
 if len(off_idx):
     log_hist(tot_tumor[off_idx].sum(axis=1), "depth of SNPs outside every bin")
 log_hist(
     snps_binned.groupby("bin_id").size().reindex(range(len(bin_df)), fill_value=0),
-    "SNPs per fixed bin",
+    "SNPs per window",
 )
 keep_snps = np.ones(len(snps), dtype=bool)
 keep_snps[off_idx] = False
@@ -139,7 +139,7 @@ tot_mtx, a_mtx, b_mtx = tot_mtx[keep_snps], a_mtx[keep_snps], b_mtx[keep_snps]
 tot_tumor = np.ascontiguousarray(tot_tumor[keep_snps])
 
 ##################################################
-# fixed-bin cluster keys, stamped per bin as the modal value of the SNPs it holds
+# adaptive segmentation bounderies
 cluster_cols = ["region_id", "seg_id"]
 
 if "PS" in snps.columns:
@@ -172,10 +172,6 @@ if gene_aware_binning:
     bin_df["gene_cluster"] = merge_ranges_to_clusters(
         len(bin_df), zip(gene_spans["min"].to_numpy(), gene_spans["max"].to_numpy() + 1)
     )
-    logging.info(
-        f"gene-aware binning: {len(gene_spans)} genes over {len(bin_df)} fixed bins -> "
-        f"{bin_df['gene_cluster'].nunique()} clusters"
-    )
 
 ##################################################
 # one adaptive binning per min_snp_reads, on the shared fixed bins
@@ -190,11 +186,10 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     out_sample_file,
     out_qc_pdf,
 ):
-    logging.info(f"===== MSR={msr} =====")
     min_snp_reads_vec = np.full(len(tumor_dataset_indices), msr, dtype=np.float64)
     bbs, snps_bb = build_adaptive_bins(
         bin_df,
-        snps_binned.copy(),
+        snps_binned,
         tot_tumor,
         min_snp_reads_vec,
         min_snp_per_bin,
@@ -217,7 +212,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     )
 
     logging.info("aggregating corrected fixed-bin depth into bbs (per assay)")
-    bb_dp, bb_bases = aggregate_bin_depth_to_bbs(
+    bb_dp, bb_bases = summarize_read_depth_bb(
         assay2dataset_indices,
         bin_df,
         dp_bin_dfs,
@@ -229,7 +224,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     logging.info(
         f"compute bb RDR, {len(get_rdr_base_dataset_id)}/{len(tumor_dataset_indices)} tumors with RDR base"
     )
-    bb_rdr = compute_bb_rdr(
+    bb_rdr = summarize_rdr_bb(
         assay2dataset_indices,
         dp_bin_dfs,
         dp_corrected_list,
@@ -240,18 +235,60 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         dataset_ids,
     )
 
+    # drop bbs carrying a NaN, before the QC plots, so the PDF shows what is written
+    nan_mask = (
+        np.isnan(baf_mtx_bb).any(axis=1)
+        | np.isnan(bb_dp).any(axis=1)
+        | np.isnan(bb_rdr).any(axis=1)
+    )
+    n_nan_rows = int(nan_mask.sum())
+    n_valid = num_bbs - n_nan_rows
+    logging.info(
+        f"NaN row filter: {n_nan_rows}/{num_bbs} bins have NaN, "
+        f"keeping {n_valid} ({n_valid / max(num_bbs, 1) * 100:.1f}%)"
+    )
+
+    if n_nan_rows > 0:
+        valid = ~nan_mask
+        bbs = bbs.loc[valid].reset_index(drop=True)
+        tot_mtx_bb = tot_mtx_bb[valid]
+        a_mtx_bb = a_mtx_bb[valid]
+        b_mtx_bb = b_mtx_bb[valid]
+        baf_mtx_bb = baf_mtx_bb[valid]
+        bb_dp = bb_dp[valid]
+        bb_bases = bb_bases[valid]
+        bb_rdr = bb_rdr[valid]
+    num_bbs = len(bbs)
+
+    kept_bb_ids = np.where(~nan_mask)[0]
+    old_to_new = {old: new for new, old in enumerate(kept_bb_ids)}
+    snps_valid = snps_bb[snps_bb["bb_id"].isin(old_to_new)].copy()
+    snps_valid["bb_id"] = snps_valid["bb_id"].map(old_to_new)
+    bbs["bb_id"] = np.arange(num_bbs)
+
+    if genetic_map is not None:
+        dist_cms = interp_cM_between_bbs(
+            bbs, snps_valid, genetic_map, bb_id_col="bb_id"
+        )
+        bbs["switchprobs"] = estimate_switchprobs_cM(
+            dist_cms,
+            nu=nu,
+            min_switchprob=min_switchprob,
+        )
+    else:
+        bbs["switchprobs"] = estimate_switchprobs_PS(bbs, switchprob_ps)
+
+    bbs["feature_id"] = (
+        bbs["bb_id"]
+        .map(snps_valid.groupby("bb_id")["feature_id"].agg(merge_feature_ids))
+        .fillna("intergenic")
+    )
+
     depth_tumor = bb_dp[:, tumor_dataset_indices]
     depth_normal = np.full_like(depth_tumor, np.nan, dtype=float)
-    rdr_titles, rdr_norm_labels = [], []
     for j, c in enumerate(tumor_dataset_indices):
-        title = f"{sample_id} - {sample_labels[c]}"
         if c in get_rdr_base_dataset_id:
             depth_normal[:, j] = bb_dp[:, get_rdr_base_dataset_id[c]]
-            rdr_norm_labels.append("normal")
-            rdr_titles.append(f"{title} / {sample_labels[get_rdr_base_dataset_id[c]]}")
-        else:
-            rdr_norm_labels.append("median")
-            rdr_titles.append(title)
 
     baf_tumor = baf_mtx_bb[:, tumor_dataset_indices]
 
@@ -271,8 +308,10 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
             baf_tumor,
             depth_tumor,
             depth_normal,
-            rdr_titles,
-            rdr_norm_labels,
+            sample_id,
+            tumor_dataset_ids,
+            tumor_assays,
+            tumor_base_dataset_ids,
             genome_size,
             out_pdf,
             feature_label="bb",
@@ -282,57 +321,14 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         )
         plot_rdr_baf_2d(
             bb_rdr,
-            baf_mtx_bb[:, tumor_dataset_indices],
-            tumor_labels,
+            baf_tumor,
+            sample_id,
+            tumor_dataset_ids,
+            tumor_assays,
             pdf=pdf,
         )
     logging.info(f"saved QC PDF to {out_pdf}")
 
-    nan_mask = (
-        np.isnan(baf_mtx_bb).any(axis=1)
-        | np.isnan(bb_dp).any(axis=1)
-        | np.isnan(bb_rdr).any(axis=1)
-    )
-    n_nan_rows = int(nan_mask.sum())
-    n_valid = num_bbs - n_nan_rows
-    logging.info(
-        f"NaN row filter: {n_nan_rows}/{num_bbs} bins have NaN, "
-        f"keeping {n_valid} ({n_valid / max(num_bbs, 1) * 100:.1f}%)"
-    )
-
-    if n_nan_rows > 0:
-        valid = ~nan_mask
-        bbs = bbs.loc[valid].reset_index(drop=True)
-        tot_mtx_bb = tot_mtx_bb[valid]
-        a_mtx_bb = a_mtx_bb[valid]
-        b_mtx_bb = b_mtx_bb[valid]
-        bb_dp = bb_dp[valid]
-        bb_rdr = bb_rdr[valid]
-
-    kept_bb_ids = np.where(~nan_mask)[0]
-    old_to_new = {old: new for new, old in enumerate(kept_bb_ids)}
-    snps_valid = snps_bb[snps_bb["bb_id"].isin(old_to_new)].copy()
-    snps_valid["bb_id"] = snps_valid["bb_id"].map(old_to_new)
-    bbs["bb_id"] = np.arange(len(bbs))
-
-    logging.info("estimate bin-level switchprobs")
-    if genetic_map is not None:
-        dist_cms = interp_cM_between_bbs(
-            bbs, snps_valid, genetic_map, bb_id_col="bb_id"
-        )
-        bbs["switchprobs"] = estimate_switchprobs_cM(
-            dist_cms,
-            nu=nu,
-            min_switchprob=min_switchprob,
-        )
-    else:
-        bbs["switchprobs"] = estimate_switchprobs_PS(bbs, switchprob_ps)
-
-    bbs["feature_id"] = (
-        bbs["bb_id"]
-        .map(snps_valid.groupby("bb_id")["feature_id"].agg(merge_feature_ids))
-        .fillna("intergenic")
-    )
     write_bb_file(bbs, out_bb)
     np.savez_compressed(out_tot, mat=tot_mtx_bb)
     np.savez_compressed(out_a, mat=a_mtx_bb)

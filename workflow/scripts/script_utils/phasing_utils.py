@@ -160,6 +160,7 @@ def interp_cM_between_bbs(
     np.ndarray
         Inter-bb cM distances (first bb per chromosome gets 0).
     """
+    logging.info("interpolate phase switchprobs for bbs.")
     bbs = bbs.copy(deep=True)
     bbs["dist_cM"] = 0.0
 
@@ -215,7 +216,7 @@ def estimate_switchprobs_cM(dist_cms: np.ndarray, nu=1, min_switchprob=1e-6):
     return np.clip(switchprobs, a_min=min_switchprob, a_max=None)
 
 
-def estimate_switchprobs_PS(bbs: pd.DataFrame, switchprob_ps=0.05):
+def estimate_switchprobs_PS(bbs: pd.DataFrame, switchprob_ps=0.05, switch_bias=1e-4):
     """Assign switch probabilities based on phase-cluster (``PS``) membership.
 
     Within the same phase cluster the probability is *switchprob_ps*; across clusters
@@ -233,7 +234,7 @@ def estimate_switchprobs_PS(bbs: pd.DataFrame, switchprob_ps=0.05):
     np.ndarray
         Switch probabilities per bb.
     """
-    switch_bias = 1e-4
+    logging.info("assign phase switchprobs for bbs given PS")
     same_ps = bbs["PS"] == bbs["PS"].shift(1).fillna(False)
     switchprobs = np.where(
         same_ps,

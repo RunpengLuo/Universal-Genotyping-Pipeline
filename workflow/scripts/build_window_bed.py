@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 from pybedtools import BedTool
 
-from aggregation_utils import build_fixedwidth_bins
+from segmentation_utils import build_fixedwidth_bins
 from io_utils import read_BED, read_bedgraph
 from range_utils import assign_range_to_range
 

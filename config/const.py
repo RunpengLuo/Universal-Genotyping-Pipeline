@@ -24,16 +24,6 @@ SCALAR_RECORD_KEYS = (
 )
 FILES_COLUMN_PREFIX = "files."
 
-# sample_ids.tsv: record key -> output column. The leading "SAMPLE" column is derived
-# ("{sample_id}_{dataset_id}") and has no record key. See docs/DEVELOPER.md.
-SAMPLE_ID_COLNAMES = {
-    "sample_id": "SAMPLE_NAME",
-    "dataset_id": "REP_ID",
-    "sample_type": "sample_type",
-    "assay_type": "assay_type",
-    "rdr_base_dataset_id": "RDR_BASE_REP_ID",
-}
-
 # Inputs
 ALIGNMENT_FILES = {"alignment", "alignment_index"}
 REQUIRED_FILES = {

@@ -17,9 +17,9 @@ Usage:
 
 Notes/References:
   Callers: feature_utils (annotate_feature_type, assign_features_to_ranges,
-  sum_atac_fragments_to_bins), aggregation_utils (build_adaptive_bins),
+  sum_atac_fragments_to_bins), segmentation_utils (build_adaptive_bins),
   phase_and_concat_utils (interp_pos_ranges),
-  combine_counts_utils (aggregate_bin_depth_to_bbs),
+  combine_counts_utils (summarize_read_depth_bb),
   build_segment_bed / build_window_bed.
 """
 

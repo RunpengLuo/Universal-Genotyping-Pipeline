@@ -41,7 +41,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install "snakemake>=9" snakemake-storage-plugin-http snakemake-storage-plugin-fs \
-                      pandas numpy scipy pyyaml pulp pytest
+                      pandas numpy scipy numba pyyaml pulp pytest
 
       - name: pytest (DAG dry-run, all modes x JSON/TSV)
         run: pytest tests/
