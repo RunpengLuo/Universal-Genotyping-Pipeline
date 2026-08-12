@@ -1,9 +1,10 @@
 """Read the pipeline's input files and write its tabular outputs.
 
-Last update: 2026-08-11
+Last update: 2026-08-12
 
 Functions:
-- read_VCF, read_BED, read_gtf, read_genes_gtf_file: parse the annotation inputs
+- read_VCF, read_BED, read_segment_bed: parse the coordinate inputs
+- read_gtf, read_genes_gtf_file: parse the gene annotation GTF
 - read_chrom_sizes, read_bedgraph, read_window_bed: parse the reference and bin inputs
 - read_allele_mat, read_snp_mats: allele matrices, dense bulk or sparse single-cell
 - read_barcodes, read_barcodes_by_dataset: the single-cell column axis
@@ -240,35 +241,54 @@ def read_snp_mats(snp_info_file, tot_file, a_file, b_file, mat_dtype=None):
     )
 
 
-def read_BED(bed_file: str, addchr=True, extra_columns=("region_id", "seg_id")):
-    """Read a BED file: the first 3 columns are ``#CHR``/``START``/``END``.
+def read_BED(bed_file: str, addchr=True, col_id="region_id"):
+    """Read a BED: the 3 coordinate columns, plus column 4 as *col_id* when present.
 
-    Any further columns are named from ``extra_columns`` in order. When an
-    ``extra_columns`` entry has no column in the file it is filled: ``region_id``
-    falls back to ``CHR:START-END`` and ``seg_id`` to ``region_id`` (the
-    build_segment_bed default). Pass ``extra_columns=()`` for a plain BED3
-    (e.g. a blacklist).
+    Column 4 of a BED is NAME, so a file that carries one names its own rows; a BED3
+    gets ``CHR:START-END`` derived instead, one id per row. Columns beyond 4 are left
+    to the caller.
+
+    Args:
+        bed_file: Path to a BED file, at least 3 columns.
+        addchr: Prepend ``chr`` to contigs named without it.
+        col_id: Name of the id column, read from column 4 or derived.
+
+    Returns:
+        DataFrame with ``#CHR``, ``START``, ``END`` and *col_id*.
     """
     df = pd.read_table(bed_file, sep="\t", header=None, dtype={0: "string"})
     assert len(df.columns) >= 3, (
-        f"BED file, expected >=3 columns, got {len(df.columns)}"
+        f"{bed_file}: BED file, expected >=3 columns, got {len(df.columns)}"
     )
-    n_extra = min(len(df.columns) - 3, len(extra_columns))
-    columns = ["Chromosome", "Start", "End"] + list(extra_columns[:n_extra])
-    df = df.iloc[:, : 3 + n_extra].copy()
-    df.columns = columns
-    if not str(df["Chromosome"].iloc[0]).startswith("chr") and addchr:
-        df["Chromosome"] = "chr" + df["Chromosome"].astype(str)
-    df["#CHR"] = df["Chromosome"]
-    df["START"] = df["Start"]
-    df["END"] = df["End"]
-
-    if "region_id" in extra_columns and "region_id" not in df.columns:
-        df["region_id"] = (
+    has_name = len(df.columns) >= 4
+    df = df.iloc[:, : 4 if has_name else 3].copy()
+    df.columns = ["#CHR", "START", "END"] + ([col_id] if has_name else [])
+    if not str(df["#CHR"].iloc[0]).startswith("chr") and addchr:
+        df["#CHR"] = "chr" + df["#CHR"].astype(str)
+    if not has_name:
+        df[col_id] = (
             df["#CHR"] + ":" + df["START"].astype(str) + "-" + df["END"].astype(str)
         )
-    if "seg_id" in extra_columns and "seg_id" not in df.columns:
-        df["seg_id"] = df["region_id"]
+    return df
+
+
+def read_segment_bed(bed_file: str, addchr=True):
+    """Read ``aux/segment.bed``: the coordinates, ``region_id`` (col 4), ``seg_id`` (col 5).
+
+    ``build_segment_bed`` stamps both ids; they are read back rather than derived, since
+    blacklist subtraction splits a segment into pieces that keep the parent's ids.
+
+    Args:
+        bed_file: Path to the built segment BED, 5 columns.
+        addchr: Prepend ``chr`` to contigs named without it.
+
+    Returns:
+        DataFrame with ``#CHR``, ``START``, ``END``, ``region_id``, ``seg_id``.
+    """
+    df = read_BED(bed_file, addchr=addchr, col_id="region_id")
+    df["seg_id"] = pd.read_table(
+        bed_file, sep="\t", header=None, usecols=[4], dtype="string"
+    ).iloc[:, 0]
     return df
 
 

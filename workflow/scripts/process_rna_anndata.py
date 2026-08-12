@@ -161,7 +161,7 @@ adata.var["START"] = adata.var["START"].astype(int)
 adata.var["END"] = adata.var["END"].astype(int)
 logging.info(f"#genes after filtering={adata.n_vars}/{num_genes}")
 
-regions = read_BED(region_bed)[["#CHR", "START", "END", "region_id"]]
+regions = read_BED(region_bed, col_id="region_id")
 adata = assign_features_to_ranges(adata, regions, assay_type)
 
 chroms = sort_chroms(adata.var["#CHR"].unique().tolist())

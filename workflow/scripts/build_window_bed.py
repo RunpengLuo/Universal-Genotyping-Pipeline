@@ -34,7 +34,7 @@ import pandas as pd
 from pybedtools import BedTool
 
 from segmentation_utils import build_fixedwidth_bins
-from io_utils import read_BED, read_bedgraph
+from io_utils import read_segment_bed, read_bedgraph
 from range_utils import assign_range_to_range
 
 
@@ -50,7 +50,7 @@ chroms = list(p["chroms"])
 input_nochr = p["input_nochr"]
 logging.info(f"build_window_bed: window_size={p['window_size']}, {len(chroms)} chroms")
 
-segments = read_BED(segment_bed)[["#CHR", "START", "END", "region_id", "seg_id"]].copy()
+segments = read_segment_bed(segment_bed)
 segments["#CHR"] = segments["#CHR"].astype(str)
 segments[["START", "END"]] = segments[["START", "END"]].astype(np.int64)
 segments = segments[segments["#CHR"].isin(chroms)].reset_index(drop=True)

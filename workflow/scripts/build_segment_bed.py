@@ -29,16 +29,14 @@ ID_COLS = ["region_id", "seg_id"]
 
 
 # configured segmentation, chr-normalized (seg_id = 4th column, else CHR:START-END)
-segments = read_BED(segments_bed, extra_columns=("seg_id",))[
-    ["#CHR", "START", "END", "seg_id"]
-].copy()
+segments = read_BED(segments_bed, col_id="seg_id")
 assert len(segments) > 0, f"segment_bed, no rows: {segments_bed}"
 assert not segments["seg_id"].duplicated().any(), (
     f"segment_bed, duplicate seg_id: {segments_bed}"
 )
 
 # chromosome arms; every segment must lie inside exactly one of them
-arms = read_BED(region_bed)[["#CHR", "START", "END", "region_id"]]
+arms = read_BED(region_bed, col_id="region_id")
 segments, na_idx = assign_range_to_range(segments, arms, "region_id", rule="contained")
 assert len(na_idx) == 0, (
     f"segment_bed, {len(na_idx)} segment(s) not inside one region_bed arm: "
@@ -50,7 +48,7 @@ logging.info(
 )
 
 if blacklist_bed:
-    bl = read_BED(blacklist_bed, extra_columns=())[["#CHR", "START", "END"]]
+    bl = read_BED(blacklist_bed)
     n_raw = len(segments)
     segments = trim_range_by_range(segments, bl)
     logging.info(

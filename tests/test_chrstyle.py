@@ -78,7 +78,7 @@ def test_segment_bed_is_read_in_one_style(tmp_path, style):
     """
     seg = tmp_path / "segment.bed"
     seg.write_text(f"{style}\t0\t1000\t22p\t22p#0\n")
-    regions = io_utils.read_BED(str(seg))
+    regions = io_utils.read_segment_bed(str(seg))
     contigs = [style]
     chroms = [c if c.lower().startswith("chr") else f"chr{c}" for c in contigs]
     tiled = regions[regions["#CHR"].isin(chroms)]

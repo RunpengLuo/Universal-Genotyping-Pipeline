@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 from io_utils import (
-    read_BED,
+    read_segment_bed,
     read_VCF,
     read_bcftools_pileup_counts,
     write_sample_ids,
@@ -126,7 +126,7 @@ for nc in normal_obs:
 
 ##################################################
 num_snps_before = len(snps)
-regions = read_BED(region_bed)
+regions = read_segment_bed(region_bed)
 snps = annotate_feature_type(snps, gtf_file)
 
 masks = [

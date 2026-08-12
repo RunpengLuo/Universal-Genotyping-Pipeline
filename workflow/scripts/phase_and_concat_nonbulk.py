@@ -35,7 +35,7 @@ from scipy.io import mmread
 from scipy.sparse import hstack, save_npz
 
 from const import ASSAY_TYPE2MODALITY
-from io_utils import read_BED, read_VCF, write_sample_ids, write_snp_info
+from io_utils import read_segment_bed, read_VCF, write_sample_ids, write_snp_info
 from range_utils import overlaps_any_range
 from phase_and_concat_utils import (
     apply_masks_to_df,
@@ -161,7 +161,7 @@ logging.info(f"#cells(per assay)={[m.shape[1] for m in tot_list]}")
 ##################################################
 # 2. SNP filters, applied once to the shared set
 num_snps_before = len(snps)
-regions = read_BED(region_bed)
+regions = read_segment_bed(region_bed)
 
 # feature_id (;-joined GTF genes) + feature_type, uniform across all assays
 snps = annotate_feature_type(snps, gtf_file)
