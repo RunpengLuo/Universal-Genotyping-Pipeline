@@ -1,9 +1,19 @@
-##################################################
+"""Merge the per-replicate pileups onto one shared SNP set, and phase them.
 
+Last update: 2026-08-11
+
+Rules:
+- [bulk] phase_and_concat_bulk: one joint matrix over every bulk replicate
+- [non-bulk] phase_and_concat_nonbulk: one joint matrix over every cell
+Outputs:
+- allele_dir/snps.tsv.gz: the run's SNP grid, the matrix rows
+- allele_dir/snp.{T,A,B}allele.npz: one phased allele matrix
+- allele_dir/sample_ids.tsv: the observation roster
+- allele_dir/barcodes.tsv.gz: single-cell only, the matrix column axis
+"""
 
 if workflow_mode == "bulk_genotyping":
 
-    # all bulk assays jointly processed in one job -> one joint matrix
     rule phase_and_concat_bulk:
         input:
             counts=[
@@ -30,7 +40,8 @@ if workflow_mode == "bulk_genotyping":
         log:
             config["log_dir"] + f"/phase_and_concat/phase_and_concat.bulk.{_run_id}.log",
         benchmark:
-            config["bench_dir"] + f"/phase_and_concat/phase_and_concat.bulk.{_run_id}.tsv"
+            config["bench_dir"]
+            + f"/phase_and_concat/phase_and_concat.bulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         params:
@@ -39,7 +50,9 @@ if workflow_mode == "bulk_genotyping":
             dataset_assays=[at for at in assay_types for rid in assay2dataset_ids[at]],
             dataset_ids=[rid for at in assay_types for rid in assay2dataset_ids[at]],
             sample_types=[st for at in assay_types for st in assay2sample_types[at]],
-            base_dataset_ids=[br for at in assay_types for br in assay2base_dataset_ids[at]],
+            base_dataset_ids=[
+                br for at in assay_types for br in assay2base_dataset_ids[at]
+            ],
             min_depth=config["params_phase_and_concat"]["min_depth"],
             gamma=config["params_phase_and_concat"]["gamma"],
             exon_only=config["params_phase_and_concat"]["exon_only"],
@@ -47,10 +60,8 @@ if workflow_mode == "bulk_genotyping":
         script:
             """../scripts/phase_and_concat_bulk.py"""
 
-
 else:
 
-    # all non-bulk assays jointly processed in one job -> one shared SNP set
     rule phase_and_concat_nonbulk:
         input:
             vcfs=[
@@ -91,14 +102,19 @@ else:
             b_mtx_snp=config["allele_dir"] + "/snp.Ballele.npz",
             sample_file=config["allele_dir"] + "/sample_ids.tsv",
             qc_pdf=report(
-                [config["qc_dir"] + f"/phase_and_concat.{at}.pdf" for at in assay_types],
+                [
+                    config["qc_dir"] + f"/phase_and_concat.{at}.pdf"
+                    for at in assay_types
+                ],
                 category="QC plots",
                 subcategory="phasing / allele freq",
             ),
         log:
-            config["log_dir"] + f"/phase_and_concat/phase_and_concat.nonbulk.{_run_id}.log",
+            config["log_dir"]
+            + f"/phase_and_concat/phase_and_concat.nonbulk.{_run_id}.log",
         benchmark:
-            config["bench_dir"] + f"/phase_and_concat/phase_and_concat.nonbulk.{_run_id}.tsv"
+            config["bench_dir"]
+            + f"/phase_and_concat/phase_and_concat.nonbulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         params:

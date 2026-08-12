@@ -1,6 +1,12 @@
-##################################################
-# Build AnnData objects from single-cell data (scRNA / scATAC / VISIUM)
-##################################################
+"""One AnnData per RNA-family assay, before phasing needs its features.
+
+Last update: 2026-08-11
+
+Rules:
+- process_rna_anndata: 10x Ranger matrices into one gene-annotated h5ad
+Outputs:
+- bb_dir/{assay}.h5ad: cells x genes, MSR-independent so it sits flat
+"""
 
 
 rule process_rna_anndata:
@@ -17,7 +23,6 @@ rule process_rna_anndata:
                 for rid in assay2dataset_ids[wc.assay_type]
             ]
         ),
-        # spatial only; staged into a Space Ranger layout for squidpy
         spatial_files=lambda wc: (
             file_input(
                 spatial_layout(wc.assay_type, assay2dataset_ids[wc.assay_type])[1]
@@ -47,7 +52,6 @@ rule process_rna_anndata:
     params:
         assay_type=lambda wc: wc.assay_type,
         dataset_ids=lambda wc: assay2dataset_ids[wc.assay_type],
-        # per-dataset spatial/ filenames, aligned with input.spatial_files
         spatial_names=lambda wc: (
             spatial_layout(wc.assay_type, assay2dataset_ids[wc.assay_type])[0]
             if wc.assay_type in SPATIAL_ASSAYS

@@ -1,3 +1,16 @@
+"""Count reads at the phased het SNPs, once per replicate.
+
+Last update: 2026-08-11
+
+Rules:
+- pileup_snps_bulk_bcftools: bcftools REF and ALT depths per bulk replicate
+- pileup_snps_nonbulk_mode1a: cellsnp-lite per-cell counts per replicate
+Outputs:
+- pileup_dir/{assay}_{dataset_id}/bcftools.counts.tsv.gz: bulk allele depths
+- pileup_dir/{assay}_{dataset_id}/cellSNP.*: single-cell counts and barcodes
+"""
+
+
 rule pileup_snps_bulk_bcftools:
     """Bulk het-SNP read counting with bcftools (REF/ALT allele depths at the phased loci)."""
     input:

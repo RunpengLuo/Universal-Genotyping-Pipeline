@@ -1,3 +1,16 @@
+"""Phase the called SNPs, then extract one het-SNP VCF.
+
+Last update: 2026-08-11
+
+Rules:
+- [optional] phase_snps_shapeit, phase_snps_eagle: panel phasing, one chromosome each
+- [optional] phase_snps_longphase: read-based phasing for long-read bulk
+- [optional] concat_and_extract_phased_het_snps: concatenate, keep the phased hets
+- [optional] parse_genetic_map: the phaser maps into one chr-prefixed table
+Outputs:
+- phase_dir/phased_het_snps.vcf.gz: the parent SNP set for every pileup
+"""
+
 if run_phasing and config["phaser"] == "shapeit":
 
     rule phase_snps_shapeit:

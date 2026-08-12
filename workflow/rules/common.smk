@@ -1,3 +1,16 @@
+"""Input helpers shared by every rule file.
+
+Last update: 2026-08-11
+
+Functions:
+- file_input: wrap a sample-file path in storage() when remote
+- alignment_input, alignment_index_input: the .bam/.cram pair of one record
+- bam_stream_input, bam_stream_index_input: the remote_mode stream variants
+- bam_stream_arg: the htslib url##idx##idxurl argument for longphase
+- download_slots: the downloads resource that throttles storage() retrieval
+"""
+
+
 def file_input(paths):
     """Rule input for sample-file path(s); accepts one path or a list.
 

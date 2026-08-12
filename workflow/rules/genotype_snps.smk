@@ -1,11 +1,14 @@
-"""
-Inputs
-1. BAM files
-2. SNP panels
-3. reference genome
+"""Call het and hom-alt SNPs, or split a given VCF per chromosome.
 
-Outputs: bi-allelic hom-alt and het ref/alt SNPs, per chromosome.
-snps/<chrom>.vcf.gz
+Last update: 2026-08-11
+
+Rules:
+- [bulk] genotype_snps_bulk: bcftools calls one chromosome from the alignments
+- [single-cell] genotype_snps_pseudobulk_mode1b: cellsnp-lite calls one modality
+- [single-cell] annotate_snps_pseudobulk: filter those calls to het or hom-alt
+- [optional] split_het_snp_vcf: split a given het_snp_vcf per chromosome
+Outputs:
+- snp_dir/chr{chrname}.vcf.gz: bi-allelic het and hom-alt SNPs
 """
 
 if workflow_mode == "bulk_genotyping" and run_genotyping:
