@@ -139,7 +139,6 @@ params_combine_counts:
   max_blocksize: 500000
   gene_aware_binning: true
   rdr_normalization: auto
-  rdr_outlier_quantile: 0.002
   phase_flip_test: true
   phase_flip_epsilon: 0.05
   phase_flip_alpha: 0.05

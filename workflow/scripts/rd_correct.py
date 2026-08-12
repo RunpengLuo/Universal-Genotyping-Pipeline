@@ -1,19 +1,18 @@
 """Bulk: GC/mappability/replication-timing bias correction of per-fixed-bin depth.
 
-Last update: 2026-08-11
+Last update: 2026-08-12
 
 Inputs:
 - pileup_dir/{assay}/out_mosdepth/{dataset_id}.regions.bed.gz: per-dataset per-bin depth
-- aux_dir/windows.bed.gz: fixed bins with GC, MAP, REPLI, region_id
+- aux_dir/windows.bed.gz: the shared fixed bins with GC, MAP, REPLI, region_id
 - genome_size, region_bed, blacklist_bed: QC plot axis and shading
 Outputs:
-- pileup_dir/{assay}/window.dp.npz: corrected depth, one column per dataset
-- pileup_dir/{assay}/window.tsv.gz: bins kept, row-aligned to the depth
-- pileup_dir/{assay}/depth_statistics.tsv: per-dataset depth summary
-- qc_dir/rd_correction.{assay}.pdf: depth scatter before/after plus covariate KDE
+- pileup_dir/bulk/window.dp.npz: corrected depth, windows x all bulk datasets,
+  0.0 where depth is 0 and NaN below min_mappability or where the fit is undefined
+- pileup_dir/bulk/depth_statistics.tsv: per-dataset depth summary
+- qc_dir/rd_correction.bulk.pdf: depth scatter before/after plus covariate KDE
 """
 
-import os
 import logging
 
 snakemake_handle = snakemake
@@ -21,17 +20,15 @@ snakemake_handle = snakemake
 from utils import (
     set_omp_threads,
     setup_logging,
-    add_chr_prefix,
     maybe_path,
-    sort_df_chr,
 )
 
 set_omp_threads(snakemake_handle)
 setup_logging(snakemake_handle.log[0])
 
 import numpy as np
-import pandas as pd
 
+from io_utils import read_mosdepth_bed, read_window_bed
 from rd_correct_utils import (
     compute_depth_statistics,
     compute_gc_rd_stats,
@@ -47,16 +44,17 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 
 # inputs
+mosdepth_files = list(snakemake_handle.input["mosdepth_files"])
 window_bed = snakemake_handle.input["window_bed"]
 genome_size = snakemake_handle.input["genome_size"]
 region_bed = snakemake_handle.input["region_bed"]
 blacklist_bed = maybe_path(snakemake_handle.input["blacklist_bed"])
 
 # parameters
-assay_type = snakemake_handle.params["assay_type"]
 sample_id = snakemake_handle.params["sample_id"]
 dataset_ids = list(snakemake_handle.params["dataset_ids"])
-mosdepth_dir = snakemake_handle.params["mosdepth_dir"]
+dataset_assays = list(snakemake_handle.params["dataset_assays"])
+sample_types = list(snakemake_handle.params["sample_types"])
 chroms = list(snakemake_handle.params["chroms"])
 samplesize = int(snakemake_handle.params["samplesize"])
 routlier = float(snakemake_handle.params["routlier"])
@@ -69,58 +67,34 @@ rt_correct = bool(snakemake_handle.params["rt_correct"])
 # outputs
 out_depth_stats = snakemake_handle.output["depth_stats"]
 out_dp_corrected = snakemake_handle.output["dp_corrected"]
-out_bin_df = snakemake_handle.output["window_df"]
 out_qc_pdf = snakemake_handle.output["qc_pdf"]
 
 n_samples = len(dataset_ids)
 sample_ids = [f"{sample_id}_{dataset_id}" for dataset_id in dataset_ids]
 join_keys = ["#CHR", "START", "END"]
 
-logging.info(f"rd_correct {assay_type}: {n_samples} samples, {len(chroms)} chroms")
-
-logging.info("load bin BED and mosdepth depth")
-bin_df = pd.read_table(window_bed, sep="\t", dtype={"#CHR": str})
-assert "#CHR" in bin_df.columns and "GC" in bin_df.columns, (
-    f"window_bed, missing `#CHR` or `GC` column: {bin_df.columns.tolist()}"
+logging.info(
+    f"rd_correct: {n_samples} bulk datasets across assays={sorted(set(dataset_assays))}, "
+    f"{len(chroms)} chroms"
 )
-bin_df["#CHR"] = add_chr_prefix(bin_df["#CHR"])
 
-bin_df = bin_df[bin_df["#CHR"].isin(chroms)].reset_index(drop=True)
-
-mos_dfs = []
-for dataset_id in dataset_ids:
-    mos_file = os.path.join(mosdepth_dir, f"{dataset_id}.regions.bed.gz")
-    mos_df = pd.read_table(
-        mos_file,
-        sep="\t",
-        header=None,
-        names=["#CHR", "START", "END", "DEPTH"],
-        dtype={"#CHR": str},
-    )
-    mos_df["#CHR"] = add_chr_prefix(mos_df["#CHR"])
-    mos_df = mos_df[mos_df["#CHR"].isin(chroms)].reset_index(drop=True)
-    mos_dfs.append(mos_df)
-
-coords = mos_dfs[0][join_keys].copy()
-n_bins = len(coords)
+logging.info("load the shared fixed bins and the per-dataset mosdepth depth")
+bin_df = read_window_bed(window_bed, chroms=chroms, keep_covariates=True)
+assert "GC" in bin_df.columns, (
+    f"window_bed, missing `GC` column: {bin_df.columns.tolist()}"
+)
+n_bins = len(bin_df)
 logging.info(f"{n_bins} fixed bins across {len(chroms)} chromosomes")
 
-bin_df = pd.merge(left=coords, right=bin_df, on=join_keys, how="left", sort=False)
-n_gc_matched = int(bin_df["GC"].notna().sum())
-logging.info(
-    f"GC BED matched {n_gc_matched}/{n_bins} "
-    f"({n_gc_matched / max(n_bins, 1) * 100:.1f}%)"
-)
-
 dp_raw = np.zeros((n_bins, n_samples), dtype=np.float32)
-for i, mos_df in enumerate(mos_dfs):
-    dp_raw[:, i] = mos_df["DEPTH"].to_numpy(dtype=np.float32)
-
-# mosdepth emits bins in BAM @SQ order; reorder to genomic order (permute dp_raw too)
-bin_df["_ord"] = np.arange(len(bin_df))
-bin_df = sort_df_chr(bin_df, ch="#CHR", pos="START")
-dp_raw = dp_raw[bin_df["_ord"].to_numpy()]
-bin_df = bin_df.drop(columns="_ord")
+for i, (dataset_id, mos_file) in enumerate(zip(dataset_ids, mosdepth_files)):
+    mos_df = read_mosdepth_bed(mos_file)
+    depth = bin_df[join_keys].merge(mos_df, on=join_keys, how="left", sort=False)
+    n_missing = int(depth["DEPTH"].isna().sum())
+    assert n_missing == 0, (
+        f"{dataset_id}: {n_missing}/{n_bins} fixed bins absent from {mos_file}"
+    )
+    dp_raw[:, i] = depth["DEPTH"].to_numpy(dtype=np.float32)
 
 depth_stats = compute_depth_statistics(dp_raw, bin_df, sample_ids)
 depth_stats.to_csv(out_depth_stats, sep="\t", index=False)
@@ -137,7 +111,7 @@ gc_corr_before, gc_std_before = compute_gc_rd_stats(dp_raw, gc_vals, dataset_ids
 
 logging.info(f"{n_bins} fixed bins for bias correction")
 
-map_vals = bin_df["MAP"].to_numpy() if gc_correct and "MAP" in bin_df.columns else None
+map_vals = bin_df["MAP"].to_numpy() if "MAP" in bin_df.columns else None
 repli_vals = (
     bin_df["REPLI"].to_numpy(dtype=np.float64)
     if rt_correct and "REPLI" in bin_df.columns
@@ -187,7 +161,9 @@ with PdfPages(out_qc_pdf) as pdf:
         bin_df,
         dp_raw,
         dp_corrected,
-        sample_ids,
+        dataset_ids,
+        dataset_assays,
+        sample_types,
         genome_size,
         pdf,
         ylim_before=rd_raw_ylim,
@@ -199,36 +175,30 @@ with PdfPages(out_qc_pdf) as pdf:
         gc_vals,
         dp_raw,
         dp_corrected,
-        sample_ids,
+        dataset_ids,
+        dataset_assays,
+        sample_types,
         pdf,
         gc_rmse=gc_rmse_list,
         mappability=map_vals,
         repliseq=repli_vals,
     )
 
-nan_mask = np.isnan(dp_corrected).any(axis=1)
-n_nan_bins = int(nan_mask.sum())
-n_valid = n_bins - n_nan_bins
-logging.info(
-    f"NaN filter: {n_nan_bins}/{n_bins} fixed bins have NaN, "
-    f"keeping {n_valid} ({n_valid / max(n_bins, 1) * 100:.1f}%)"
-)
+if map_vals is not None:
+    low_map = map_vals < min_mappability
+    dp_corrected[low_map, :] = np.nan
+    logging.info(
+        f"mappability filter: {int(low_map.sum())}/{n_bins} fixed bins below "
+        f"{min_mappability}, NaN for every dataset"
+    )
 
-if n_nan_bins > 0:
-    valid = ~nan_mask
-    dp_corrected = dp_corrected[valid]
-    bin_df = bin_df.loc[valid].reset_index(drop=True)
+for i, dataset_id in enumerate(dataset_ids):
+    n_nan = int(np.isnan(dp_corrected[:, i]).sum())
+    logging.info(
+        f"  {dataset_id}: {n_nan}/{n_bins} fixed bins NaN after correction "
+        f"({n_nan / max(n_bins, 1) * 100:.1f}%)"
+    )
 
 np.savez_compressed(out_dp_corrected, mat=dp_corrected)
-
-out_cols = ["#CHR", "START", "END", "region_id"]
-out_cols += [c for c in ("seg_id", "GC", "MAP", "REPLI") if c in bin_df.columns]
-bin_df[out_cols].to_csv(
-    out_bin_df,
-    sep="\t",
-    header=True,
-    index=False,
-    compression="gzip",
-)
 
 logging.info("finished rd_correct.")

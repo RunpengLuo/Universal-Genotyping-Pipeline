@@ -1,13 +1,15 @@
-##################################################
-# Read depth computation and bias correction (bulk only)
-#
-# bulkWGS/bulkWES: mosdepth fixed-window depth + HMMcopy-style LOWESS correction
-#
-# Produces window.dp.npz + window.tsv.gz consumed by combine_counts.
-##################################################
+"""Fixed-bin read depth and its bias correction, bulk only.
 
-_rdr_cfg = config["params_count_reads"]
+Last update: 2026-08-12
 
+Rules:
+- [optional] run_mosdepth: whole-genome per-bin depth for one replicate
+- [optional] run_mosdepth_chrom, merge_mosdepth: the remote_mode stream variants
+- rd_correct: GC, mappability and replication-timing correction, once for all bulk
+Outputs:
+- pileup_dir/bulk/window.dp.npz: corrected depth, windows x all bulk datasets
+- pileup_dir/bulk/depth_statistics.tsv: per-dataset depth summary
+"""
 
 if remote_mode != "stream":
 
@@ -123,51 +125,50 @@ else:
 
 
 rule rd_correct:
-    """Per-window LOWESS bias correction (GC/mappability/replication timing)."""
+    """Per-window sequencing bias correction (GC/mappability/replication timing)."""
     input:
-        mosdepth_files=lambda wc: [
-            pileup_dir + f"/{wc.assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz"
-            for dataset_id in assay2dataset_ids[wc.assay_type]
+        mosdepth_files=[
+            pileup_dir + f"/{at}/out_mosdepth/{rid}.regions.bed.gz"
+            for at in assay_types
+            for rid in assay2dataset_ids[at]
         ],
         window_bed=window_bed,
         genome_size=genome_size,
         region_bed=segment_bed,
         blacklist_bed=blacklist_bed,
     output:
-        dp_corrected=pileup_dir + "/{assay_type}/window.dp.npz",
-        window_df=pileup_dir + "/{assay_type}/window.tsv.gz",
+        dp_corrected=pileup_dir + "/bulk/window.dp.npz",
         depth_stats=report(
-            pileup_dir + "/{assay_type}/depth_statistics.tsv",
+            pileup_dir + "/bulk/depth_statistics.tsv",
             category="QC stats",
             subcategory="depth",
-            labels={"table": "depth statistics", "assay": "{assay_type}"},
+            labels={"table": "depth statistics"},
         ),
         qc_pdf=report(
-            qc_dir + "/rd_correction.{assay_type}.pdf",
+            qc_dir + "/rd_correction.bulk.pdf",
             category="QC plots",
             subcategory="read-depth correction",
-            labels={"assay": "{assay_type}"},
         ),
     log:
-        log_dir + f"/rd_correct/rd_correct.{{assay_type}}.{_run_id}.log",
+        log_dir + f"/rd_correct/rd_correct.bulk.{_run_id}.log",
     benchmark:
-        bench_dir + f"/rd_correct/rd_correct.{{assay_type}}.{_run_id}.tsv"
+        bench_dir + f"/rd_correct/rd_correct.bulk.{_run_id}.tsv"
     conda:
         "../envs/base.yaml"
     params:
         qc_dir=qc_dir,
         sample_id=sample_id,
-        dataset_ids=lambda wc: assay2dataset_ids[wc.assay_type],
-        mosdepth_dir=lambda wc: pileup_dir + f"/{wc.assay_type}/out_mosdepth",
+        dataset_ids=[rid for at in assay_types for rid in assay2dataset_ids[at]],
+        dataset_assays=[at for at in assay_types for rid in assay2dataset_ids[at]],
+        sample_types=[st for at in assay_types for st in assay2sample_types[at]],
         chroms=chr_chromosomes,
-        samplesize=_rdr_cfg["samplesize"],
-        routlier=_rdr_cfg["routlier"],
-        doutlier=_rdr_cfg["doutlier"],
-        min_mappability=_rdr_cfg["min_mappability"],
-        gc_correct=_rdr_cfg["gc_correct"],
-        gc_correct_method=_rdr_cfg["gc_correct_method"],
-        rt_correct=_rdr_cfg["rt_correct"],
-        assay_type=lambda wc: wc.assay_type,
+        samplesize=config["params_count_reads"]["samplesize"],
+        routlier=config["params_count_reads"]["routlier"],
+        doutlier=config["params_count_reads"]["doutlier"],
+        min_mappability=config["params_count_reads"]["min_mappability"],
+        gc_correct=config["params_count_reads"]["gc_correct"],
+        gc_correct_method=config["params_count_reads"]["gc_correct_method"],
+        rt_correct=config["params_count_reads"]["rt_correct"],
         run_id=_run_id,
     script:
         """../scripts/rd_correct.py"""

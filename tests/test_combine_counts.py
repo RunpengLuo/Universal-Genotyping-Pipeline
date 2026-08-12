@@ -3,6 +3,7 @@
 Last update: 2026-08-11
 
 Covers:
+- depth: fixed-bin depth aggregated per bb, NaN masked per dataset column
 - summation: bb BAF is correct only when SNPs are haplotype-consistent
 - phase flips: the split preserves an LOH that naive summation cancels
 - binning: cluster keys, SNP-free bins and segments, join-able bbs
@@ -37,6 +38,12 @@ def seg():
 def feat():
     """feature_utils; pandas/numpy/scipy only."""
     return pytest.importorskip("feature_utils")
+
+
+@pytest.fixture
+def ccu():
+    """combine_counts_utils: the bulk depth and RDR summaries."""
+    return pytest.importorskip("combine_counts_utils")
 
 
 def _bin_snps(snps, bins):
@@ -425,3 +432,49 @@ def test_fixedwidth_bins_on_empty_and_zero_length(seg):
     assert len(seg.build_fixedwidth_bins(zero, 1000)) == 0
     empty = pd.DataFrame({"#CHR": [], "START": [], "END": [], "seg_id": []})
     assert len(seg.build_fixedwidth_bins(empty, 1000)) == 0
+
+
+def test_summarize_read_depth_bb_masks_nan_per_column(ccu):
+    """Length-weighted mean per bb; a NaN window is dropped for that column only.
+
+    The whole point of one joint depth matrix: rd_correct keeps NaN in place instead of
+    deleting the row, so a window the correction lost for one dataset still counts for
+    every other dataset of the run.
+    """
+    bins = pd.DataFrame(
+        {
+            "#CHR": ["chr1"] * 4,
+            "START": [0, 1000, 2000, 3000],
+            "END": [1000, 2000, 3000, 5000],
+            "bb_id": [0, 0, 1, 1],
+        }
+    )
+    dp = np.array(
+        [
+            [10.0, 10.0],
+            [20.0, np.nan],
+            [30.0, 30.0],
+            [40.0, 40.0],
+        ],
+        dtype=np.float32,
+    )
+    bb_dp, bb_bases = ccu.summarize_read_depth_bb(bins, dp, 2)
+
+    assert bb_dp[0, 0] == pytest.approx(15.0)
+    assert bb_dp[0, 1] == pytest.approx(10.0)
+    assert bb_dp[1, 0] == pytest.approx((30 * 1000 + 40 * 2000) / 3000)
+    assert bb_dp[1, 1] == pytest.approx(bb_dp[1, 0])
+    assert bb_bases[0, 0] == pytest.approx(30000.0)
+    assert bb_bases[0, 1] == pytest.approx(10000.0)
+
+
+def test_summarize_read_depth_bb_all_nan_bb_is_nan(ccu):
+    """A bb whose every window is NaN for a dataset yields NaN, not a divide-by-zero."""
+    bins = pd.DataFrame(
+        {"#CHR": ["chr1"] * 2, "START": [0, 1000], "END": [1000, 2000], "bb_id": [0, 0]}
+    )
+    dp = np.array([[np.nan, 5.0], [np.nan, 5.0]], dtype=np.float32)
+    bb_dp, bb_bases = ccu.summarize_read_depth_bb(bins, dp, 1)
+    assert np.isnan(bb_dp[0, 0])
+    assert bb_dp[0, 1] == pytest.approx(5.0)
+    assert bb_bases[0, 0] == 0.0

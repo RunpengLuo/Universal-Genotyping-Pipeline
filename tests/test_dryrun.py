@@ -205,6 +205,9 @@ def test_mixed_wgs_wes(workspace):
     assert "wes_targets" not in proc.stdout
     assert "wgs_windows.bed.gz" not in proc.stdout
     assert "wes_windows.bed.gz" not in proc.stdout
+    assert counts.get("rd_correct", 0) == 1, proc.stdout[-2000:]
+    assert "/bulk/window.dp.npz" in proc.stdout
+    assert "window.tsv.gz" not in proc.stdout
     # one joint binning into a single bb/bulk dir (no per-stream subdir)
     assert "combine_counts" in counts
     assert "/bulk/bb.tsv.gz" in proc.stdout

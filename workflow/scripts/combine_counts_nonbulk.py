@@ -163,7 +163,7 @@ h5ad_by_assay = dict(zip(rna_assay_types, h5ad_files))
 # fixed bins: the window BED, the same grid bulk bins on. Tiled per segment row, so a
 # window never spans two segments and none lies in a blacklist hole. Windows exist where
 # no SNP does, so a SNP-free segment still yields bbs carrying Xcount.
-bin_df, _ = read_window_bed(window_bed, chroms=chroms)
+bin_df = read_window_bed(window_bed, chroms=chroms)
 logging.info(f"fixed bins: {len(bin_df)} windows from {window_bed}")
 
 tot_pb_cont = np.ascontiguousarray(tot_pb)

@@ -13,8 +13,6 @@ import logging
 import numpy as np
 import pandas as pd
 
-from range_utils import assign_range_to_range
-
 
 ##################################################
 # observations: which matrix column is which replicate/assay
@@ -50,75 +48,50 @@ def observation_cluster_ids(cells: pd.DataFrame, roster: pd.DataFrame):
 # bulk read depth and RDR
 
 
-def summarize_read_depth_bb(
-    assay2dataset_indices, bin_df, dp_bin_dfs, dp_corrected_list, num_bbs, num_datasets
-):
+def summarize_read_depth_bb(bin_df, dp_corrected, num_bbs):
     """Length-weighted aggregation of corrected fixed-bin depth into bbs.
 
-    Two bin frames, on purpose: *bin_df* is the union grid carrying ``bb_id``, and each
-    *dp_bin_dfs* entry is one assay's own fixed bins, row-aligned to its
-    *dp_corrected_list* matrix. Each assay's bins are assigned to a bb by midpoint over
-    *bin_df*, so a finer WES bin set projects onto the WGS bbs.
+    *bin_df* is the shared fixed-bin grid carrying the ``bb_id`` that
+    ``build_adaptive_bins`` stamped, row-aligned to *dp_corrected*. NaN is masked per
+    column: a window the correction could not resolve for one dataset still counts for
+    every other dataset.
 
     Args:
-        assay2dataset_indices: ``{assay_type: dataset indices}``, in the order of
-            *dp_bin_dfs* and *dp_corrected_list*. Column ``s`` of an assay's matrix goes
-            to its ``s``-th index, so one assay's datasets need not be adjacent.
+        bin_df: Fixed bins with ``START``, ``END`` and ``bb_id``.
+        dp_corrected: ``(n_bins, n_datasets)`` corrected depth, NaN where undefined.
+        num_bbs: Number of bbs.
 
     Returns:
         ``(bb_dp, bb_bases)``: per-bb mean depth and per-bb total aligned bases, both
-        ``(num_bbs, num_datasets)``.
+        ``(num_bbs, n_datasets)``; *bb_dp* is NaN for a bb with no finite window.
     """
-
-    bb_spans = (
-        bin_df.groupby("bb_id", sort=True)
-        .agg(
-            **{
-                "#CHR": ("#CHR", "first"),
-                "START": ("START", "min"),
-                "END": ("END", "max"),
-            }
-        )
-        .reset_index()
-    )
+    bb_ids = bin_df["bb_id"].to_numpy(np.int64)
+    bin_lengths = (bin_df["END"] - bin_df["START"]).to_numpy(dtype=np.float64)
+    num_datasets = dp_corrected.shape[1]
     bb_dp = np.full((num_bbs, num_datasets), np.nan, dtype=np.float32)
     bb_bases = np.zeros((num_bbs, num_datasets), dtype=np.float64)
-    for (at, dataset_indices), bins_a, dp_a in zip(
-        assay2dataset_indices.items(), dp_bin_dfs, dp_corrected_list
-    ):
-        # a finer WES bin set projects onto the WGS bbs by midpoint
-        mapped, na_idx = assign_range_to_range(
-            bins_a[["#CHR", "START", "END"]], bb_spans, "bb_id", rule="midpoint"
+    for s in range(num_datasets):
+        finite = np.isfinite(dp_corrected[:, s])
+        n_nan = len(finite) - int(finite.sum())
+        if n_nan:
+            logging.info(f"  dataset column {s}: {n_nan} NaN fixed bins skipped")
+        ids, lengths = bb_ids[finite], bin_lengths[finite]
+        weighted_sums = np.bincount(
+            ids, weights=dp_corrected[finite, s] * lengths, minlength=num_bbs
         )
-        bb_ids = mapped["bb_id"].fillna(-1).to_numpy(np.int64)
-        valid = bb_ids >= 0
-        if len(na_idx):
-            logging.info(
-                f"{at}: {len(na_idx)}/{len(bins_a)} fixed bins outside all bbs (dropped)"
-            )
-        vb = bb_ids[valid]
-        bin_lengths = (bins_a["END"] - bins_a["START"]).to_numpy(dtype=np.float64)[
-            valid
-        ]
-        total_len_per_bb = np.bincount(vb, weights=bin_lengths, minlength=num_bbs)
-        for s, obs in enumerate(dataset_indices):
-            weighted_sums = np.bincount(
-                vb, weights=dp_a[valid, s] * bin_lengths, minlength=num_bbs
-            )
-            bb_bases[:, obs] = weighted_sums
-            with np.errstate(invalid="ignore"):
-                bb_dp[:, obs] = weighted_sums / total_len_per_bb
+        total_len_per_bb = np.bincount(ids, weights=lengths, minlength=num_bbs)
+        bb_bases[:, s] = weighted_sums
+        with np.errstate(invalid="ignore", divide="ignore"):
+            bb_dp[:, s] = weighted_sums / total_len_per_bb
     return bb_dp, bb_bases
 
 
 def summarize_rdr_bb(
-    assay2dataset_indices,
-    dp_bin_dfs,
-    dp_corrected_list,
+    bin_df,
+    dp_corrected,
     bb_dp,
     tumor_dataset_indices,
     get_rdr_base_dataset_id,
-    rdr_outlier_quantile,
     dataset_ids,
 ):
     """Per-bb RDR for every tumor observation.
@@ -126,22 +99,18 @@ def summarize_rdr_bb(
     Each tumor with an RDR base observation (``{tumor index: base index}``) is normalized
     by that base, library-size corrected; a tumor without a base is median-centered. The base
     may be any observation (e.g. a different assay/platform), so library sizes are
-    computed globally per observation. Entries above the ``1 - rdr_outlier_quantile``
-    quantile are set to NaN. Returns a ``(num_bbs, len(tumor_dataset_indices))`` array
-    aligned to *tumor_dataset_indices*; *assay2dataset_indices* is as in
-    ``summarize_read_depth_bb``.
+    computed globally per observation over the shared fixed-bin grid. Returns a
+    ``(num_bbs, len(tumor_dataset_indices))`` array aligned to *tumor_dataset_indices*.
+    A bb whose base has zero depth yields NaN, not an infinite ratio. High RDR is left
+    alone: a focal amplification is signal, and unmappable sequence is already masked.
     """
-    num_bbs, num_datasets = bb_dp.shape
+    num_bbs = bb_dp.shape[0]
     bb_rdr = np.full((num_bbs, len(tumor_dataset_indices)), np.nan, dtype=np.float32)
     rdr_pos = {o: i for i, o in enumerate(tumor_dataset_indices)}
 
     # global per-observation total aligned bases for library-size correction
-    obs_total_bases = np.full(num_datasets, np.nan, dtype=np.float64)
-    for dataset_indices, bins_a, dp_a in zip(
-        assay2dataset_indices.values(), dp_bin_dfs, dp_corrected_list
-    ):
-        bin_sizes = (bins_a["END"] - bins_a["START"]).to_numpy(dtype=np.float64)
-        obs_total_bases[dataset_indices] = np.nansum(dp_a * bin_sizes[:, None], axis=0)
+    bin_sizes = (bin_df["END"] - bin_df["START"]).to_numpy(dtype=np.float64)
+    obs_total_bases = np.nansum(dp_corrected * bin_sizes[:, None], axis=0)
 
     for o in tumor_dataset_indices:
         m = get_rdr_base_dataset_id.get(o)
@@ -150,25 +119,23 @@ def summarize_rdr_bb(
             logging.info(
                 f"  bb RDR {dataset_ids[o]} / base {dataset_ids[m]}: library factor={lib:.4f}"
             )
+            base = bb_dp[:, m]
             with np.errstate(invalid="ignore", divide="ignore"):
-                bb_rdr[:, rdr_pos[o]] = bb_dp[:, o] / bb_dp[:, m] * lib
+                bb_rdr[:, rdr_pos[o]] = np.divide(
+                    bb_dp[:, o] * lib,
+                    base,
+                    where=base > 0,
+                    out=np.full(num_bbs, np.nan, dtype=np.float32),
+                )
         else:
             vals = bb_dp[:, o]
-            valid_i = np.isfinite(vals) & (vals > 0)
-            if valid_i.any():
-                med = np.median(vals[valid_i])
+            positive = np.isfinite(vals) & (vals > 0)
+            if positive.any():
+                med = np.median(vals[positive])
                 logging.info(
                     f"  bb median-centering {dataset_ids[o]}: median={med:.4f}"
                 )
-                with np.errstate(invalid="ignore", divide="ignore"):
-                    bb_rdr[valid_i, rdr_pos[o]] = vals[valid_i] / med
+                finite = np.isfinite(vals)
+                bb_rdr[finite, rdr_pos[o]] = vals[finite] / med
 
-    if rdr_outlier_quantile > 0:
-        rdr_upper = np.nanquantile(bb_rdr, 1 - rdr_outlier_quantile)
-        n_outlier = int(np.nansum(bb_rdr > rdr_upper))
-        logging.info(
-            f"RDR outlier filter: quantile={rdr_outlier_quantile}, "
-            f"threshold={rdr_upper:.4f}, {n_outlier} entries set to NaN"
-        )
-        bb_rdr[bb_rdr > rdr_upper] = np.nan
     return bb_rdr

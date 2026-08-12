@@ -70,7 +70,7 @@ def correct_readcount_lowess(
     Returns
     -------
     np.ndarray
-        Corrected read counts (same length as *reads*).  NaN where
+        Corrected read counts (same length as *reads*). Zero depth stays 0.0; NaN where
         correction is not possible.
     float
         RMSE from the GC LOWESS fit (root mean squared error between raw
@@ -98,7 +98,12 @@ def correct_readcount_lowess(
         return uy, ux
 
     def _fit_lowess_interp(y, x, grid):
-        """Tight LOWESS -> grid smooth -> final interpolator."""
+        """Tight LOWESS -> grid smooth -> final interpolator, no extrapolation.
+
+        Neither stage predicts outside the fitted covariate range: R's ``predict.loess``
+        returns NA there, and the grid spans the whole covariate domain, so extrapolating
+        would smooth a fabricated tail back into the data edge.
+        """
         y, x = _dedup_input(y, x)
         if len(x) < 2:
             return None
@@ -111,9 +116,18 @@ def correct_readcount_lowess(
             s1[:, 1],
             kind="linear",
             bounds_error=False,
-            fill_value="extrapolate",
+            fill_value=np.nan,
         )
-        s2 = lowess(s1_fn(grid), grid, frac=lowess_frac_smooth, return_sorted=True)
+        on_grid = s1_fn(grid)
+        in_support = np.isfinite(on_grid)
+        if in_support.sum() < 2:
+            return None
+        s2 = lowess(
+            on_grid[in_support],
+            grid[in_support],
+            frac=lowess_frac_smooth,
+            return_sorted=True,
+        )
         s2 = _dedup_sorted(s2)
         if len(s2) < 2:
             return None
@@ -122,7 +136,7 @@ def correct_readcount_lowess(
             s2[:, 1],
             kind="linear",
             bounds_error=False,
-            fill_value="extrapolate",
+            fill_value=np.nan,
         )
 
     def _apply_stage(
@@ -170,15 +184,11 @@ def correct_readcount_lowess(
         )
 
         with np.errstate(invalid="ignore", divide="ignore"):
-            corrected = np.where(
-                (predicted > 0) & (prev > 0),
-                prev / predicted,
-                np.nan,
-            )
-        valid_corr = (predicted > 0) & (prev > 0)
-        if valid_corr.any():
-            scale = np.median(prev[valid_corr]) / np.median(corrected[valid_corr])
-            corrected[valid_corr] *= scale
+            corrected = np.where(predicted > 0, prev / predicted, np.nan)
+        positive = (predicted > 0) & (prev > 0)
+        if positive.any():
+            scale = np.median(prev[positive]) / np.median(corrected[positive])
+            corrected[np.isfinite(corrected)] *= scale
 
         n_valid = int(valid.sum())
         n_ideal = ideal_idx.size
@@ -256,7 +266,8 @@ def correct_readcount_quadreg(
     Returns
     -------
     np.ndarray
-        Corrected read counts. NaN where correction is not possible.
+        Corrected read counts, 0.0 where depth is 0. NaN where the correction is
+        undefined; the mappability floor is applied by the caller.
     float
         RMSE from the GC fit.
     """
@@ -310,15 +321,14 @@ def correct_readcount_quadreg(
     den = np.clip(np.nan_to_num(predicted, nan=eps), eps, None)
 
     with np.errstate(invalid="ignore", divide="ignore"):
-        corrected = np.where(reads > 0, reads / den, np.nan)
+        corrected = reads / den
 
+    positive = np.isfinite(corrected) & (reads > 0)
     if mappability is not None:
-        corrected[mappability < min_mappability] = np.nan
-
-    valid_corr = np.isfinite(corrected) & (reads > 0)
-    if valid_corr.any():
-        scale = np.median(reads[valid_corr]) / np.median(corrected[valid_corr])
-        corrected[valid_corr] *= scale
+        positive &= mappability >= min_mappability
+    if positive.any():
+        scale = np.median(reads[positive]) / np.median(corrected[positive])
+        corrected[np.isfinite(corrected)] *= scale
 
     n_nan = int(np.isnan(corrected).sum())
     logging.info(f"    MEDIAN  {n_nan:>8d}/{n} ({n_nan / max(n, 1) * 100:5.1f}%) NaN")

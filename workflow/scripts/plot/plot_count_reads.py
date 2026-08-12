@@ -20,7 +20,13 @@ import matplotlib.pyplot as plt
 
 from cnplot import adaptive_dot_size, plot_scatter_1d
 
-from plot_utils import _get_axis, _load_shading, _shade, _val_full
+from plot_utils import (
+    _get_axis,
+    _load_shading,
+    _observation_labels,
+    _shade,
+    _val_full,
+)
 
 
 def _plot_cov_panel(
@@ -92,7 +98,9 @@ def plot_rd_2d_kde(
     gc,
     dp_before,
     dp_after,
-    labels,
+    dataset_ids,
+    assay_types,
+    sample_types,
     pdf,
     gc_rmse=None,
     mappability=None,
@@ -101,7 +109,8 @@ def plot_rd_2d_kde(
 ):
     """Two-page PDF: before/after correction KDE density plots.
 
-    Each page has up to 3 rows (GC, MAP, RT) x nsamples columns.
+    Each page has up to 3 rows (GC, MAP, RT) x nsamples columns. Column labels are
+    composed by ``_observation_labels`` from the three identifying columns.
 
     Parameters
     ----------
@@ -114,6 +123,7 @@ def plot_rd_2d_kde(
     title_prefix : str
         Optional prefix for page titles (e.g. ``"target — "``).
     """
+    labels = _observation_labels(dataset_ids, assay_types, sample_types)
     nsamples = len(labels)
     panel_w = max(5, 5 * nsamples)
 
@@ -167,7 +177,9 @@ def plot_rd_1d_scatter(
     pos_df,
     dp_before,
     dp_after,
-    labels,
+    dataset_ids,
+    assay_types,
+    sample_types,
     genome_size,
     pdf,
     feature_label="bin",
@@ -180,7 +192,12 @@ def plot_rd_1d_scatter(
     region_bed=None,
     blacklist_bed=None,
 ):
-    """One page per sample: top = before correction, bottom = after correction."""
+    """One page per sample: top = before correction, bottom = after correction.
+
+    Page titles are composed by ``_observation_labels`` from the three identifying
+    columns.
+    """
+    labels = _observation_labels(dataset_ids, assay_types, sample_types)
     axis = _get_axis(genome_size, pos_df["#CHR"])
     region_df, blacklist_df = _load_shading(region_bed, blacklist_bed)
     s_plot = adaptive_dot_size(len(pos_df), s_base=s)

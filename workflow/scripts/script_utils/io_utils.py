@@ -6,6 +6,7 @@ Functions:
 - read_VCF, read_BED, read_segment_bed: parse the coordinate inputs
 - read_gtf, read_genes_gtf_file: parse the gene annotation GTF
 - read_chrom_sizes, read_bedgraph, read_window_bed: parse the reference and bin inputs
+- read_mosdepth_bed: one dataset's per-window depth
 - read_allele_mat, read_snp_mats: allele matrices, dense bulk or sparse single-cell
 - read_barcodes, read_barcodes_by_dataset: the single-cell column axis
 - read_chunks_from_atac_fragments: stream a 10x fragment file in chunks
@@ -284,46 +285,55 @@ def read_segment_bed(bed_file: str, addchr=True):
     return df
 
 
-def read_window_bed(bed_files, chroms=None):
-    """Read fixed-bin BED(s) into one genomically sorted frame with ``bin_id``.
-
-    Takes one path, or several to union: the bulk path has one ``window.tsv.gz`` per
-    assay, each the same tiling minus that assay's NaN bins, so they are unioned on the
-    coordinates. The bias-correction covariates (GC/MAP/REPLI) are dropped - binning
-    groups by cluster and would copy them per group. ``seg_id`` is carried only when
-    every file has it, else it falls back to ``region_id`` (one segment per arm).
-
-    Every producer writes a sorted file, but a union of differing subsets is not sorted,
-    hence the sort here. ``bin_id`` must be the row position: ``build_adaptive_bins``
-    maps ``bb_id`` back positionally.
+def read_window_bed(bed_file, chroms=None, keep_covariates=False):
+    """Read the window BED and sort by genomic positions.
 
     Args:
-        bed_files: One path, or a sequence of paths to union.
-        chroms: Keep only these contigs; ``None`` keeps every row. Single-cell reads the
-            window BED itself, which may be a genome-wide grid, so it filters; bulk
-            passes ``None`` because ``rd_correct`` already trimmed each window.tsv.gz.
+        bed_file: Path to the window BED (headered TSV).
+        chroms: Keep only these contigs; ``None`` keeps every row.
+        keep_covariates: Also carry optional ``GC``/``MAP``/``REPLI`` columns.
 
     Returns:
-        ``(bins, raw_bins)``: *bins* is the union, with ``#CHR``, ``START``, ``END``,
-        ``region_id``, ``seg_id``, ``bin_id``. *raw_bins* holds each file exactly as
-        read, so a caller whose per-file matrix is row-aligned to it (bulk's corrected
-        depth) can use it without reading the files a second time.
+        Pandas DataFrame with ``#CHR``, ``START``, ``END``, ``region_id``, ``seg_id``, ``bin_id``.
     """
-    if isinstance(bed_files, (str, os.PathLike)):
-        bed_files = [bed_files]
-    raw_bins = [pd.read_table(f, sep="\t", dtype={"#CHR": str}) for f in bed_files]
-    has_seg = all("seg_id" in f.columns for f in raw_bins)
-    cols = ["#CHR", "START", "END", "region_id"] + (["seg_id"] if has_seg else [])
-    bin_df = pd.concat([f[cols] for f in raw_bins], ignore_index=True)
+    bin_df = pd.read_table(bed_file, sep="\t", dtype={"#CHR": str})
+    cols = ["#CHR", "START", "END", "region_id"]
+    cols += [c for c in ("seg_id",) if c in bin_df.columns]
+    if keep_covariates:
+        cols += [c for c in ("GC", "MAP", "REPLI") if c in bin_df.columns]
+    bin_df = bin_df[cols].copy()
     bin_df["#CHR"] = add_chr_prefix(bin_df["#CHR"])
     if chroms is not None:
         bin_df = bin_df[bin_df["#CHR"].isin(chroms)]
-    bin_df = bin_df.drop_duplicates(["#CHR", "START", "END"])
     bin_df = sort_df_chr(bin_df, ch="#CHR", pos="START").reset_index(drop=True)
-    if not has_seg:
+    if "seg_id" not in bin_df.columns:
         bin_df["seg_id"] = bin_df["region_id"]
     bin_df["bin_id"] = np.arange(len(bin_df))
-    return bin_df, raw_bins
+    return bin_df
+
+
+def read_mosdepth_bed(mosdepth_bed: str, addchr=True):
+    """Read a mosdepth ``--by`` regions BED: headerless ``#CHR START END DEPTH``.
+
+    One row per window of the BED mosdepth was given, in BAM ``@SQ`` order.
+
+    Args:
+        mosdepth_bed: Path to ``{dataset_id}.regions.bed.gz``.
+        addchr: Prepend ``chr`` to contigs named without it.
+
+    Returns:
+        DataFrame with ``#CHR``, ``START``, ``END``, ``DEPTH``.
+    """
+    df = pd.read_table(
+        mosdepth_bed,
+        sep="\t",
+        header=None,
+        names=["#CHR", "START", "END", "DEPTH"],
+        dtype={"#CHR": str},
+    )
+    if addchr:
+        df["#CHR"] = add_chr_prefix(df["#CHR"])
+    return df
 
 
 def read_bedgraph(bg_file: str, chroms=None):

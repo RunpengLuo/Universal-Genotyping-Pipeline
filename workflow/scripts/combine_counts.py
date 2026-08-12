@@ -6,8 +6,8 @@ Inputs:
 - allele_dir/snps.tsv.gz: the shared SNP set, matrix rows
 - allele_dir/snp.{T,A,B}allele.npz: joint allele counts, samples as columns
 - allele_dir/sample_ids.tsv: one row per matrix column
-- pileup_dir/{assay}/window.tsv.gz: per-assay fixed bins, row-aligned to depth
-- pileup_dir/{assay}/window.dp.npz: per-assay bias-corrected depth
+- aux_dir/windows.bed.gz: the shared fixed bins, matrix rows of the depth
+- pileup_dir/bulk/window.dp.npz: bias-corrected depth, windows x bulk datasets
 - aux_dir/segment.bed: region_id and seg_id cluster keys
 - phase_dir/genetic_map.tsv.gz: optional, for cM-based switch probabilities
 - blacklist_bed, genome_size: QC plot shading and axis
@@ -53,8 +53,8 @@ snp_info = snakemake_handle.input["snp_info"]
 tot_mtx_snp = snakemake_handle.input["tot_mtx_snp"]
 a_mtx_snp = snakemake_handle.input["a_mtx_snp"]
 b_mtx_snp = snakemake_handle.input["b_mtx_snp"]
-dp_corrected_files = list(snakemake_handle.input["dp_corrected"])
-bin_df_files = list(snakemake_handle.input["window_df"])
+dp_corrected_file = snakemake_handle.input["dp_corrected"]
+window_bed = snakemake_handle.input["window_bed"]
 sample_file = snakemake_handle.input["sample_file"]
 gmap_file = maybe_path(snakemake_handle.input["gmap_file"])
 region_bed = snakemake_handle.input["region_bed"]
@@ -64,6 +64,9 @@ genome_size = snakemake_handle.input["genome_size"]
 # parameters
 sample_id = snakemake_handle.params["sample_id"]
 assay_types = list(snakemake_handle.params["assay_types"])
+dp_dataset_ids = list(snakemake_handle.params["dataset_ids"])
+dp_dataset_assays = list(snakemake_handle.params["dataset_assays"])
+chroms = list(snakemake_handle.params["chroms"])
 
 phase_flip_test = bool(snakemake_handle.params["phase_flip_test"])
 phase_flip_epsilon = float(snakemake_handle.params["phase_flip_epsilon"])
@@ -73,7 +76,6 @@ gene_aware_binning = bool(snakemake_handle.params["gene_aware_binning"])
 max_blocksize = int(snakemake_handle.params["max_blocksize"])
 msr_list = [int(m) for m in snakemake_handle.params["min_snp_reads"]]
 min_snp_per_bin = int(snakemake_handle.params["min_snp_per_bin"])
-rdr_outlier_quantile = float(snakemake_handle.params["rdr_outlier_quantile"])
 nu = float(snakemake_handle.params["nu"])
 min_switchprob = float(snakemake_handle.params["min_switchprob"])
 switchprob_ps = float(snakemake_handle.params["switchprob_ps"])
@@ -91,11 +93,11 @@ out_qc_pdf = list(snakemake_handle.output["qc_pdf"])
 ##################################################
 # load inputs
 sample_df = pd.read_table(sample_file)
-bin_df, dp_bin_dfs = read_window_bed(bin_df_files)
+bin_df = read_window_bed(window_bed, chroms=chroms)
 snps, tot_mtx, a_mtx, b_mtx = read_snp_mats(
     snp_info, tot_mtx_snp, a_mtx_snp, b_mtx_snp, mat_dtype=np.int32
 )
-dp_corrected_list = [np.load(f)["mat"] for f in dp_corrected_files]
+dp_corrected = np.load(dp_corrected_file)["mat"]
 genetic_map = pd.read_table(gmap_file, sep="\t") if gmap_file is not None else None
 
 ##################################################
@@ -104,10 +106,18 @@ num_datasets = len(sample_df)
 dataset_assays = sample_df["assay_type"].to_numpy()
 dataset_ids = sample_df["dataset_id"].tolist()
 sample_types = sample_df["sample_type"].to_numpy()
-assay2dataset_indices = {at: np.flatnonzero(dataset_assays == at) for at in assay_types}
 tumor_dataset_indices = np.flatnonzero(sample_types == "tumor").tolist()
 tumor_dataset_ids = [dataset_ids[c] for c in tumor_dataset_indices]
 tumor_assays = [dataset_assays[c] for c in tumor_dataset_indices]
+
+assert dp_dataset_ids == dataset_ids and dp_dataset_assays == list(dataset_assays), (
+    f"depth columns {list(zip(dp_dataset_ids, dp_dataset_assays))} do not match "
+    f"{sample_file}: {list(zip(dataset_ids, dataset_assays))}"
+)
+assert dp_corrected.shape == (len(bin_df), num_datasets), (
+    f"{dp_corrected_file}: shape {dp_corrected.shape}, expected "
+    f"({len(bin_df)}, {num_datasets}) from {window_bed}"
+)
 
 get_rdr_base_dataset_id = {}
 if "rdr_base_dataset_id" in sample_df.columns:
@@ -219,27 +229,18 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         out=np.full_like(b_mtx_bb, np.nan, dtype=np.float32),
     )
 
-    logging.info("aggregating corrected fixed-bin depth into bbs (per assay)")
-    bb_dp, bb_bases = summarize_read_depth_bb(
-        assay2dataset_indices,
-        bin_df,
-        dp_bin_dfs,
-        dp_corrected_list,
-        num_bbs,
-        num_datasets,
-    )
+    logging.info("aggregating corrected fixed-bin depth into bbs")
+    bb_dp, bb_bases = summarize_read_depth_bb(bin_df, dp_corrected, num_bbs)
 
     logging.info(
         f"compute bb RDR, {len(get_rdr_base_dataset_id)}/{len(tumor_dataset_indices)} tumors with RDR base"
     )
     bb_rdr = summarize_rdr_bb(
-        assay2dataset_indices,
-        dp_bin_dfs,
-        dp_corrected_list,
+        bin_df,
+        dp_corrected,
         bb_dp,
         tumor_dataset_indices,
         get_rdr_base_dataset_id,
-        rdr_outlier_quantile,
         dataset_ids,
     )
 

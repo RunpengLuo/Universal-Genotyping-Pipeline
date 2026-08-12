@@ -1,16 +1,23 @@
-##################################################
-# SNP-informed adaptive binning + window→bin depth aggregation
-# Bulk: combine_counts (with corrected window depth)
-# Non-bulk: combine_counts_nonbulk (derived bins) + combine_counts_fixed_bins (given bins)
-##################################################
+"""Bin the SNPs and depth into bbs, the pipeline's output unit.
+
+Last update: 2026-08-11
+
+Rules:
+- [bulk] combine_counts: adaptive binning, depth aggregation and RDR
+- [single-cell] combine_counts_nonbulk: adaptive binning over every assay
+- [copytyping] combine_counts_fixed_bins: counts onto pre-computed bbs
+Outputs:
+- bb_dir/MSR{msr}/bulk/: the bulk bbs, one subdir per min_snp_reads
+- bb_dir/MSR{msr}/{assay}/: the single-cell bbs, sliced per assay
+- bb_dir/{assay}/: the copytyping bbs, no binning so no MSR level
+"""
 
 if workflow_mode == "bulk_genotyping":
 
     rule combine_counts:
         input:
-            # depth/window stay per-assay; allele matrices are one joint set
-            dp_corrected=[pileup_dir + f"/{at}/window.dp.npz" for at in assay_types],
-            window_df=[pileup_dir + f"/{at}/window.tsv.gz" for at in assay_types],
+            dp_corrected=pileup_dir + "/bulk/window.dp.npz",
+            window_bed=window_bed,
             snp_info=allele_dir + "/snps.tsv.gz",
             tot_mtx_snp=allele_dir + "/snp.Tallele.npz",
             a_mtx_snp=allele_dir + "/snp.Aallele.npz",
@@ -65,13 +72,15 @@ if workflow_mode == "bulk_genotyping":
             qc_dir=qc_dir,
             sample_id=sample_id,
             assay_types=assay_types,
+            dataset_ids=[rid for at in assay_types for rid in assay2dataset_ids[at]],
+            dataset_assays=[at for at in assay_types for rid in assay2dataset_ids[at]],
+            chroms=chr_chromosomes,
             nu=config["params_combine_counts"]["nu"],
             min_switchprob=config["params_combine_counts"]["min_switchprob"],
             switchprob_ps=config["params_combine_counts"]["switchprob_ps"],
             min_snp_reads=msr_list,
             min_snp_per_bin=config["params_combine_counts"]["min_snp_per_bin"],
             gene_aware_binning=config["params_combine_counts"]["gene_aware_binning"],
-            rdr_outlier_quantile=config["params_combine_counts"]["rdr_outlier_quantile"],
             max_blocksize=config["params_combine_counts"]["max_blocksize"],
             phase_flip_test=config["params_combine_counts"]["phase_flip_test"],
             phase_flip_epsilon=config["params_combine_counts"]["phase_flip_epsilon"],
