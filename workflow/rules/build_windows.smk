@@ -5,7 +5,7 @@ Last update: 2026-08-11
 Rules:
 - build_segment_bed: arm-stamped, blacklist-subtracted segments
 - [optional] repliseq_bigwig_to_bedgraph: fetch one ENCODE Repli-seq bigWig
-- [optional] repliseq_liftover: lift an hg19 Repli-seq bedGraph to hg38
+- [optional] repliseq_liftover: lift an hg19 Repli-seq bedGraph to the run build
 - [optional] build_window_bed: tile the segments, annotate GC, MAP, REPLI
 - window_bed_to_3bed: headerless 3-column BED for mosdepth --by
 Globals:
@@ -35,10 +35,6 @@ rule build_segment_bed:
 
 if build_windows:
     if do_repliseq:
-        _repli_cache = aux_dir + "/repliseq"
-        _repli_names = [f[: -len(".bigWig")] for f in REPLISEQ_BIGWIG_FILES]
-        _repli_target = reference_version
-        _repli_lift = _repli_target != "hg19"
 
         rule repliseq_bigwig_to_bedgraph:
             """Fetch an ENCODE Repli-seq bigWig (hg19) and convert to bedGraph."""
@@ -46,9 +42,9 @@ if build_windows:
                 bigwig=lambda wc: file_input(f"{UCSC_REPLISEQ_BASE}/{wc.name}.bigWig"),
             output:
                 (
-                    temp(_repli_cache + "/{name}.hg19.bedGraph")
-                    if _repli_lift
-                    else _repli_cache + "/{name}.hg19.bedGraph"
+                    temp(aux_dir + "/repliseq/{name}.hg19.bedGraph")
+                    if reference_version in REPLI_LIFTOVER
+                    else aux_dir + "/repliseq/{name}.hg19.bedGraph"
                 ),
             log:
                 log_dir
@@ -65,16 +61,19 @@ if build_windows:
             shell:
                 "bigWigToBedGraph {input.bigwig} {output} 2> {log}"
 
-        if _repli_lift:
+        if reference_version in REPLI_LIFTOVER:
 
             rule repliseq_liftover:
-                """liftOver an hg19 Repli-seq bedGraph to hg38 (cached under aux)."""
+                """liftOver an hg19 Repli-seq bedGraph to the run's build."""
                 input:
-                    bedgraph=_repli_cache + "/{name}.hg19.bedGraph",
-                    chain=file_input(LIFTOVER_CHAIN_URL),
+                    bedgraph=aux_dir + "/repliseq/{name}.hg19.bedGraph",
+                    chain=file_input(LIFTOVER_CHAIN_URLS[reference_version]),
                 output:
-                    bedgraph=_repli_cache + "/{name}.hg38.bedGraph",
-                    unmapped=temp(_repli_cache + "/{name}.unmapped"),
+                    bedgraph=aux_dir
+                    + f"/repliseq/{{name}}.{reference_version}.bedGraph",
+                    unmapped=temp(
+                        aux_dir + f"/repliseq/{{name}}.{reference_version}.unmapped"
+                    ),
                 log:
                     log_dir
                     + f"/repliseq_liftover/repliseq_liftover.{{name}}.{_run_id}.log",
@@ -99,7 +98,11 @@ if build_windows:
             genome_size=genome_size,
             mappability_bed=mappability_bed,
             bedgraphs=(
-                [_repli_cache + f"/{n}.{_repli_target}.bedGraph" for n in _repli_names]
+                [
+                    aux_dir
+                    + f"/repliseq/{f.removesuffix('.bigWig')}.{reference_version}.bedGraph"
+                    for f in REPLISEQ_BIGWIG_FILES
+                ]
                 if do_repliseq
                 else []
             ),

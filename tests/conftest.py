@@ -17,6 +17,7 @@ import os
 import subprocess
 
 import pytest
+import yaml
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SNAKEFILE = os.path.join(REPO, "workflow", "Snakefile")
@@ -65,7 +66,12 @@ def _touch(path):
 
 @pytest.fixture(scope="session")
 def workspace(tmp_path_factory):
-    """Stub reference assets plus one bulk and one single-cell sample file per format."""
+    """Stub reference assets plus one bulk and one single-cell sample file per format.
+
+    The session config turns rt_correct off, so no dry run resolves the 17 UCSC Repli-seq
+    URLs; ``test_repliseq_is_fetched_when_rt_correct`` covers that DAG behind the
+    ``network`` marker.
+    """
     root = tmp_path_factory.mktemp("ws")
     ref = root / "ref"
     for name in REF_FILES:
@@ -249,6 +255,10 @@ def workspace(tmp_path_factory):
         p.write_text("\n".join(lines) + "\n")
         paths[f"{name}_tsv"] = str(p)
 
+    test_config = yaml.safe_load(open(CONFIGFILE))
+    test_config["params_count_reads"]["rt_correct"] = False
+    (root / "config.test.yaml").write_text(yaml.safe_dump(test_config))
+    paths["configfile"] = str(root / "config.test.yaml")
     paths["root"] = str(root)
     paths["ref"] = str(ref)
     paths["outs"] = str(outs)
@@ -269,7 +279,7 @@ def dryrun(workspace, sample_file, sample_id, workflow_mode, assay_types, extra=
         "-s",
         SNAKEFILE,
         "--configfile",
-        CONFIGFILE,
+        workspace["configfile"],
         "--directory",
         out,
         "--config",

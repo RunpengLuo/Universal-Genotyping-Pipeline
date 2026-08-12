@@ -38,7 +38,8 @@ from const import (
     RANGER_LAYOUT,
     REPLISEQ_BIGWIG_FILES,
     UCSC_REPLISEQ_BASE,
-    LIFTOVER_CHAIN_URL,
+    REPLI_LIFTOVER,
+    LIFTOVER_CHAIN_URLS,
 )
 from parse_workflow_args import parse_workflow
 from utils import logging_snakemake, is_url

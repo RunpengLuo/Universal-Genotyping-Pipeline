@@ -9,7 +9,7 @@ Constants:
 - BULK_TARGETS, SINGLE_CELL_TARGETS, COPYTYPING_TARGETS: the per-mode final outputs
 - REFVERS, REFVERS_ALIAS, SPECIES2SEXCHROM: reference builds and their spellings
 - RANGER_*, RANGER_LAYOUT: 10x Cell and Space Ranger filenames
-- REPLISEQ_*, LIFTOVER_CHAIN_URL: the ENCODE Repli-seq sources
+- REPLISEQ_*, REPLI_LIFTOVER, LIFTOVER_CHAIN_URLS: Repli-seq sources and chains
 - URL_SCHEMES: remote input schemes a sample-file value may use
 Functions:
 - canonical_refver, is_known_refver: fold a reference_version spelling
@@ -162,15 +162,17 @@ def is_known_refver(value):
 
 ##################################################
 # Repli-seq for replication timing RD correction.
-# Liftover hg19 to hg38
-REPLISEQ_REFVERS = ("hg19", "hg38")
-LIFTOVER_CHAIN_URL = (
-    "https://hgdownload.cse.ucsc.edu/goldenpath/hg19/liftOver/hg19ToHg38.over.chain.gz"
-)
+# Liftover hg19 to other reference versions.
+REPLISEQ_REFVERS = ("hg19", "hg38", "chm13v2")
+REPLI_LIFTOVER = ("hg38", "chm13v2")
+LIFTOVER_CHAIN_URLS = {
+    "hg38": "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz",
+    "chm13v2": "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHs1.over.chain.gz",
+}
 
 # hg19 Repli-seq data
 UCSC_REPLISEQ_BASE = (
-    "http://hgdownload.cse.ucsc.edu/goldenpath/hg19/encodeDCC/wgEncodeUwRepliSeq"
+    "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeUwRepliSeq"
 )
 REPLISEQ_BIGWIG_FILES = (
     "wgEncodeUwRepliSeqBg02esWaveSignalRep1.bigWig",

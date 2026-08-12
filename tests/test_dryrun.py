@@ -165,6 +165,28 @@ def test_segment_bed_is_built_in_every_mode(workspace, mode, assays):
     assert "build_segment_bed" in job_counts(proc.stdout)
 
 
+@pytest.mark.network
+def test_repliseq_is_fetched_when_rt_correct(workspace):
+    """rt_correct on a Repli-seq build pulls the ENCODE tracks (16 + one liftOver).
+
+    The suite runs with rt_correct off (conftest), so this is the only test that
+    resolves UCSC URLs; hence the `network` marker.
+    """
+    proc = dryrun(
+        workspace,
+        workspace["bulk_json"],
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=['params_count_reads={"rt_correct": True}'],
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    counts = job_counts(proc.stdout)
+    assert counts.get("repliseq_bigwig_to_bedgraph") == 16, proc.stdout[-2000:]
+    assert counts.get("repliseq_liftover") == 16
+    assert ".chm13v2.bedGraph" in proc.stdout
+
+
 def test_mixed_wgs_wes(workspace):
     """bulkWGS + bulkWES share one window grid and one joint bulk bb dir (WES == WGS)."""
     proc = dryrun(
