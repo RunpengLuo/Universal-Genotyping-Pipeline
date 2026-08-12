@@ -17,35 +17,34 @@ if workflow_mode == "bulk_genotyping":
     rule phase_and_concat_bulk:
         input:
             counts=[
-                config["pileup_dir"] + f"/{at}_{rid}/bcftools.counts.tsv.gz"
+                pileup_dir + f"/{at}_{rid}/bcftools.counts.tsv.gz"
                 for at in assay_types
                 for rid in assay2dataset_ids[at]
             ],
             snp_vcf=phased_snp_vcf,
             region_bed=segment_bed,
-            genome_size=config["genome_size"],
-            gtf_file=config["gtf_file"],
-            blacklist_bed=config["blacklist_bed"] or [],
+            genome_size=genome_size,
+            gtf_file=gtf_file,
+            blacklist_bed=blacklist_bed,
         output:
-            snp_info=config["allele_dir"] + "/snps.tsv.gz",
-            tot_mtx_snp=config["allele_dir"] + "/snp.Tallele.npz",
-            a_mtx_snp=config["allele_dir"] + "/snp.Aallele.npz",
-            b_mtx_snp=config["allele_dir"] + "/snp.Ballele.npz",
-            sample_file=config["allele_dir"] + "/sample_ids.tsv",
+            snp_info=allele_dir + "/snps.tsv.gz",
+            tot_mtx_snp=allele_dir + "/snp.Tallele.npz",
+            a_mtx_snp=allele_dir + "/snp.Aallele.npz",
+            b_mtx_snp=allele_dir + "/snp.Ballele.npz",
+            sample_file=allele_dir + "/sample_ids.tsv",
             qc_pdf=report(
-                config["qc_dir"] + "/phase_and_concat.bulk.pdf",
+                qc_dir + "/phase_and_concat.bulk.pdf",
                 category="QC plots",
                 subcategory="phasing / allele freq (bulk)",
             ),
         log:
-            config["log_dir"] + f"/phase_and_concat/phase_and_concat.bulk.{_run_id}.log",
+            log_dir + f"/phase_and_concat/phase_and_concat.bulk.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
-            + f"/phase_and_concat/phase_and_concat.bulk.{_run_id}.tsv"
+            bench_dir + f"/phase_and_concat/phase_and_concat.bulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         params:
-            qc_dir=config["qc_dir"],
+            qc_dir=qc_dir,
             sample_id=sample_id,
             dataset_assays=[at for at in assay_types for rid in assay2dataset_ids[at]],
             dataset_ids=[rid for at in assay_types for rid in assay2dataset_ids[at]],
@@ -65,60 +64,55 @@ else:
     rule phase_and_concat_nonbulk:
         input:
             vcfs=[
-                config["pileup_dir"] + f"/{at}_{rid}/cellSNP.base.vcf.gz"
+                pileup_dir + f"/{at}_{rid}/cellSNP.base.vcf.gz"
                 for at in assay_types
                 for rid in assay2dataset_ids[at]
             ],
             sample_tsvs=[
-                config["pileup_dir"] + f"/{at}_{rid}/cellSNP.samples.tsv"
+                pileup_dir + f"/{at}_{rid}/cellSNP.samples.tsv"
                 for at in assay_types
                 for rid in assay2dataset_ids[at]
             ],
             tot_mtxs=[
-                config["pileup_dir"] + f"/{at}_{rid}/cellSNP.tag.DP.mtx"
+                pileup_dir + f"/{at}_{rid}/cellSNP.tag.DP.mtx"
                 for at in assay_types
                 for rid in assay2dataset_ids[at]
             ],
             ad_mtxs=[
-                config["pileup_dir"] + f"/{at}_{rid}/cellSNP.tag.AD.mtx"
+                pileup_dir + f"/{at}_{rid}/cellSNP.tag.AD.mtx"
                 for at in assay_types
                 for rid in assay2dataset_ids[at]
             ],
             snp_vcf=phased_snp_vcf,
             h5ad_files=[
-                config["bb_dir"] + f"/{at}.h5ad"
+                bb_dir + f"/{at}.h5ad"
                 for at in assay_types
                 if ASSAY_TYPE2MODALITY[at] == "RNA"
             ],
             region_bed=segment_bed,
-            genome_size=config["genome_size"],
-            gtf_file=config["gtf_file"],
-            blacklist_bed=config["blacklist_bed"] or [],
+            genome_size=genome_size,
+            gtf_file=gtf_file,
+            blacklist_bed=blacklist_bed,
         output:
-            snp_info=config["allele_dir"] + "/snps.tsv.gz",
-            all_barcodes=config["allele_dir"] + "/barcodes.tsv.gz",
-            tot_mtx_snp=config["allele_dir"] + "/snp.Tallele.npz",
-            a_mtx_snp=config["allele_dir"] + "/snp.Aallele.npz",
-            b_mtx_snp=config["allele_dir"] + "/snp.Ballele.npz",
-            sample_file=config["allele_dir"] + "/sample_ids.tsv",
+            snp_info=allele_dir + "/snps.tsv.gz",
+            all_barcodes=allele_dir + "/barcodes.tsv.gz",
+            tot_mtx_snp=allele_dir + "/snp.Tallele.npz",
+            a_mtx_snp=allele_dir + "/snp.Aallele.npz",
+            b_mtx_snp=allele_dir + "/snp.Ballele.npz",
+            sample_file=allele_dir + "/sample_ids.tsv",
             qc_pdf=report(
-                [
-                    config["qc_dir"] + f"/phase_and_concat.{at}.pdf"
-                    for at in assay_types
-                ],
+                [qc_dir + f"/phase_and_concat.{at}.pdf" for at in assay_types],
                 category="QC plots",
                 subcategory="phasing / allele freq",
             ),
         log:
-            config["log_dir"]
-            + f"/phase_and_concat/phase_and_concat.nonbulk.{_run_id}.log",
+            log_dir + f"/phase_and_concat/phase_and_concat.nonbulk.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
-            + f"/phase_and_concat/phase_and_concat.nonbulk.{_run_id}.tsv"
+            bench_dir + f"/phase_and_concat/phase_and_concat.nonbulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         params:
-            qc_dir=config["qc_dir"],
+            qc_dir=qc_dir,
             sample_id=sample_id,
             assay_types=assay_types,
             dataset_assays=[at for at in assay_types for rid in assay2dataset_ids[at]],

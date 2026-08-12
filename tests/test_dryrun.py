@@ -133,15 +133,17 @@ def test_windows_are_built_from_the_segments(workspace, sheet, sample_id, mode, 
         ("copytyping_preprocess", ["scATAC"]),
     ],
 )
-def test_segment_bed_is_required(workspace, mode, assays):
-    """segment_bed is a required reference input in every mode."""
+def test_segment_bed_defaults_to_region_bed(workspace, mode, assays):
+    """An unset segment_bed falls back to region_bed: one segment per arm."""
     sheet = (
         workspace["bulk_json"] if mode == "bulk_genotyping" else workspace["sc_json"]
     )
     sample_id = "T1" if mode == "bulk_genotyping" else "S1"
     proc = dryrun(workspace, sheet, sample_id, mode, assays, extra=["segment_bed="])
-    assert proc.returncode != 0
-    assert "segment_bed is required" in proc.stdout + proc.stderr
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "segment_bed unset, one segment per region_bed arm" in proc.stdout
+    assert job_counts(proc.stdout)["build_segment_bed"] == 1
+    assert f"{workspace['ref']}/region.bed" in proc.stdout
 
 
 @pytest.mark.parametrize(

@@ -1,18 +1,19 @@
 """Assay, reference and sample-file constants shared by the Snakefile and scripts.
 
-Last update: 2026-08-11
+Last update: 2026-08-12
 
 Constants:
-- WORKFLOW_MODES, ALLOWED_ASSAY_TYPES, ASSAY_TYPE2MODALITY: mode and assay vocabulary
-- REQUIRED_RECORD_KEYS, REQUIRED_FILES: the sample-file schema
+- WORKFLOW_MODES, REMOTE_MODES: run modes and remote input handling
+- ALLOWED_ASSAY_TYPES, MULTIOME_ASSAYS, ASSAY_TYPE2MODALITY: assay vocabulary
+- SAMPLE_FILE_EXTS, SAMPLE_TYPES, REQUIRED_RECORD_KEYS, REQUIRED_FILES: sample-file schema
 - BULK_TARGETS, SINGLE_CELL_TARGETS, COPYTYPING_TARGETS: the per-mode final outputs
 - REFVERS, REFVERS_ALIAS, SPECIES2SEXCHROM: reference builds and their spellings
 - RANGER_*, RANGER_LAYOUT: 10x Cell and Space Ranger filenames
 - REPLISEQ_*, LIFTOVER_CHAIN_URL: the ENCODE Repli-seq sources
+- URL_SCHEMES: remote input schemes a sample-file value may use
 Functions:
 - canonical_refver, is_known_refver: fold a reference_version spelling
 - get_phasing_panel_path, get_genetic_map_path: per-chromosome path builders
-- is_url: does a sample-file value name a remote input
 """
 
 import os
@@ -21,7 +22,19 @@ import os
 # Pipeline modes
 WORKFLOW_MODES = ("bulk_genotyping", "single_cell_genotyping", "copytyping_preprocess")
 
+# Remote input fetch mode
+REMOTE_MODES = ("storage", "stream")
+
+# Remote input schemes
+URL_SCHEMES = ("http://", "https://", "ftp://", "s3://")
+
+# params_combine_counts.rdr_normalization mode
+RDR_NORMALIZATIONS = ("auto", "median", "normal")
+
+##################################################
 # sample-file schema
+SAMPLE_FILE_EXTS = (".json", ".tsv", ".txt")
+SAMPLE_TYPES = ("normal", "tumor")
 REQUIRED_RECORD_KEYS = (
     "sample_id",
     "dataset_id",
@@ -39,7 +52,8 @@ SCALAR_RECORD_KEYS = (
 )
 FILES_COLUMN_PREFIX = "files."
 
-# Inputs
+##################################################
+# Input/output filenames
 ALIGNMENT_FILES = {"alignment", "alignment_index"}
 REQUIRED_FILES = {
     "bulkWGS": ALIGNMENT_FILES,
@@ -68,12 +82,35 @@ SINGLE_CELL_TARGETS = BB_GRID + BB_ALLELES + ("bb.Xcount.npz", "barcodes.tsv.gz"
 COPYTYPING_TARGETS = BB_ALLELES + ("bb.tsv.gz", "bb.Xcount.npz")
 
 ##################################################
+# Supported phasing softwares
+LONGREAD_PHASER = {"longphase"}
+PANEL_PHASER = {"eagle", "shapeit"}
+
+
+def get_phasing_panel_path(phasing_panel):
+    """Return a per-chromosome phasing panel path function."""
+    return lambda chrname: os.path.join(phasing_panel, f"chr{chrname}.genotypes.bcf")
+
+
+def get_genetic_map_path(gmap_path):
+    """Return a per-chromosome genetic map path function.
+
+    ``gmap_path`` is a full path with optional ``{chrname}`` placeholder:
+      SHAPEIT5: ``/path/to/maps/chr{chrname}.mm10.gmap.gz``
+      Eagle2:   ``/path/to/tables/genetic_map_mm10_withX.txt.gz`` (no placeholder)
+    """
+    return lambda chrname: gmap_path.format(chrname=chrname)
+
+
+##################################################
 # Supported sequencing assays
 BULK_ASSAYS = {"bulkWGS", "bulkWGS-lr", "bulkWES"}
-LONGREAD_ASSAYS = {"bulkWGS-lr"}
+BULK_LR_ASSAYS = {"bulkWGS-lr"}
 NONBULK_ASSAYS = {"scATAC", "scRNA", "VISIUM", "VISIUM3prime"}
 SPATIAL_ASSAYS = {"VISIUM", "VISIUM3prime"}
 ALLOWED_ASSAY_TYPES = list(BULK_ASSAYS) + list(NONBULK_ASSAYS)
+
+MULTIOME_ASSAYS = {"scRNA", "scATAC"}
 
 # bulk-genotyping assay preference
 GT_ASSAY_ORD = {"bulkWGS": 0, "bulkWGS-lr": 1, "bulkWES": 2}
@@ -92,6 +129,13 @@ ASSAY_TYPE2MODALITY = {
 # Native supported reference genome versions
 REFVERS = ["hg19", "hg38", "chm13v2", "mm10"]
 
+# Species
+SPECIES = ("human", "mouse")
+SPECIES2SEXCHROM = {
+    "human": {"X": 23, "Y": 24},
+    "mouse": {"X": 20, "Y": 21},
+}
+
 REFVERS_ALIAS = {
     "hg19": ["GRCh37", "b37", "hs37", "hs37d5"],
     "hg38": ["GRCh38", "hs38", "hs38DH", "GRCh38.p13", "GRCh38_no_alt"],
@@ -99,28 +143,14 @@ REFVERS_ALIAS = {
     "mm10": ["GRCm38", "MGSCv38"],
 }
 
-_ALIAS2REFVER = {
-    alias.lower(): canon
-    for canon, aliases in REFVERS_ALIAS.items()
-    for alias in (canon, *aliases)
-}
-
 
 def canonical_refver(value):
-    """Fold a reference_version spelling to its canonical form.
-
-    Used on both sides of the sample-file match: the config value and each record's
-    ``reference_version``. An unrecognized value folds to its own lowercased form
-    rather than raising, so a reference the pipeline has no built-in support for can
-    still select records; ``is_known_refver`` distinguishes the two cases.
-
-    Args:
-        value: A reference_version spelling, e.g. "GRCh38".
-
-    Returns:
-        The canonical REFVERS token ("hg38"), or the stripped lowercase input when no
-        alias matches.
-    """
+    """Convert reference version to canonical form if supported."""
+    _ALIAS2REFVER = {
+        alias.lower(): canon
+        for canon, aliases in REFVERS_ALIAS.items()
+        for alias in (canon, *aliases)
+    }
     key = str(value).strip().lower()
     return _ALIAS2REFVER.get(key, key)
 
@@ -131,16 +161,14 @@ def is_known_refver(value):
 
 
 ##################################################
-# Supported species.
-SPECIES = ("human", "mouse")
-SPECIES2SEXCHROM = {
-    "human": {"X": 23, "Y": 24},
-    "mouse": {"X": 20, "Y": 21},
-}
-
-##################################################
 # Repli-seq for replication timing RD correction.
+# Liftover hg19 to hg38
 REPLISEQ_REFVERS = ("hg19", "hg38")
+LIFTOVER_CHAIN_URL = (
+    "https://hgdownload.cse.ucsc.edu/goldenpath/hg19/liftOver/hg19ToHg38.over.chain.gz"
+)
+
+# hg19 Repli-seq data
 UCSC_REPLISEQ_BASE = (
     "http://hgdownload.cse.ucsc.edu/goldenpath/hg19/encodeDCC/wgEncodeUwRepliSeq"
 )
@@ -161,11 +189,6 @@ REPLISEQ_BIGWIG_FILES = (
     "wgEncodeUwRepliSeqMcf7WaveSignalRep1.bigWig",
     "wgEncodeUwRepliSeqNhekWaveSignalRep1.bigWig",
     "wgEncodeUwRepliSeqSknshWaveSignalRep1.bigWig",
-)
-
-# Lift-over from hg19 to hg38
-LIFTOVER_CHAIN_URL = (
-    "https://hgdownload.cse.ucsc.edu/goldenpath/hg19/liftOver/hg19ToHg38.over.chain.gz"
 )
 
 ##################################################
@@ -208,36 +231,3 @@ GTF_COLUMNS = [
     "frame",
     "attributes",
 ]
-
-##################################################
-# Supported phasing softwares
-LONGREAD_PHASER = {"longphase"}
-PANEL_PHASER = {"eagle", "shapeit"}
-
-
-def get_phasing_panel_path(phasing_panel):
-    """Return a per-chromosome phasing panel path function."""
-    return lambda chrname: os.path.join(phasing_panel, f"chr{chrname}.genotypes.bcf")
-
-
-def get_genetic_map_path(gmap_path):
-    """Return a per-chromosome genetic map path function.
-
-    ``gmap_path`` is a full path with optional ``{chrname}`` placeholder:
-      SHAPEIT5: ``/path/to/maps/chr{chrname}.mm10.gmap.gz``
-      Eagle2:   ``/path/to/tables/genetic_map_mm10_withX.txt.gz`` (no placeholder)
-    """
-    return lambda chrname: gmap_path.format(chrname=chrname)
-
-
-##################################################
-# params_combine_counts.rdr_normalization mode
-RDR_NORMALIZATIONS = ("auto", "median", "normal")
-
-##################################################
-URL_SCHEMES = ("http://", "https://", "ftp://", "s3://")
-
-
-def is_url(path):
-    """True if a sample-file path is a remote URL rather than a local path."""
-    return str(path).startswith(URL_SCHEMES)

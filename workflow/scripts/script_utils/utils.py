@@ -1,11 +1,12 @@
 """Thread limits, logging, and chromosome naming and ordering.
 
-Last update: 2026-08-10
+Last update: 2026-08-12
 
 Functions:
 - set_omp_threads: cap every BLAS/OpenMP runtime, before numpy loads
 - setup_logging, logging_snakemake: the rule log and the Snakemake run log
 - log_hist: one-line summary plus an ASCII histogram
+- is_url: does a path name a remote input
 - maybe_path, check_local_path: coerce and validate an optional input path
 - strip_chr_prefix, add_chr_prefix: convert between the two chromosome namings
 - chrom_sort_key, sort_chroms, sort_df_chr: genomic ordering of chromosomes
@@ -16,8 +17,10 @@ import sys
 import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../config"))
-from const import *  # noqa: F401,F403
-from const import is_url
+from const import (
+    SPECIES2SEXCHROM,  # noqa: F401  re-exported: the scripts import it from here
+    URL_SCHEMES,
+)
 
 _OMP_THREAD_VARS = (
     "OMP_NUM_THREADS",
@@ -146,6 +149,11 @@ def log_hist(values, label, bins=20, width=48, fmt=".4g"):
         logging.info(
             f"  [{edges[i]:>10{fmt}}, {edges[i + 1]:>10{fmt}}{close} {count:>9d} |{bar}"
         )
+
+
+def is_url(path):
+    """True if a sample-file path is a remote URL (``URL_SCHEMES``) rather than local."""
+    return str(path).startswith(URL_SCHEMES)
 
 
 def maybe_path(x):

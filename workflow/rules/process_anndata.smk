@@ -30,20 +30,16 @@ rule process_rna_anndata:
             if wc.assay_type in SPATIAL_ASSAYS
             else []
         ),
-        region_bed=lambda wc: config["region_bed"],
-        gene_blacklist_file=lambda wc: branch(
-            config["gene_blacklist_file"] is None,
-            then=[],
-            otherwise=config["gene_blacklist_file"],
-        ),
-        gtf_file=lambda wc: config["gtf_file"],
+        region_bed=region_bed,
+        gene_blacklist_file=gene_blacklist_file,
+        gtf_file=gtf_file,
     output:
-        h5ad_file=config["bb_dir"] + "/{assay_type}.h5ad",
+        h5ad_file=bb_dir + "/{assay_type}.h5ad",
     log:
-        config["log_dir"]
+        log_dir
         + f"/process_rna_anndata/process_rna_anndata.{{assay_type}}.{_run_id}.log",
     benchmark:
-        config["bench_dir"]
+        bench_dir
         + f"/process_rna_anndata/process_rna_anndata.{{assay_type}}.{_run_id}.tsv"
     wildcard_constraints:
         assay_type="(scRNA|VISIUM|VISIUM3prime)",
@@ -57,9 +53,7 @@ rule process_rna_anndata:
             if wc.assay_type in SPATIAL_ASSAYS
             else []
         ),
-        min_frac_barcodes=lambda wc: config["params_process_anndata"][
-            "min_frac_barcodes"
-        ],
-        gene_id_colname=lambda wc: config["params_process_anndata"]["gene_id_colname"],
+        min_frac_barcodes=config["params_process_anndata"]["min_frac_barcodes"],
+        gene_id_colname=config["params_process_anndata"]["gene_id_colname"],
     script:
         """../scripts/process_rna_anndata.py"""

@@ -42,12 +42,7 @@ reference_version: null
 reference: null
 gtf_file: null
 genome_size: null
-
-# reference genome chrom arms (4th column = region_id); required
 region_bed: null
-
-# pre-defined genomic segments (4th column = seg_id); required.
-# Set it to region_bed for one segment per chromosome arm.
 segment_bed: null
 
 # Blacklist excluded regions/genes

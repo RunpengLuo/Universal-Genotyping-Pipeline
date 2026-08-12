@@ -9,21 +9,21 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
         """Het vs hom-alt allele-fraction QC from the genotyped VCFs (genotyping sample)."""
         input:
             vcfs=expand(
-                config["snp_dir"] + "/chr{chrname}.vcf.gz",
-                chrname=config["chromosomes"],
+                snp_dir + "/chr{chrname}.vcf.gz",
+                chrname=nochr_chromosomes,
             ),
-            genome_size=config["genome_size"],
+            genome_size=genome_size,
         output:
             qc_pdf=report(
-                config["qc_dir"] + "/genotype_snp_qc.pdf",
+                qc_dir + "/genotype_snp_qc.pdf",
                 category="QC plots",
                 subcategory="genotyping",
                 labels={"plot": "genotype het/hom-alt AF"},
             ),
         log:
-            config["log_dir"] + f"/plot_genotype_qc/plot_genotype_qc.{_run_id}.log",
+            log_dir + f"/plot_genotype_qc/plot_genotype_qc.{_run_id}.log",
         benchmark:
-            config["bench_dir"] + f"/plot_genotype_qc/plot_genotype_qc.{_run_id}.tsv"
+            bench_dir + f"/plot_genotype_qc/plot_genotype_qc.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1

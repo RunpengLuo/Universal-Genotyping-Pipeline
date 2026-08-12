@@ -19,16 +19,13 @@ rule pileup_snps_bulk_bcftools:
             get_data[(wc.assay_type, wc.dataset_id)]
         ),
         snp_vcf=phased_snp_vcf,
-        reference=config["reference"],
+        reference=reference,
     output:
-        counts=config["pileup_dir"]
-        + "/{assay_type}_{dataset_id}/bcftools.counts.tsv.gz",
+        counts=pileup_dir + "/{assay_type}_{dataset_id}/bcftools.counts.tsv.gz",
     log:
-        config["log_dir"]
-        + f"/pileup_snps_bulk_bcftools/pileup_snps_bulk_bcftools.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
+        log_dir + f"/pileup_snps/bcftools.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
     benchmark:
-        config["bench_dir"]
-        + f"/pileup_snps_bulk_bcftools/pileup_snps_bulk_bcftools.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
+        bench_dir + f"/pileup_snps/bcftools.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
     conda:
         "../envs/bcftools.yaml"
     threads: config["threads"]["pileup"]
@@ -41,7 +38,7 @@ rule pileup_snps_bulk_bcftools:
         extra_params=config["params_bcftools"]["extra_params"],
         bam_arg=lambda wc: bam_stream_arg(get_data[(wc.assay_type, wc.dataset_id)]),
         region_arg=(
-            "-r " + ",".join(input_chrom(c) for c in config["chromosomes"])
+            "-r " + ",".join(nochr_chromosomes if input_nochr else chr_chromosomes)
             if remote_mode == "stream"
             else ""
         ),
@@ -79,17 +76,17 @@ rule pileup_snps_nonbulk_mode1a:
         ),
         snp_vcf=phased_snp_vcf,
     output:
-        out_dir=directory(config["pileup_dir"] + "/{assay_type}_{dataset_id}/"),
-        out_vcf=config["pileup_dir"] + "/{assay_type}_{dataset_id}/cellSNP.base.vcf.gz",
-        out_tsv=config["pileup_dir"] + "/{assay_type}_{dataset_id}/cellSNP.samples.tsv",
-        out_dp=config["pileup_dir"] + "/{assay_type}_{dataset_id}/cellSNP.tag.DP.mtx",
-        out_ad=config["pileup_dir"] + "/{assay_type}_{dataset_id}/cellSNP.tag.AD.mtx",
+        out_dir=directory(pileup_dir + "/{assay_type}_{dataset_id}/"),
+        out_vcf=pileup_dir + "/{assay_type}_{dataset_id}/cellSNP.base.vcf.gz",
+        out_tsv=pileup_dir + "/{assay_type}_{dataset_id}/cellSNP.samples.tsv",
+        out_dp=pileup_dir + "/{assay_type}_{dataset_id}/cellSNP.tag.DP.mtx",
+        out_ad=pileup_dir + "/{assay_type}_{dataset_id}/cellSNP.tag.AD.mtx",
     log:
-        config["log_dir"]
-        + f"/pileup_snps_nonbulk_mode1a/pileup_snps_nonbulk_mode1a.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
+        log_dir
+        + f"/pileup_snps/cellsnp_lite_mode1a.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
     benchmark:
-        config["bench_dir"]
-        + f"/pileup_snps_nonbulk_mode1a/pileup_snps_nonbulk_mode1a.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
+        bench_dir
+        + f"/pileup_snps/cellsnp_lite_mode1a.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
     wildcard_constraints:
         assay_type="(scRNA|scATAC|VISIUM|VISIUM3prime)",
     conda:

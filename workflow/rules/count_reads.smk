@@ -19,15 +19,15 @@ if remote_mode != "stream":
             alignment_index=lambda wc: alignment_index_input(
                 get_data[(wc.assay_type, wc.dataset_id)]
             ),
-            windows_bed=config["aux_dir"] + "/windows.3col.bed.gz",
+            windows_bed=aux_dir + "/windows.3col.bed.gz",
         output:
-            mosdepth_file=config["pileup_dir"]
+            mosdepth_file=pileup_dir
             + "/{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz",
         log:
-            config["log_dir"]
+            log_dir
             + f"/run_mosdepth/run_mosdepth.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
+            bench_dir
             + f"/run_mosdepth/run_mosdepth.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
         conda:
             "../envs/mosdepth.yaml"
@@ -37,7 +37,7 @@ if remote_mode != "stream":
                 get_data[(wc.assay_type, wc.dataset_id)]
             ),
         params:
-            out_prefix=config["pileup_dir"] + "/{assay_type}/out_mosdepth/{dataset_id}",
+            out_prefix=pileup_dir + "/{assay_type}/out_mosdepth/{dataset_id}",
             read_quality=config["params_mosdepth"]["read_quality"],
             extra_params=config["params_mosdepth"]["extra_params"],
         shell:
@@ -61,18 +61,18 @@ else:
             alignment_index=lambda wc: bam_stream_index_input(
                 get_data[(wc.assay_type, wc.dataset_id)]
             ),
-            windows_bed=config["aux_dir"] + "/windows.3col.bed.gz",
-            reference=config["reference"],
+            windows_bed=aux_dir + "/windows.3col.bed.gz",
+            reference=reference,
         output:
             mosdepth_file=temp(
-                config["pileup_dir"]
+                pileup_dir
                 + "/{assay_type}/out_mosdepth/{dataset_id}.chr{chrname}.regions.bed.gz"
             ),
         log:
-            config["log_dir"]
+            log_dir
             + f"/run_mosdepth/run_mosdepth.{{assay_type}}_{{dataset_id}}.chr{{chrname}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
+            bench_dir
             + f"/run_mosdepth/run_mosdepth.{{assay_type}}_{{dataset_id}}.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/mosdepth.yaml"
@@ -82,7 +82,7 @@ else:
                 get_data[(wc.assay_type, wc.dataset_id)]
             ),
         params:
-            out_prefix=config["pileup_dir"]
+            out_prefix=pileup_dir
             + "/{assay_type}/out_mosdepth/{dataset_id}.chr{chrname}",
             chrom=lambda wc: input_chrom(wc.chrname),
             read_quality=config["params_mosdepth"]["read_quality"],
@@ -106,15 +106,15 @@ else:
         """Concat per-chrom regions (config-chrom order) -> the file rd_correct reads."""
         input:
             per_chrom=lambda wc: [
-                config["pileup_dir"]
+                pileup_dir
                 + f"/{wc.assay_type}/out_mosdepth/{wc.dataset_id}.chr{c}.regions.bed.gz"
-                for c in config["chromosomes"]
+                for c in nochr_chromosomes
             ],
         output:
-            mosdepth_file=config["pileup_dir"]
+            mosdepth_file=pileup_dir
             + "/{assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz",
         log:
-            config["log_dir"]
+            log_dir
             + f"/run_mosdepth/merge_mosdepth.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
         shell:
             r"""
@@ -126,41 +126,40 @@ rule rd_correct:
     """Per-window LOWESS bias correction (GC/mappability/replication timing)."""
     input:
         mosdepth_files=lambda wc: [
-            config["pileup_dir"]
-            + f"/{wc.assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz"
+            pileup_dir + f"/{wc.assay_type}/out_mosdepth/{dataset_id}.regions.bed.gz"
             for dataset_id in assay2dataset_ids[wc.assay_type]
         ],
         window_bed=window_bed,
-        genome_size=config["genome_size"],
+        genome_size=genome_size,
         region_bed=segment_bed,
-        blacklist_bed=config["blacklist_bed"] or [],
+        blacklist_bed=blacklist_bed,
     output:
-        dp_corrected=config["pileup_dir"] + "/{assay_type}/window.dp.npz",
-        window_df=config["pileup_dir"] + "/{assay_type}/window.tsv.gz",
+        dp_corrected=pileup_dir + "/{assay_type}/window.dp.npz",
+        window_df=pileup_dir + "/{assay_type}/window.tsv.gz",
         depth_stats=report(
-            config["pileup_dir"] + "/{assay_type}/depth_statistics.tsv",
+            pileup_dir + "/{assay_type}/depth_statistics.tsv",
             category="QC stats",
             subcategory="depth",
             labels={"table": "depth statistics", "assay": "{assay_type}"},
         ),
         qc_pdf=report(
-            config["qc_dir"] + "/rd_correction.{assay_type}.pdf",
+            qc_dir + "/rd_correction.{assay_type}.pdf",
             category="QC plots",
             subcategory="read-depth correction",
             labels={"assay": "{assay_type}"},
         ),
     log:
-        config["log_dir"] + f"/rd_correct/rd_correct.{{assay_type}}.{_run_id}.log",
+        log_dir + f"/rd_correct/rd_correct.{{assay_type}}.{_run_id}.log",
     benchmark:
-        config["bench_dir"] + f"/rd_correct/rd_correct.{{assay_type}}.{_run_id}.tsv"
+        bench_dir + f"/rd_correct/rd_correct.{{assay_type}}.{_run_id}.tsv"
     conda:
         "../envs/base.yaml"
     params:
-        qc_dir=config["qc_dir"],
+        qc_dir=qc_dir,
         sample_id=sample_id,
         dataset_ids=lambda wc: assay2dataset_ids[wc.assay_type],
-        mosdepth_dir=lambda wc: config["pileup_dir"] + f"/{wc.assay_type}/out_mosdepth",
-        chroms=chroms,
+        mosdepth_dir=lambda wc: pileup_dir + f"/{wc.assay_type}/out_mosdepth",
+        chroms=chr_chromosomes,
         samplesize=_rdr_cfg["samplesize"],
         routlier=_rdr_cfg["routlier"],
         doutlier=_rdr_cfg["doutlier"],

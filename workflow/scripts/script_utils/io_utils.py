@@ -27,17 +27,13 @@ from utils import add_chr_prefix, sort_chroms, sort_df_chr
 
 
 def read_chrom_sizes(sz_file: str):
-    """Read a two-column chromosome-sizes file and return an OrderedDict mapping name to length.
+    """Read a two-column chromosome-sizes file.
 
-    Parameters
-    ----------
-    sz_file : str
-        Path to a tab-separated file with columns (chromosome, size).
+    Args:
+        sz_file: Tab-separated ``chrom<TAB>size``.
 
-    Returns
-    -------
-    OrderedDict[str, int]
-        Chromosome name to integer length.
+    Returns:
+        OrderedDict of chromosome name to length, in file order.
     """
     chr_sizes = OrderedDict()
     with open(sz_file, "r") as rfd:
@@ -56,9 +52,19 @@ def read_VCF(
     add_pos0=False,
     add_phase1=False,
 ):
-    """
-    load VCF file as dataframe.
-    If phased, parse GT[0] as USEREF, check PS
+    """Read a VCF into a DataFrame, exploding its INFO and FORMAT fields into columns.
+
+    Args:
+        vcf_file: Path to the (optionally gzipped) VCF.
+        addchr: Prepend ``chr`` to contigs named without it.
+        addkey: Add ``KEY`` (``#CHROM_POS``).
+        snps_presorted: Skip the genomic sort.
+        add_pos0: Add ``POS0`` (0-based).
+        add_phase1: Add ``PHASE``, the second GT allele.
+
+    Returns:
+        DataFrame with the 8 fixed VCF columns, ``#CHR``, ``RAW_SNP_DF_IDX`` and one
+        column per INFO/FORMAT key; None when the file has no records.
     """
     snps = pd.read_csv(
         vcf_file, comment="#", sep="\t", header=None, dtype={0: "string"}
@@ -146,13 +152,8 @@ def read_VCF(
 def read_bcftools_pileup_counts(tsv_file: str, parent_alt_by_key: dict):
     """Read a bcftools per-locus AD table as pseudobulk depth/alt count matrices.
 
-    Input is the output of ``pileup_snps_bulk_bcftools``: tab-separated
-    ``#CHROM POS REF ALT AD``, where ALT is a comma-list (e.g. ``C,<*>``) and AD is a
-    comma-list of allele depths (``ref,alt1,...``), one row per het locus with reads.
-
-    Only the PARENT ALT allele is counted: its depth is looked up in the locus's own ALT
-    list and is 0 when that allele was not observed. ``DP = ref + alt`` is therefore the
-    usable het depth, so a downstream ``REF = DP - ALT`` is exact.
+    Counts the parent ALT allele only, looked up in the locus's own ALT list, so
+    ``DP = ref + alt`` and a downstream ``REF = DP - ALT`` is exact.
 
     Args:
         tsv_file: Path to the (optionally gzipped) counts TSV.
@@ -196,10 +197,8 @@ def read_bcftools_pileup_counts(tsv_file: str, parent_alt_by_key: dict):
 def read_allele_mat(npz_file, mat_dtype=None):
     """Read one SNP-level allele matrix, dense or sparse, as it was written.
 
-    Bulk writes ``np.savez_compressed(mat=...)`` (one ``mat`` key) because its matrices
-    are mostly non-zero; the single-cell path writes ``scipy.sparse.save_npz``. The two
-    are told apart by the archive's keys, so callers pass a path and get back whichever
-    the file holds.
+    Bulk writes a dense ``mat`` key, single-cell a ``scipy.sparse`` archive; the keys
+    tell them apart.
 
     Args:
         npz_file: Path to the ``.npz``.
@@ -217,10 +216,7 @@ def read_allele_mat(npz_file, mat_dtype=None):
 
 
 def read_snp_mats(snp_info_file, tot_file, a_file, b_file, mat_dtype=None):
-    """Read a SNP table and its T/A/B allele matrices.
-
-    Row order is the file's. Nothing downstream depends on it: the one step defined
-    over genomic neighbours, ``detect_phase_flips``, orders each cluster itself.
+    """Read a SNP table and its T/A/B allele matrices, in file row order.
 
     Args:
         snp_info_file: ``snps.tsv.gz`` from phase_and_concat.
@@ -242,19 +238,18 @@ def read_snp_mats(snp_info_file, tot_file, a_file, b_file, mat_dtype=None):
 
 
 def read_BED(bed_file: str, addchr=True, col_id="region_id"):
-    """Read a BED: the 3 coordinate columns, plus column 4 as *col_id* when present.
-
-    Column 4 of a BED is NAME, so a file that carries one names its own rows; a BED3
-    gets ``CHR:START-END`` derived instead, one id per row. Columns beyond 4 are left
-    to the caller.
+    """Read BED file.
 
     Args:
         bed_file: Path to a BED file, at least 3 columns.
-        addchr: Prepend ``chr`` to contigs named without it.
+        addchr: Prepend ``chr`` to contigs if contigs are not chr-prefix.
         col_id: Name of the id column, read from column 4 or derived.
 
     Returns:
         DataFrame with ``#CHR``, ``START``, ``END`` and *col_id*.
+
+    Notes/References:
+        Format: https://genome.ucsc.edu/FAQ/FAQformat.html#format1
     """
     df = pd.read_table(bed_file, sep="\t", header=None, dtype={0: "string"})
     assert len(df.columns) >= 3, (
@@ -273,13 +268,10 @@ def read_BED(bed_file: str, addchr=True, col_id="region_id"):
 
 
 def read_segment_bed(bed_file: str, addchr=True):
-    """Read ``aux/segment.bed``: the coordinates, ``region_id`` (col 4), ``seg_id`` (col 5).
-
-    ``build_segment_bed`` stamps both ids; they are read back rather than derived, since
-    blacklist subtraction splits a segment into pieces that keep the parent's ids.
+    """Read custom BED file with 5th column defines segment ID.
 
     Args:
-        bed_file: Path to the built segment BED, 5 columns.
+        bed_file: Path to the custom BED, 5 columns.
         addchr: Prepend ``chr`` to contigs named without it.
 
     Returns:
@@ -337,9 +329,6 @@ def read_window_bed(bed_files, chroms=None):
 def read_bedgraph(bg_file: str, chroms=None):
     """Read a bedGraph track: ``chrom start end value``, 0-based half-open.
 
-    Contig names are chr-normalized on ingest, like every other reader here, so a
-    track that spells its contigs bare still matches *chroms*.
-
     Args:
         bg_file: Path to the (optionally gzipped) bedGraph.
         chroms: Keep only these contigs; ``None`` keeps every row.
@@ -364,17 +353,13 @@ def read_bedgraph(bg_file: str, chroms=None):
 
 
 def read_barcodes(bc_file: str):
-    """Read a barcode file (one barcode per line) and return as a list of strings.
+    """Read a barcode file, one barcode per line.
 
-    Parameters
-    ----------
-    bc_file : str
-        Path to a text file with one barcode per line.
+    Args:
+        bc_file: Path to the barcode list.
 
-    Returns
-    -------
-    list[str]
-        Barcodes.
+    Returns:
+        List of barcodes, in file order.
     """
     barcodes = (
         pd.read_table(bc_file, sep="\t", header=None, dtype=str).iloc[:, 0].tolist()
@@ -385,10 +370,8 @@ def read_barcodes(bc_file: str):
 def read_barcodes_by_dataset(bc_file: str):
     """Read ``barcodes.tsv.gz`` and split each key back into its three fields.
 
-    ``phase_and_concat_nonbulk`` writes ``"{raw}_{dataset_id}_{assay_type}"``. The parse is
-    positional, with no lookup: no assay_type contains ``_``, so the LAST one ends the key,
-    and the raw barcode contains none either (asserted at write), so the FIRST one ends it.
-    Everything between is the dataset_id, which may hold underscores freely.
+    The parse is positional: no assay_type holds ``_`` and no raw barcode does either
+    (asserted at write), so the last and first ``_`` bound the dataset_id.
 
     Args:
         bc_file: One ``{raw}_{dataset_id}_{assay_type}`` per line, no header, in
@@ -425,13 +408,10 @@ def _split_once(values: pd.Series, bc_file: str, from_right: bool):
 
 
 def read_chunks_from_atac_fragments(frag_file: str, chunksize=5_000_000):
-    """Read a 10x ATAC fragment file in chunks.
+    """Read a 10x ATAC fragment file in chunks, keeping its first four columns.
 
-    Each record of ``atac_fragments.tsv.gz`` is one deduplicated fragment, columns
-    ``chrom, chromStart, chromEnd, barcode, readSupport, strand``; only the first four
-    are read. One sample runs to hundreds of millions of records, hence the chunking.
-    Contig names are left as the file spells them, so a caller that filters rows first
-    can chr-normalize the subset rather than every record.
+    Contig names are left as the file spells them: one sample runs to hundreds of
+    millions of records, so a caller chr-normalizes the rows it keeps.
 
     Args:
         frag_file: Path to the (optionally gzipped) fragment TSV.
@@ -460,11 +440,8 @@ def read_10x_ranger_spatial(
 ):
     """Read one Space Ranger spatial dataset into an AnnData.
 
-    squidpy takes a directory, while the sample file names each spatial file
-    individually so remote files can be fetched. The Space Ranger layout it expects is
-    rebuilt as symlinks in a temporary directory - the feature matrix at the root, the
-    rest under spatial/ - which lives only for the read. Names come from RANGER_* in
-    const.py.
+    squidpy takes a directory, so the Space Ranger layout is rebuilt as symlinks in a
+    temporary directory for the read; names come from ``RANGER_*`` in const.py.
 
     Args:
         matrix_h5: Path to this dataset's feature-barcode matrix.
@@ -525,9 +502,8 @@ def read_10x_ranger_scRNA(matrix_h5):
 def read_gtf(gtf_file: str, feature_types):
     """Parse a GTF once and split it by feature type.
 
-    Contig names are normalized to chr-notation; coordinates become 0-based
-    half-open. Genes are deduplicated by ``gene_id``; other feature types keep
-    every record.
+    Contigs are chr-normalized and coordinates become 0-based half-open; genes are
+    deduplicated by ``gene_id``.
 
     Args:
         gtf_file: Path to a GTF annotation file (optionally gzipped).
@@ -535,6 +511,9 @@ def read_gtf(gtf_file: str, feature_types):
 
     Returns:
         ``{feature_type: DataFrame}`` with ``#CHR``, ``START``, ``END``, ``gene_id``.
+
+    Notes/References:
+        Format: https://genome.ucsc.edu/FAQ/FAQformat.html#format4
     """
     wanted = list(feature_types)
     gtf = pd.read_csv(
@@ -596,9 +575,8 @@ def write_sample_ids(
 ):
     """Write ``sample_ids.tsv``, one row per observation of the bb matrices.
 
-    Every column is a sample-file record key spelled the same way, except the leading
-    ``SAMPLE``, which is derived (``{sample_id}_{dataset_id}``). Column order follows
-    the argument order.
+    Every column is a sample-file record key spelled the same way, except the derived
+    leading ``SAMPLE``.
 
     Args:
         sample_id: Sample (patient) id, one per file.
@@ -638,15 +616,9 @@ def write_sample_ids(
 def write_bb_file(bbs: pd.DataFrame, out_file: str):
     """Write ``bb.tsv.gz``, the feature axis of every bb matrix.
 
-    The three coordinate columns are required; the rest are written when the frame has
-    them, so one schema covers all three modes. Any other column is dropped: ``bb_id``
-    is the row position, and the binning internals (``BLOCKSIZE``, ``seg_id``, ``PS``,
-    the cluster keys) are not part of the output contract.
-
-    ``switchprobs`` is absent only in ``copytyping_preprocess``, which bins nothing and
-    carries whatever the supplied ``bb_file`` held; ``feature_id`` needs a GTF (see
-    a GTF); ``#feature`` is the RNA gene count that
-    only ``combine_counts_fixed_bins`` computes.
+    The three coordinate columns are required and the optional ones are written when
+    present, so one schema covers all three modes; the binning internals (``bb_id``,
+    ``BLOCKSIZE``, ``seg_id``, ``PS``, the cluster keys) are dropped.
 
     Args:
         bbs: bbs carrying at least ``#CHR``, ``START``, ``END``.
@@ -674,9 +646,8 @@ def write_snp_info(
 ):
     """Write the SNP feature axis of the allele matrices.
 
-    Two columns are carried only when present: ``PS``, the upstream phaser's phase-set
-    label, which becomes the binning phase clusters; and ``seg_id``, which exists when
-    ``segment_bed`` had a 4th column.
+    ``PS`` (the phaser's phase-set label, which becomes the binning phase clusters) and
+    ``seg_id`` are carried only when present.
 
     Args:
         snps: Filtered SNPs, in matrix-feature order.

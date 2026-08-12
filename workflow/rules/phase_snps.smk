@@ -1,32 +1,32 @@
 """Phase the called SNPs, then extract one het-SNP VCF.
 
-Last update: 2026-08-11
+Last update: 2026-08-12
 
 Rules:
 - [optional] phase_snps_shapeit, phase_snps_eagle: panel phasing, one chromosome each
 - [optional] phase_snps_longphase: read-based phasing for long-read bulk
-- [optional] concat_and_extract_phased_het_snps: concatenate, keep the phased hets
+- concat_and_extract_phased_het_snps: concatenate, keep the phased hets
 - [optional] parse_genetic_map: the phaser maps into one chr-prefixed table
 Outputs:
 - phase_dir/phased_het_snps.vcf.gz: the parent SNP set for every pileup
 """
 
-if run_phasing and config["phaser"] == "shapeit":
+if phaser == "shapeit":
 
     rule phase_snps_shapeit:
         input:
-            snp_vcf=lambda wc: config["snp_dir"] + f"/chr{wc.chrname}.vcf.gz",
+            snp_vcf=lambda wc: snp_dir + f"/chr{wc.chrname}.vcf.gz",
             phasing_panel_file=lambda wc: get_phasing_panel(wc.chrname),
             gmap_file=lambda wc: get_genetic_map(wc.chrname),
         output:
-            phased_file=config["phase_dir"] + "/chr{chrname}.vcf.gz",
-            bcf_file=temp(config["phase_dir"] + "/chr{chrname}.bcf"),
-            bcf_file_csi=temp(config["phase_dir"] + "/chr{chrname}.bcf.csi"),
+            phased_file=phase_dir + "/chr{chrname}.vcf.gz",
+            bcf_file=temp(phase_dir + "/chr{chrname}.bcf"),
+            bcf_file_csi=temp(phase_dir + "/chr{chrname}.bcf.csi"),
         log:
-            config["log_dir"]
+            log_dir
             + f"/phase_snps_shapeit/phase_snps_shapeit.chr{{chrname}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
+            bench_dir
             + f"/phase_snps_shapeit/phase_snps_shapeit.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/shapeit.yaml"
@@ -48,26 +48,25 @@ if run_phasing and config["phaser"] == "shapeit":
             """
 
 
-if run_phasing and config["phaser"] == "eagle":
+if phaser == "eagle":
 
     rule phase_snps_eagle:
         input:
-            snp_vcf=lambda wc: config["snp_dir"] + f"/chr{wc.chrname}.vcf.gz",
+            snp_vcf=lambda wc: snp_dir + f"/chr{wc.chrname}.vcf.gz",
             phasing_panel_file=lambda wc: get_phasing_panel(wc.chrname),
             gmap_file=lambda wc: get_genetic_map(wc.chrname),
         output:
-            phased_file=config["phase_dir"] + "/chr{chrname}.vcf.gz",
+            phased_file=phase_dir + "/chr{chrname}.vcf.gz",
         log:
-            config["log_dir"]
-            + f"/phase_snps_eagle/phase_snps_eagle.chr{{chrname}}.{_run_id}.log",
+            log_dir + f"/phase_snps_eagle/phase_snps_eagle.chr{{chrname}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
+            bench_dir
             + f"/phase_snps_eagle/phase_snps_eagle.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/eagle.yaml"
         threads: config["threads"]["phase"]
         params:
-            out_prefix=config["phase_dir"] + "/chr{chrname}",
+            out_prefix=phase_dir + "/chr{chrname}",
         shell:
             r"""
             eagle \
@@ -81,21 +80,21 @@ if run_phasing and config["phaser"] == "eagle":
             """
 
 
-if run_phasing and config["phaser"] == "longphase":
+if phaser == "longphase":
 
     rule phase_snps_longphase:
         input:
-            snp_vcf=lambda wc: config["snp_dir"] + f"/chr{wc.chrname}.vcf.gz",
+            snp_vcf=lambda wc: snp_dir + f"/chr{wc.chrname}.vcf.gz",
             alignment=lambda wc: bam_stream_input(phase_files),
             alignment_index=lambda wc: bam_stream_index_input(phase_files),
-            reference=lambda wc: config["reference"],
+            reference=reference,
         output:
-            phased_file=config["phase_dir"] + "/chr{chrname}.vcf.gz",
+            phased_file=phase_dir + "/chr{chrname}.vcf.gz",
         log:
-            config["log_dir"]
+            log_dir
             + f"/phase_snps_longphase/phase_snps_longphase.chr{{chrname}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
+            bench_dir
             + f"/phase_snps_longphase/phase_snps_longphase.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/longphase.yaml"
@@ -105,7 +104,7 @@ if run_phasing and config["phaser"] == "longphase":
         params:
             min_mapq=config["params_longphase"]["min_mapq"],
             extra_params=config["params_longphase"]["extra_params"],
-            out_prefix=config["phase_dir"] + "/chr{chrname}",
+            out_prefix=phase_dir + "/chr{chrname}",
             bam_args=lambda wc, input: " ".join(
                 [f"--bam-file={p}" for p in input.alignment]
                 + [f"--bam-file={t}" for t in bam_stream_arg(phase_files).split()]
@@ -125,67 +124,68 @@ if run_phasing and config["phaser"] == "longphase":
             """
 
 
-if run_phasing:
+rule concat_and_extract_phased_het_snps:
+    input:
+        vcf_files=expand(
+            phase_dir + "/chr{chrname}.vcf.gz",
+            chrname=nochr_chromosomes,
+        ),
+    output:
+        phased_vcf=phase_dir + "/phased_het_snps.vcf.gz",
+        phased_vcf_tbi=phase_dir + "/phased_het_snps.vcf.gz.tbi",
+        snp_stats=report(
+            phase_dir + "/germline_snp_statistics.tsv",
+            category="QC stats",
+            subcategory="phasing",
+            labels={"table": "germline SNP statistics"},
+        ),
+        lst_file=temp(phase_dir + "/phased_snps.lst"),
+    log:
+        log_dir
+        + f"/concat_and_extract_phased_het_snps/concat_and_extract_phased_het_snps.{_run_id}.log",
+    benchmark:
+        bench_dir
+        + f"/concat_and_extract_phased_het_snps/concat_and_extract_phased_het_snps.{_run_id}.tsv"
+    conda:
+        "../envs/bcftools.yaml"
+    threads: 1
+    shell:
+        r"""
+        printf "#CHR\ttotal\thet_phased\thet_unphased\thom_alt\thom_ref\n" > "{output.snp_stats}"
+        for vcf in {input.vcf_files}; do
+            chr=$(basename "$vcf" .vcf.gz)
+            n_het_phased=$(bcftools view -H -i 'GT="0|1" || GT="1|0"' "$vcf" 2>/dev/null | wc -l)
+            n_het_unphased=$(bcftools view -H -i 'GT="0/1"' "$vcf" 2>/dev/null | wc -l)
+            n_hom_alt=$(bcftools view -H -i 'GT="1|1" || GT="1/1"' "$vcf" 2>/dev/null | wc -l)
+            n_hom_ref=$(bcftools view -H -i 'GT="0|0" || GT="0/0"' "$vcf" 2>/dev/null | wc -l)
+            n_total=$(bcftools view -H "$vcf" 2>/dev/null | wc -l)
+            printf "%s\t%d\t%d\t%d\t%d\t%d\n" "$chr" "$n_total" "$n_het_phased" "$n_het_unphased" "$n_hom_alt" "$n_hom_ref" >> "{output.snp_stats}"
+        done
+        printf "%s\n" {input.vcf_files} > "{output.lst_file}"
+        bcftools concat -f "{output.lst_file}" -Ou \
+        | bcftools view -Oz -m2 -M2 -i 'GT="0|1" || GT="1|0"' \
+            -o "{output.phased_vcf}" 2> "{log}"
+        tabix -f -p vcf "{output.phased_vcf}" 2>> "{log}"
+        """
 
-    rule concat_and_extract_phased_het_snps:
-        input:
-            vcf_files=expand(
-                config["phase_dir"] + "/chr{chrname}.vcf.gz",
-                chrname=config["chromosomes"],
-            ),
-        output:
-            phased_vcf=config["phase_dir"] + "/phased_het_snps.vcf.gz",
-            phased_vcf_tbi=config["phase_dir"] + "/phased_het_snps.vcf.gz.tbi",
-            snp_stats=report(
-                config["phase_dir"] + "/germline_snp_statistics.tsv",
-                category="QC stats",
-                subcategory="phasing",
-                labels={"table": "germline SNP statistics"},
-            ),
-            lst_file=temp(config["phase_dir"] + "/phased_snps.lst"),
-        log:
-            config["log_dir"]
-            + f"/concat_and_extract_phased_het_snps/concat_and_extract_phased_het_snps.{_run_id}.log",
-        benchmark:
-            config["bench_dir"]
-            + f"/concat_and_extract_phased_het_snps/concat_and_extract_phased_het_snps.{_run_id}.tsv"
-        conda:
-            "../envs/bcftools.yaml"
-        threads: 1
-        shell:
-            r"""
-            printf "#CHR\ttotal\thet_phased\thet_unphased\thom_alt\thom_ref\n" > "{output.snp_stats}"
-            for vcf in {input.vcf_files}; do
-                chr=$(basename "$vcf" .vcf.gz)
-                n_het_phased=$(bcftools view -H -i 'GT="0|1" || GT="1|0"' "$vcf" 2>/dev/null | wc -l)
-                n_het_unphased=$(bcftools view -H -i 'GT="0/1"' "$vcf" 2>/dev/null | wc -l)
-                n_hom_alt=$(bcftools view -H -i 'GT="1|1" || GT="1/1"' "$vcf" 2>/dev/null | wc -l)
-                n_hom_ref=$(bcftools view -H -i 'GT="0|0" || GT="0/0"' "$vcf" 2>/dev/null | wc -l)
-                n_total=$(bcftools view -H "$vcf" 2>/dev/null | wc -l)
-                printf "%s\t%d\t%d\t%d\t%d\t%d\n" "$chr" "$n_total" "$n_het_phased" "$n_het_unphased" "$n_hom_alt" "$n_hom_ref" >> "{output.snp_stats}"
-            done
-            printf "%s\n" {input.vcf_files} > "{output.lst_file}"
-            bcftools concat -f "{output.lst_file}" -Ou \
-            | bcftools view -Oz -m2 -M2 -i 'GT="0|1" || GT="1|0"' \
-                -o "{output.phased_vcf}" 2> "{log}"
-            tabix -f -p vcf "{output.phased_vcf}" 2>> "{log}"
-            """
+
+if gmap_file:
 
     rule parse_genetic_map:
         input:
-            gmap_files=lambda wc: [get_genetic_map(c) for c in config["chromosomes"]],
+            gmap_files=[get_genetic_map(c) for c in nochr_chromosomes],
         output:
-            gmap_tsv=config["phase_dir"] + "/genetic_map.tsv.gz",
+            gmap_file=gmap_file,
         log:
-            config["log_dir"] + f"/parse_genetic_map/parse_genetic_map.{_run_id}.log",
+            log_dir + f"/parse_genetic_map/parse_genetic_map.{_run_id}.log",
         benchmark:
-            config["bench_dir"] + f"/parse_genetic_map/parse_genetic_map.{_run_id}.tsv"
+            bench_dir + f"/parse_genetic_map/parse_genetic_map.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1
         params:
-            chroms=config["chromosomes"],
-            phaser=config["phaser"],
+            chroms=nochr_chromosomes,
+            phaser=phaser,
             species=species,
         script:
             "../scripts/parse_genetic_map.py"

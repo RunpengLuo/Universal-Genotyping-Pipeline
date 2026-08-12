@@ -17,16 +17,16 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
         input:
             alignment=bam_stream_input(genotype_files),
             alignment_index=bam_stream_index_input(genotype_files),
-            target_pos=lambda wc: config["snp_targets"] + "/target.chr{chrname}.pos.gz",
-            reference=config["reference"],
+            target_pos=snp_targets + "/target.chr{chrname}.pos.gz",
+            reference=reference,
         output:
-            snp_vcf=config["snp_dir"] + "/chr{chrname}.vcf.gz",
-            unfiltered_vcf=temp(config["snp_dir"] + "/chr{chrname}.unfiltered.vcf.gz"),
+            snp_vcf=snp_dir + "/chr{chrname}.vcf.gz",
+            unfiltered_vcf=temp(snp_dir + "/chr{chrname}.unfiltered.vcf.gz"),
         log:
-            config["log_dir"]
+            log_dir
             + f"/genotype_snps_bulk/genotype_snps_bulk.chr{{chrname}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
+            bench_dir
             + f"/genotype_snps_bulk/genotype_snps_bulk.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/bcftools.yaml"
@@ -89,19 +89,19 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
             alignment_indexes=lambda wc: alignment_index_input(
                 modality2files[wc.modality]
             ),
-            snp_panel=config["snp_panel"],
+            snp_panel=snp_panel,
         output:
-            out_dir=directory(config["snp_dir"] + "/pseudobulk_{modality}"),
-            out_vcf=config["snp_dir"] + "/pseudobulk_{modality}/cellSNP.base.vcf.gz",
-            out_tsv=config["snp_dir"] + "/pseudobulk_{modality}/cellSNP.samples.tsv",
-            out_dp=config["snp_dir"] + "/pseudobulk_{modality}/cellSNP.tag.DP.mtx",
-            out_ad=config["snp_dir"] + "/pseudobulk_{modality}/cellSNP.tag.AD.mtx",
+            out_dir=directory(snp_dir + "/pseudobulk_{modality}"),
+            out_vcf=snp_dir + "/pseudobulk_{modality}/cellSNP.base.vcf.gz",
+            out_tsv=snp_dir + "/pseudobulk_{modality}/cellSNP.samples.tsv",
+            out_dp=snp_dir + "/pseudobulk_{modality}/cellSNP.tag.DP.mtx",
+            out_ad=snp_dir + "/pseudobulk_{modality}/cellSNP.tag.AD.mtx",
             bam_lst=temp("tmp/bams.{modality}.lst"),
         log:
-            config["log_dir"]
+            log_dir
             + f"/genotype_snps_pseudobulk/genotype_snps_pseudobulk.{{modality}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
+            bench_dir
             + f"/genotype_snps_pseudobulk/genotype_snps_pseudobulk.{{modality}}.{_run_id}.tsv"
         conda:
             "../envs/cellsnp.yaml"
@@ -134,30 +134,30 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
     rule annotate_snps_pseudobulk:
         input:
             raw_snp_vcfs=[
-                config["snp_dir"] + f"/pseudobulk_{modality}/cellSNP.base.vcf.gz"
+                snp_dir + f"/pseudobulk_{modality}/cellSNP.base.vcf.gz"
                 for modality in modalities
             ],
-            genome_size=config["genome_size"],
+            genome_size=genome_size,
         output:
             snp_vcfs=expand(
-                config["snp_dir"] + "/chr{chrname}.vcf.gz",
-                chrname=config["chromosomes"],
+                snp_dir + "/chr{chrname}.vcf.gz",
+                chrname=nochr_chromosomes,
             ),
             snp_vcfs_tbi=expand(
-                config["snp_dir"] + "/chr{chrname}.vcf.gz.tbi",
-                chrname=config["chromosomes"],
+                snp_dir + "/chr{chrname}.vcf.gz.tbi",
+                chrname=nochr_chromosomes,
             ),
         log:
-            config["log_dir"]
+            log_dir
             + f"/annotate_snps_pseudobulk/annotate_snps_pseudobulk.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
+            bench_dir
             + f"/annotate_snps_pseudobulk/annotate_snps_pseudobulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1
         params:
-            chroms=chroms,
+            chroms=chr_chromosomes,
             input_nochr=input_nochr,
             modalities=modalities,
             min_het_reads=config["params_annotate_snps"]["min_het_reads"],
@@ -174,15 +174,15 @@ if not run_genotyping and run_phasing:
     rule split_het_snp_vcf:
         """Per-chromosome SNPs from a supplied unphased het_snp_vcf, for the phaser."""
         input:
-            het_snp_vcf=config["het_snp_vcf"],
+            het_snp_vcf=het_snp_vcf,
         output:
-            snp_vcf=config["snp_dir"] + "/chr{chrname}.vcf.gz",
-            snp_vcf_tbi=config["snp_dir"] + "/chr{chrname}.vcf.gz.tbi",
+            snp_vcf=snp_dir + "/chr{chrname}.vcf.gz",
+            snp_vcf_tbi=snp_dir + "/chr{chrname}.vcf.gz.tbi",
         log:
-            config["log_dir"]
+            log_dir
             + f"/split_het_snp_vcf/split_het_snp_vcf.chr{{chrname}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
+            bench_dir
             + f"/split_het_snp_vcf/split_het_snp_vcf.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/bcftools.yaml"

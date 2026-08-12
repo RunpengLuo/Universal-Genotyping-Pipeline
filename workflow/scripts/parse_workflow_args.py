@@ -22,18 +22,22 @@ from const import (
     GT_ASSAY_ORD,
     ASSAY_TYPE2MODALITY,
     BULK_ASSAYS,
+    BULK_LR_ASSAYS,
     BULK_TARGETS,
     COPYTYPING_TARGETS,
     FILES_COLUMN_PREFIX,
-    LONGREAD_ASSAYS,
     LONGREAD_PHASER,
+    MULTIOME_ASSAYS,
     NONBULK_ASSAYS,
     PANEL_PHASER,
+    REMOTE_MODES,
     REPLISEQ_REFVERS,
     RDR_NORMALIZATIONS,
     REFVERS,
     REQUIRED_FILES,
     REQUIRED_RECORD_KEYS,
+    SAMPLE_FILE_EXTS,
+    SAMPLE_TYPES,
     SCALAR_RECORD_KEYS,
     SINGLE_CELL_TARGETS,
     SPECIES,
@@ -68,9 +72,8 @@ def read_sample_sheet(path):
             missing a required key.
     """
     ext = os.path.splitext(path)[1].lower()
-    allowed_exts = (".json", ".tsv", ".txt")
-    assert ext in allowed_exts, (
-        f"{path}: extension must be one of {allowed_exts}, got {ext!r}"
+    assert ext in SAMPLE_FILE_EXTS, (
+        f"{path}: extension must be one of {SAMPLE_FILE_EXTS}, got {ext!r}"
     )
     records = []
     if ext == ".json":
@@ -151,8 +154,9 @@ def parse_records(
             f"dataset_id {dataset_id!r}, must match [A-Za-z0-9_-]"
         )
         sample_type = rec["sample_type"]
-        assert rec["sample_type"] in ("normal", "tumor"), (
-            f"{dataset_id}: sample_type must be normal or tumor, got {sample_type!r}"
+        assert rec["sample_type"] in SAMPLE_TYPES, (
+            f"{dataset_id}: sample_type must be one of {SAMPLE_TYPES}, "
+            f"got {sample_type!r}"
         )
         files = rec["files"]
         readable = REQUIRED_FILES[assay_type]
@@ -183,9 +187,9 @@ def parse_records(
     for dataset_id, assays in dataset2assays.items():
         if len(assays) == 1:
             continue
-        assert len(assays) == 2 and set(assays) == {"scRNA", "scATAC"}, (
+        assert len(assays) == 2 and set(assays) == MULTIOME_ASSAYS, (
             f"dataset_id {dataset_id!r}, assays {assays} may not share one "
-            "(scRNA + scATAC only)"
+            f"({' + '.join(sorted(MULTIOME_ASSAYS))} only)"
         )
 
     dataset_ids = {rec["dataset_id"] for rec in parsed_records}
@@ -220,7 +224,7 @@ def parse_workflow(config):
 
     def require_per_chrom(get_path, label):
         """Every configured chromosome has its file."""
-        for chrname in config["chromosomes"]:
+        for chrname in nochr_chromosomes:
             check_local_path(get_path(chrname), f"{label} (chromosome {chrname})")
 
     # === workflow mode ===
@@ -228,6 +232,17 @@ def parse_workflow(config):
     assert workflow_mode in WORKFLOW_MODES, (
         f"workflow_mode must be one of {list(WORKFLOW_MODES)}, got {workflow_mode!r}"
     )
+
+    # === output directories ===
+    snp_dir = config["snp_dir"]
+    phase_dir = config["phase_dir"]
+    pileup_dir = config["pileup_dir"]
+    allele_dir = config["allele_dir"]
+    bb_dir = config["bb_dir"]
+    qc_dir = config["qc_dir"]
+    log_dir = config["log_dir"]
+    aux_dir = config["aux_dir"]
+    bench_dir = config["bench_dir"]
 
     # === assay_types in configfile ===
     config_assay_types = config["assay_types"]
@@ -272,9 +287,9 @@ def parse_workflow(config):
             f"{rec['assay_type']}\t{rec['sample_type']}"
         )
 
-    # === chromosomes ===
-    config_chroms_nochr = [strip_chr_prefix(c) for c in config["chromosomes"]]
-    assert config_chroms_nochr, "chromosomes is empty"
+    # === chromosomes: the run's list, spelled both ways ===
+    nochr_chromosomes = [strip_chr_prefix(c) for c in config["chromosomes"]]
+    assert nochr_chromosomes, "chromosomes is empty"
 
     genome_size = config["genome_size"]
     assert genome_size, "genome_size is required (two-column chrom<TAB>size file)"
@@ -282,21 +297,26 @@ def parse_workflow(config):
     for name in read_chrom_sizes(genome_size):
         ref_chroms_nochr.setdefault(strip_chr_prefix(name), name)
 
-    absent_chroms = [c for c in config_chroms_nochr if c not in ref_chroms_nochr]
+    absent_chroms = [c for c in nochr_chromosomes if c not in ref_chroms_nochr]
     assert not absent_chroms, (
         f"chromosomes {absent_chroms} are not found in {genome_size}"
     )
-    chroms = [f"chr{c}" for c in config_chroms_nochr]
-    logging_snakemake(f"chromosomes: {chroms}")
+    chr_chromosomes = [f"chr{c}" for c in nochr_chromosomes]
+    logging_snakemake(f"chromosomes: {chr_chromosomes}")
 
-    first_chrom = ref_chroms_nochr[config_chroms_nochr[0]]
-    input_nochr = not first_chrom.lower().startswith("chr")
-    logging_snakemake(f"input has chr-prefix={not input_nochr}")
+    input_nochr = True
+    if ref_chroms_nochr[nochr_chromosomes[0]].lower().startswith("chr"):
+        for chrname in ref_chroms_nochr.values():
+            assert chrname.lower().startswith("chr"), (
+                f"chrom.sizes having mixing chr and nochr-prefix chroms: {chrname}"
+            )
+        input_nochr = False
+    logging_snakemake(f"chrom.sizes chr-prefix={not input_nochr}")
 
     # === remote input mode: whole-file storage() download vs direct URL streaming ===
     remote_mode = config["remote_mode"]
-    assert remote_mode in ("storage", "stream"), (
-        f"remote_mode must be 'storage' or 'stream', got {remote_mode!r}"
+    assert remote_mode in REMOTE_MODES, (
+        f"remote_mode must be one of {REMOTE_MODES}, got {remote_mode!r}"
     )
     if remote_mode == "stream":
         assert workflow_mode == "bulk_genotyping", (
@@ -312,21 +332,41 @@ def parse_workflow(config):
         )
 
     # === gtf_file ===
-    assert config["gtf_file"], "gtf_file is required (gene/exon annotation GTF)"
+    gtf_file = config["gtf_file"]
+    assert gtf_file, "gtf_file is required"
+    check_local_path(gtf_file, "gtf_file")
 
     # === segment BED: the configured segmentation, arm-stamped and blacklisted ===
     region_bed = config["region_bed"]
     assert region_bed, "region_bed is required (chromosome arms)"
     check_local_path(region_bed, "region_bed")
-    in_segment_bed = config["segment_bed"]
-    assert in_segment_bed, "segment_bed is required (genomic segments)"
-    check_local_path(in_segment_bed, "segment_bed")
-    segment_bed = config["aux_dir"] + "/segment.bed"
+    input_segment_bed = config["segment_bed"]
+    if not input_segment_bed:
+        input_segment_bed = region_bed
+        logging_snakemake("segment_bed unset, one segment per region_bed arm")
+    check_local_path(input_segment_bed, "segment_bed")
+    segment_bed = aux_dir + "/segment.bed"
+
+    # === blacklist files ===
+    blacklist_bed = config["blacklist_bed"]
+    if blacklist_bed:
+        check_local_path(blacklist_bed, "blacklist_bed")
+    else:
+        blacklist_bed = []
+
+    gene_blacklist_file = config["gene_blacklist_file"]
+    if gene_blacklist_file:
+        check_local_path(gene_blacklist_file, "gene_blacklist_file")
+    else:
+        gene_blacklist_file = []
+
+    mappability_bed = config["mappability_bed"]
+    if mappability_bed:
+        check_local_path(mappability_bed, "mappability_bed")
+    else:
+        mappability_bed = []
 
     # === window BED ===
-    do_repliseq = (
-        workflow_mode == "bulk_genotyping" and reference_version in REPLISEQ_REFVERS
-    )
     window_size = int(config["params_build_windows"]["window_size"])
     window_bed = config["window_bed"]
     if window_bed:
@@ -338,14 +378,19 @@ def parse_workflow(config):
         logging_snakemake(
             f"build window BED from {segment_bed}, window_size={window_size}"
         )
-        window_bed = config["aux_dir"] + "/windows.bed.gz"
+        window_bed = aux_dir + "/windows.bed.gz"
 
     # === pre-built files ===
     het_snp_vcf = config["het_snp_vcf"]
     het_snp_vcf_phased = bool(config["het_snp_vcf_phased"])
-    bb_file = config["bb_file"]
     if het_snp_vcf is not None:
         check_local_path(het_snp_vcf, "het_snp_vcf")
+
+    bb_file = config["bb_file"]
+    if bb_file:
+        check_local_path(bb_file, "bb_file")
+    else:
+        bb_file = []
 
     # === copytyping_preprocess requirements ===
     if workflow_mode == "copytyping_preprocess":
@@ -355,7 +400,7 @@ def parse_workflow(config):
         assert het_snp_vcf_phased, (
             "het_snp_vcf must be phased for copytyping_preprocess"
         )
-        assert bb_file is not None, "bb_file is required for copytyping_preprocess"
+        assert bb_file, "bb_file is required for copytyping_preprocess"
 
     # === genotyping check ===
     run_genotyping = True
@@ -363,8 +408,15 @@ def parse_workflow(config):
         logging_snakemake(f"run_genotyping is skipped, use input {het_snp_vcf}")
         run_genotyping = False
 
+    snp_targets = config["snp_targets"]
+    snp_panel = config["snp_panel"]
     genotype_files = None
     if run_genotyping:
+        if workflow_mode == "bulk_genotyping":
+            assert snp_targets, "snp_targets is required for bulk genotyping"
+        else:
+            assert snp_panel, "snp_panel is required for single-cell genotyping"
+            check_local_path(snp_panel, "snp_panel")
         genotype_dataset_ids = config["genotype_dataset_ids"]
         genotype_records = []
         if genotype_dataset_ids:
@@ -407,21 +459,20 @@ def parse_workflow(config):
 
     # === phasing check ===
     run_phasing = True
-    phased_snp_vcf = config["phase_dir"] + "/phased_het_snps.vcf.gz"
+    phased_snp_vcf = phase_dir + "/phased_het_snps.vcf.gz"
     if het_snp_vcf is not None and het_snp_vcf_phased:
         phased_snp_vcf = het_snp_vcf
         logging_snakemake(f"run_phasing is skipped, use input {het_snp_vcf}")
         run_phasing = False
 
-    phaser = config["phaser"]
+    phaser = config["phaser"] if run_phasing else None
     phase_files = None
-    require_genetic_map = False
+    gmap_file = []
     get_genetic_map = None
     get_phasing_panel = None
     if run_phasing:
         assert phaser in PANEL_PHASER | LONGREAD_PHASER, f"unknown phaser: {phaser}"
         if phaser in PANEL_PHASER:
-            require_genetic_map = True
             gmap_path = config["gmap_path"]
             assert gmap_path, f"gmap_path is required for {phaser}"
             get_genetic_map = get_genetic_map_path(gmap_path)
@@ -436,6 +487,7 @@ def parse_workflow(config):
             logging_snakemake(
                 f"phaser={phaser}, gmap={gmap_path}, panel={phasing_panel}"
             )
+            gmap_file = phase_dir + "/genetic_map.tsv.gz"
 
         if phaser in LONGREAD_PHASER:
             phase_dataset_ids = config["phase_dataset_ids"]
@@ -455,16 +507,16 @@ def parse_workflow(config):
                 ]
             if len(phase_records) == 0:
                 # co-phases all long-read normals, else all long-read tumors
-                lr_records = [r for r in records if r["assay_type"] in LONGREAD_ASSAYS]
+                lr_records = [r for r in records if r["assay_type"] in BULK_LR_ASSAYS]
                 normals = [r for r in lr_records if r["sample_type"] == "normal"]
                 phase_records = normals or lr_records
             assert phase_records, (
-                f"{phaser} requires a long-read assay {sorted(LONGREAD_ASSAYS)}"
+                f"{phaser} requires a long-read assay {sorted(BULK_LR_ASSAYS)}"
             )
             short_read = [
                 rec["dataset_id"]
                 for rec in phase_records
-                if rec["assay_type"] not in LONGREAD_ASSAYS
+                if rec["assay_type"] not in BULK_LR_ASSAYS
             ]
             assert not short_read, f"{phaser} needs long reads, got: {short_read}"
             phase_dataset_ids = [rec["dataset_id"] for rec in phase_records]
@@ -482,11 +534,15 @@ def parse_workflow(config):
             phase_files = [rec["files"] for rec in phase_records]
 
     # === RDR normalization mode ===
+    do_repliseq = False
     if workflow_mode == "bulk_genotyping":
         rdr_normalization = config["params_combine_counts"]["rdr_normalization"]
         assert rdr_normalization in RDR_NORMALIZATIONS, (
             f"rdr_normalization must be one of {list(RDR_NORMALIZATIONS)}, "
             f"got {rdr_normalization!r}"
+        )
+        do_repliseq = (reference_version in REPLISEQ_REFVERS) and bool(
+            config["params_count_reads"]["rt_correct"]
         )
         for rec in records:
             if rec["sample_type"] != "tumor":
@@ -531,7 +587,6 @@ def parse_workflow(config):
     get_data = {(rec["assay_type"], rec["dataset_id"]): rec["files"] for rec in records}
 
     # === final targets  ===
-    bb_dir = config["bb_dir"]
     if workflow_mode == "bulk_genotyping":
         final_targets = [
             f"{bb_dir}/MSR{m}/bulk/{f}" for m in msr_list for f in BULK_TARGETS
@@ -540,7 +595,7 @@ def parse_workflow(config):
         if isinstance(qc_genotype, str):  # --config passes bools as strings
             qc_genotype = qc_genotype.strip().lower() in ("true", "1", "yes")
         if run_genotyping and qc_genotype:
-            final_targets.append(config["qc_dir"] + "/genotype_snp_qc.pdf")
+            final_targets.append(qc_dir + "/genotype_snp_qc.pdf")
     elif workflow_mode == "single_cell_genotyping":
         final_targets = [
             f"{bb_dir}/MSR{m}/{at}/{f}"
@@ -560,7 +615,8 @@ def parse_workflow(config):
         "remote_mode": remote_mode,
         "reference_version": reference_version,
         "species": species,
-        "chroms": chroms,
+        "nochr_chromosomes": nochr_chromosomes,
+        "chr_chromosomes": chr_chromosomes,
         "input_nochr": input_nochr,
         "assay_types": assay_types,
         "modalities": modalities,
@@ -570,7 +626,7 @@ def parse_workflow(config):
         "run_phasing": run_phasing,
         "het_snp_vcf": het_snp_vcf,
         "phased_snp_vcf": phased_snp_vcf,
-        "require_genetic_map": require_genetic_map,
+        "gmap_file": gmap_file,
         "final_targets": final_targets,
         "get_data": get_data,
         "modality2files": modality2files,
@@ -581,6 +637,26 @@ def parse_workflow(config):
         "phase_files": phase_files,
         "get_genetic_map": get_genetic_map,
         "get_phasing_panel": get_phasing_panel,
+        "snp_dir": snp_dir,
+        "phase_dir": phase_dir,
+        "pileup_dir": pileup_dir,
+        "allele_dir": allele_dir,
+        "bb_dir": bb_dir,
+        "qc_dir": qc_dir,
+        "log_dir": log_dir,
+        "aux_dir": aux_dir,
+        "bench_dir": bench_dir,
+        "input_segment_bed": input_segment_bed,
+        "snp_panel": snp_panel,
+        "reference": reference,
+        "genome_size": genome_size,
+        "gtf_file": gtf_file,
+        "snp_targets": snp_targets,
+        "bb_file": bb_file,
+        "mappability_bed": mappability_bed,
+        "region_bed": region_bed,
+        "blacklist_bed": blacklist_bed,
+        "gene_blacklist_file": gene_blacklist_file,
         "segment_bed": segment_bed,
         "build_windows": build_windows,
         "do_repliseq": do_repliseq,
