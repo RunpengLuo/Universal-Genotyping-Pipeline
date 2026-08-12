@@ -145,11 +145,6 @@ params_combine_counts:
   phase_flip_alpha: 0.05
 
 ##################################################
-# Quality control
-# bulk genotyping: render qc/genotype_snp_qc.pdf (het vs hom-alt ref-AF diagnostic)
-qc_genotype_snps: true
-
-##################################################
 threads:
   genotype: 4
   phase: 4

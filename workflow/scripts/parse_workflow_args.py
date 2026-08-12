@@ -591,11 +591,6 @@ def parse_workflow(config):
         final_targets = [
             f"{bb_dir}/MSR{m}/bulk/{f}" for m in msr_list for f in BULK_TARGETS
         ]
-        qc_genotype = config["qc_genotype_snps"]
-        if isinstance(qc_genotype, str):  # --config passes bools as strings
-            qc_genotype = qc_genotype.strip().lower() in ("true", "1", "yes")
-        if run_genotyping and qc_genotype:
-            final_targets.append(qc_dir + "/genotype_snp_qc.pdf")
     elif workflow_mode == "single_cell_genotyping":
         final_targets = [
             f"{bb_dir}/MSR{m}/{at}/{f}"

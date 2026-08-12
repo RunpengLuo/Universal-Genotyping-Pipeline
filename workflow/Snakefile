@@ -11,7 +11,6 @@ Includes:
 - pileup_snps.smk, phase_and_concat.smk: per-replicate counts, then one matrix
 - count_reads.smk: mosdepth and bias correction, bulk only
 - combine_counts.smk: bin into bbs, the output unit
-- quality_control.smk: plots nothing else depends on
 """
 
 import os
@@ -148,7 +147,6 @@ if _has_config:
     include: "rules/phase_and_concat.smk"
     include: "rules/count_reads.smk"
     include: "rules/combine_counts.smk"
-    include: "rules/quality_control.smk"
 
     report: "report/workflow.rst"
 
