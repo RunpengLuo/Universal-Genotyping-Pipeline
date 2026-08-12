@@ -1,4 +1,11 @@
-"""Genome-wide 1D scatter primitives (single- and multi-sample), on the cnplot axis."""
+"""Genome-wide 1D scatter primitives, shared by the per-step plot modules.
+
+Last update: 2026-08-08
+
+Functions:
+- plot_1d_sample: one genome-wide track, optionally split by a mask
+- plot_1d_multi_sample: one row per sample on a shared axis
+"""
 
 import logging
 

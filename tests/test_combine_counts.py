@@ -1,21 +1,13 @@
-"""Unit tests for the bulk combine_counts allele/BAF aggregation core.
+"""Unit tests for the binning core and the bb-level allele aggregation.
 
-Targets the two functions that decide bb-level BAF correctness:
+Last update: 2026-08-11
 
-- `segmentation_utils.sum_features_to_bbs`: sum SNP-by-observation counts into
-  bb-by-observation counts.
-- `phasing_utils.detect_phase_flips`: split SNPs into phase clusters at
-  haplotype-orientation switches so a bb never sums across a flip.
-
-bb BAF is `sum(B) / sum(total)` over a bb's SNPs, which is only correct when the
-SNPs are haplotype-consistent. These tests show the phase-flip split preserves an LOH
-signal that naive (phase-blind) summation cancels to 0.5.
-
-`segmentation_utils` needs numba for its binning kernel, so its tests skip where numba is
-absent; the `phasing_utils` ones need only numpy/pandas/scipy.
-
-Run in the base.yaml env for full coverage:
-  python -m pytest tests/test_combine_counts.py -v
+Covers:
+- summation: bb BAF is correct only when SNPs are haplotype-consistent
+- phase flips: the split preserves an LOH that naive summation cancels
+- binning: cluster keys, SNP-free bins and segments, join-able bbs
+- fragments: ATAC counts route through the windows, holes dropped
+- tiling: build_fixedwidth_bins matches the loop it replaced
 """
 
 import os

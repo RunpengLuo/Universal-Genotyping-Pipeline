@@ -1,30 +1,13 @@
-"""Build the segment BED shared by every workflow mode.
+"""Stamp each configured segment with its chromosome arm and subtract the blacklist.
 
-Runpeng Luo
 Last update: 2026-08-07
 
-Takes the configured segmentation (``segment_bed``; its 4th column is the ``seg_id``),
-stamps the chromosome arm each segment sits in, and subtracts the blacklist. Two ids are
-emitted per segment:
-
-  region_id : the arm id from region_bed (RDR/QC grouping bound).
-  seg_id    : carried from segment_bed; the hard bin boundary, binning never merges a bb
-              across it. With segment_bed == region_bed there is one segment per arm and
-              seg_id == region_id.
-
-Blacklist subtraction may split one segment into several rows; they all keep its seg_id,
-so a blacklist hole never becomes a bin boundary.
-
-Dependencies:
-  io_utils.read_BED, range_utils.assign_range_to_range,
-  range_utils.trim_range_by_range, utils.setup_logging, utils.log_hist.
-
-Inputs
-  segments: the configured segmentation BED (BED4; 4th column = seg_id).
-  region_bed: accessible-regions BED (BED4; 4th column = arm region_id).
-  blacklist_bed: optional BED of regions to subtract.
+Inputs:
+- segment_bed: configured segmentation BED4, 4th column is seg_id
+- region_bed: chromosome arms BED4, 4th column is region_id
+- blacklist_bed: optional BED3, subtracted from every segment
 Outputs:
-  segment_bed: BED5 (#CHR, START, END, region_id, seg_id).
+- aux_dir/segment.bed: BED5 carrying region_id and seg_id
 """
 
 import logging

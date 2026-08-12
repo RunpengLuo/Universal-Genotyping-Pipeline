@@ -1,19 +1,12 @@
 """Genotyping QC: het vs hom-alt allele-fraction diagnostic (bulk genotyped VCFs).
 
-Runpeng Luo
 Last update: 2026-08-06
 
-Reads the per-chromosome genotyped VCFs (``snps/chr{c}.vcf.gz``), which retain het +
-hom-alt SNPs with the genotyping sample's ``FORMAT/AD`` and ``DP``, and renders a QC PDF:
-a genome-wide reference allele fraction (AF) scatter colored by genotype (het vs hom-alt),
-plus per-genotype AF and depth histograms. hom-ref is never genotyped, so only het vs
-hom-alt are shown.
-
-Inputs (snakemake.input):
-    vcfs: per-chromosome genotyped VCFs (het + hom-alt, with FORMAT/AD, DP).
-    genome_size: chrom sizes file for genome-wide coordinates.
-Outputs (snakemake.output):
-    qc_pdf: genotype SNP QC PDF.
+Inputs:
+- snp_dir/chr{chrname}.vcf.gz: genotyped het and hom-alt SNPs, with AD/DP
+- genome_size: chrom sizes TSV, for genome-wide coordinates
+Outputs:
+- qc_dir/genotype_snp_qc.pdf: reference-AF scatter plus per-genotype histograms
 """
 
 import logging

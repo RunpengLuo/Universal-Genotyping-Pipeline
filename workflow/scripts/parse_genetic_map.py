@@ -1,13 +1,11 @@
-"""Parse Eagle/SHAPEIT genetic map files into one chr-prefixed table.
+"""Parse Eagle/SHAPEIT genetic maps into one chr-prefixed table.
 
-Inputs
-  gmap_files: one map for all chromosomes (Eagle) or one per chromosome (SHAPEIT).
-Parameters
-  chroms: this run's chromosomes, chr-prefixed
-  phaser: eagle | shapeit
-  species: selects the sex-chromosome numbering used to relabel numeric labels
+Last update: 2026-08-11
+
+Inputs:
+- gmap_path: eagle single map, or shapeit per-chromosome maps
 Outputs:
-  gmap_tsv: #CHR POS cM, chr-prefixed, genomically sorted
+- phase_dir/genetic_map.tsv.gz: #CHR POS cM, chr-prefixed and sorted
 """
 
 import logging

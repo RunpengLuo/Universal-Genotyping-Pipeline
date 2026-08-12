@@ -1,7 +1,12 @@
-"""Per-fixed-bin read-depth bias correction and its GC diagnostics.
+"""Read-depth bias correction and the depth statistics around it.
 
-HMMcopy-style sequential LOWESS correction, a quadratic median-regression
-alternative, and the GC/RD summary statistics plotted alongside them.
+Last update: 2026-08-08
+
+Functions:
+- correct_readcount_lowess: HMMcopy-style LOWESS correction on GC, MAP, REPLI
+- correct_readcount_quadreg: median quadratic-regression correction, the default
+- compute_gc_rd_stats: GC-vs-depth correlation and spread, before and after
+- compute_depth_statistics: per-dataset depth summary written to depth_statistics.tsv
 """
 
 import logging

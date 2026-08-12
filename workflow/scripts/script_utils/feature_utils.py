@@ -1,19 +1,13 @@
-"""GTF feature annotation and per-assay feature counting.
+"""GTF feature annotation and per-assay counting into bins.
 
-A feature here is a GTF entity, a gene or an exon. Two groups:
+Last update: 2026-08-11
 
-- annotation - stamp SNPs with the genes they sit in (``annotate_feature_type``), then
-  collapse or explode the ``;``-joined ``feature_id`` (``merge_feature_ids``,
-  ``explode_feature_ids``). The filter on the result is
-  ``phase_and_concat_utils.get_mask_by_exon``, next to the other SNP masks.
-- counting - turn an assay's raw records into a ``(bin, cell)`` count matrix:
-  ``sum_umis_to_bins`` for the scRNA/VISIUM h5ad, ``sum_atac_fragments_to_bins`` for 10x
-  fragment files. ``assign_features_to_ranges`` is the gene-to-range mapping both the RNA
-  path and ``combine_counts_fixed_bins`` use; a gene is assigned to the range it overlaps
-  most and never split, so a bb's expression is the sum over whole genes.
-
-anndata is imported inside the one function that reads an h5ad, so the module imports
-without the single-cell stack.
+Functions:
+- annotate_feature_type: stamp SNPs with overlapping genes and exon/intron/intergenic
+- merge_feature_ids, explode_feature_ids: collapse or expand the joined feature_id
+- assign_features_to_ranges: each gene to the range it overlaps most
+- sum_umis_to_bins: RNA h5ad UMIs into a (bb, cell) matrix
+- sum_atac_fragments_to_bins: deduped 10x fragments into a (bb, cell) matrix
 """
 
 import logging

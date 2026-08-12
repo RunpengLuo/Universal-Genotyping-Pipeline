@@ -1,18 +1,19 @@
 """One AnnData per RNA-family assay, over all of the sample's datasets.
 
-Reads each dataset's 10x Cell/Space Ranger matrix, restricts it to that dataset's
-barcodes, and concatenates on the union of genes. Genes are then stamped with their GTF
-coordinates and filtered (no GTF entry, zero pseudobulk UMIs, blacklisted, and for
-spatial assays expressed in too few barcodes), assigned to a region, and sorted
-genomically.
+Last update: 2026-08-11
 
-Inputs
-  barcodes, matrix_h5, spatial_files: per dataset, from the sample file
-  gtf_file: gene coordinates, joined on `gene_id_colname`
-  gene_blacklist_file: optional, one gene id per line
-  region_bed: chromosome arms; genes outside every arm are dropped
+Inputs:
+- barcodes: per-dataset cell barcodes from the sample file
+- matrix_h5: per-dataset 10x Ranger feature-barcode matrix
+- tissue_positions.csv: spatial spot coordinates
+- scalefactors_json.json: spatial scale factors
+- tissue_hires_image.png: spatial tissue image, hires
+- tissue_lowres_image.png: spatial tissue image, lowres
+- gtf_file: gene coordinates, joined on gene_id_colname
+- gene_blacklist_file: optional, one gene id per line
+- aux_dir/segment.bed: a gene outside every region is dropped
 Outputs:
-  h5ad_file: (cells x genes) AnnData, var carrying `#CHR`/`START`/`END`/`region_id`
+- bb_dir/{assay}.h5ad: cells x genes, obs_names {raw}_{dataset_id}_{assay_type}
 """
 
 import logging

@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
-"""Convert per-chromosome SHAPEIT genetic maps to Eagle2 format.
+"""Convert a SHAPEIT per-chromosome genetic map into Eagle's single-table format.
 
-Eagle2 expects a single gzipped file with columns:
-  chr  position  COMBINED_rate(cM/Mb)  Genetic_Map(cM)
+Last update: 2026-07-26
 
-SHAPEIT per-chromosome files (e.g., chr1.t2t.scaled.gmap.gz) have columns:
-  pos  cM/Mb  cM
-
-Usage:
-  python convert_gmap_to_eagle.py <input_dir> <output_file>
-
-Example:
-  python convert_gmap_to_eagle.py \\
-    /path/to/t2t_native_scaled_maps \\
-    /path/to/genetic_map_chm13v2_withX.txt.gz
+Inputs:
+- argv: see parse_args for the input maps and output path
+Outputs:
+- gmap: the Eagle table, chr POS rate cM
 """
 
 import argparse

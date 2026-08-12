@@ -1,4 +1,12 @@
-"""SNP allele-frequency and depth QC plots (phase_and_concat + binning steps)."""
+"""SNP allele-frequency and depth QC, for phase_and_concat and binning.
+
+Last update: 2026-08-11
+
+Functions:
+- plot_snp_depth: stacked violins of depth and allele frequency per dataset
+- plot_allele_freqs: genome-wide allele-frequency scatter, per sample or pseudobulk
+- compute_af_per_sample, compute_af_by_clusters, compute_af_pseudobulk: the AF helpers
+"""
 
 import os
 import logging

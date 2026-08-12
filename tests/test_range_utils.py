@@ -1,26 +1,14 @@
 #!/usr/bin/env python3
 """Unit tests for the shared range-assignment primitives.
 
-Runpeng Luo
 Last update: 2026-08-06
 
-``range_utils`` replaced five near-copies of the same "which range contains
-this?" loop, so these tests pin the behaviours the callers rely on: the vectorized
-non-overlapping path, the scan fallback for overlapping references, the many-hit
-join, and the largest-overlap rule.
-
-Dependencies:
-  pytest, numpy, pandas.
-
-Usage:
-  pytest tests/test_range_utils.py
-
-Notes/References:
-  Callers: feature_utils (annotate_feature_type, assign_features_to_ranges,
-  sum_atac_fragments_to_bins), segmentation_utils (build_adaptive_bins),
-  phase_and_concat_utils (interp_pos_ranges),
-  combine_counts_utils (summarize_read_depth_bb),
-  build_segment_bed / build_window_bed.
+Covers:
+- boundaries: the half-open rule, including the last base of a range
+- contract: na_idx, dropna, fillna, out_col, and no mutation of qry
+- rules: max_overlap, midpoint and contained, including split segments
+- invariants: a 1-based pos_col and degenerate ranges are rejected
+- trim_range_by_range: splits, full cover, column carry, and row order
 """
 
 import os

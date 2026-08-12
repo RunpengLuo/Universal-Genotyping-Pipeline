@@ -1,21 +1,16 @@
 """Fixed bins, clustered sums, and the adaptive merge of bins into bbs.
 
-Three groups, in pipeline order:
+Last update: 2026-08-11
 
-1. fixed bins    - ``build_fixedwidth_bins`` tiles each segment into ``window_size``
-   pieces; one row of the result is a fixed bin, and no bin spans two segments.
-2. clustered sums - ``cluster_sum`` and its two wrappers. Every matrix is
-   ``(n_features, n_observations)``: binning sums FEATURES (SNPs/bins -> bbs),
-   pseudobulking sums OBSERVATIONS (cells -> datasets); both are one sparse one-hot
-   multiply.
-3. adaptive binning - ``build_adaptive_bins`` walks consecutive fixed bins inside one
-   ``seg_id`` and closes a bb once every tumor observation meets its read target. It
-   sums the SNP depth per bin through group 2.
-
-The config keys ``min_snp_reads`` / ``min_snp_per_bin`` / ``max_blocksize`` speak of
-"bin" in the bb sense; they keep their published names.
-
-GTF-feature annotation and the gene-aware cluster key live in ``feature_utils``.
+Functions:
+- build_fixedwidth_bins: tile segments, so no bin spans two
+- cluster_sum: collapse one matrix axis by a cluster-id array
+- sum_features_to_bbs: the feature-axis wrapper, SNPs or bins into bbs
+- sum_observations_to_pseudobulk: the observation-axis wrapper, cells into datasets
+- dense_observation: one matrix column as a 1-D array
+- build_adaptive_bins: merge bins until every tumor meets min_snp_reads
+References:
+- docs/DEVELOPER.md: bin is the fixed tile, bb the merged one
 """
 
 import logging

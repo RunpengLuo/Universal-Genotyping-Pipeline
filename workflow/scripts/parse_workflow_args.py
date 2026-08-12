@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Parse and validate Snakemake workflow configfile and sample sheet
+"""Parse and validate the workflow configfile and sample sheet into the rules' globals.
 
-Runpeng Luo
 Last update: 2026-08-07
 
-Inputs
-  config: the Snakemake configfile
-  sample file: JSON or TSV encoding
+Inputs:
+- configfile: the Snakemake config
+- sample_file: JSON records, or the same schema flattened to TSV
 Outputs:
-  parse_workflow -> dict of workflow globals
+- parse_workflow(config): dict of globals, unpacked by the Snakefile
 References:
-  * docs/reference.md
-  * docs/sample_sheet.md
+- docs/reference.md: config keys and output layout
+- docs/sample_sheet.md: the sample-file schema
 """
 
 import csv

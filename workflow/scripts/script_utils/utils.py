@@ -1,9 +1,14 @@
-"""Shared helpers: thread limits, logging, chromosome naming and ordering.
+"""Thread limits, logging, and chromosome naming and ordering.
 
-Imported before numpy by every Snakemake ``script:`` entry point, so this module
-must stay import-light: ``set_omp_threads`` only limits the BLAS/OpenMP runtimes
-if it runs before they load. pandas is therefore imported inside the one function
-that needs it.
+Last update: 2026-08-10
+
+Functions:
+- set_omp_threads: cap every BLAS/OpenMP runtime, before numpy loads
+- setup_logging, logging_snakemake: the rule log and the Snakemake run log
+- log_hist: one-line summary plus an ASCII histogram
+- maybe_path, check_local_path: coerce and validate an optional input path
+- strip_chr_prefix, add_chr_prefix: convert between the two chromosome namings
+- chrom_sort_key, sort_chroms, sort_df_chr: genomic ordering of chromosomes
 """
 
 import os

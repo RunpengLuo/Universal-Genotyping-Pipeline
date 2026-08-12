@@ -1,22 +1,13 @@
 #!/usr/bin/env python3
-"""Remote sample-file inputs: URLs are wrapped in storage() and fetched with their index.
+"""URL inputs are wrapped in storage() and retrieved.
 
-Runpeng Luo
 Last update: 2026-08-06
 
-The local test serves a stub alignment over http://127.0.0.1 and dry-runs against
-it, so no network is needed. The GIAB test resolves real URLs and is marked
-`network`; it is deselected unless `-m network` is given.
-
-Dependencies:
-  pytest; snakemake with snakemake-storage-plugin-http.
-
-Usage:
-  pytest tests/test_remote.py                # local http server only
-  pytest tests/test_remote.py -m network     # also hit the GIAB FTP host
-
-Notes/References:
-  Remote inputs: docs/sample_sheet.md
+Covers:
+- local stub: an http URL is fetched through storage()
+- mixed sheet: local paths and URLs in one run
+- TSV: the flattened sheet accepts URLs too
+- network: a real GIAB URL resolves, deselected by default
 """
 
 import functools

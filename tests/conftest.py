@@ -1,21 +1,14 @@
 """Shared fixtures: a stub workspace the DAG can be built against.
 
-Runpeng Luo
 Last update: 2026-08-06
 
-Dry-run tests only build the DAG, so every reference asset and input file can be
-an empty stub; nothing is read. Sample files are written in both formats from one
-description, so the JSON and TSV paths are compared on identical data.
-
-Dependencies:
-  pytest; snakemake on PATH.
-
-Inputs
-  none: every fixture is generated under pytest's tmp_path_factory
-Outputs:
-  workspace: paths of the stub reference assets and sample files
-Notes/References:
-  Sample-file format: docs/sample_sheet.md
+Fixtures:
+- workspace: empty stub inputs plus one sample sheet per format
+- dryrun: run `snakemake -n` for one mode and sheet
+- job_counts: parse the planned job table out of stdout
+Notes:
+- stubs: dry runs only build the DAG, so nothing is read
+- both formats: JSON and TSV are written from one description
 """
 
 import gzip

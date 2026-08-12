@@ -1,14 +1,15 @@
-"""Build the window BED, in one pass.
+"""Tile segment.bed into fixed-width windows and annotate the bias covariates.
 
-Tiles segment_bed per segment row (so no window spans two segments and each window
-inherits its row's region_id + seg_id), then annotates each bias-correction
-covariate whose input is non-empty: GC (reference FASTA), MAP (mappability_bed), REPLI
-(Repli-seq bedGraphs). Output columns: #CHR START END region_id seg_id [GC] [MAP]
-[REPLI] -- one bin set for every assay of the run. Each covariate is annotated when its
-input is non-empty, the same way in every mode; rd_correct (bulk) is their only consumer,
-and single-cell additionally uses the intervals as its fixed-bin skeleton. The Repli-seq
-bigWig fetch + bigWigToBedGraph + liftOver are Snakemake rules; this script only bins the
-resulting bedGraphs.
+Last update: 2026-08-11
+
+Inputs:
+- aux_dir/segment.bed: tiled per row, so windows never cross segments
+- reference: genome FASTA, for the GC column
+- mappability_bed: optional BED, for the MAP column
+- aux_dir/repliseq/{name}.{reference_version}.bedGraph: optional, for the REPLI column
+- genome_size: chrom sizes TSV
+Outputs:
+- aux_dir/windows.bed.gz: fixed bins with ids and covariate columns
 """
 
 import logging

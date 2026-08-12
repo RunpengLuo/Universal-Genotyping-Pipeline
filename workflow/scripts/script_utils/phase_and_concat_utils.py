@@ -1,12 +1,14 @@
-"""SNP and allele helpers for the phase_and_concat scripts.
+"""Canonicalize per-replicate allele counts onto the parent SNP set, then filter.
 
-Three groups, in pipeline order:
+Last update: 2026-08-08
 
-1. allele matrices - per-replicate counts onto the parent SNP set, then stacked
-2. SNP ranges      - the per-SNP ``[START, END)`` split over the regions
-3. SNP filters     - one bool mask each, combined by ``apply_masks_to_df``
-
-The downstream half of the pipeline is ``combine_counts_utils``; nothing is shared.
+Functions:
+- map_allele_mat_to_snps: align one replicate's counts to the parent SNPs
+- hstack_replicate_mats: concatenate replicates and derive the REF matrix
+- interp_pos_ranges: give each SNP the span between its neighbours
+- apply_masks_to_df: AND every mask, drop and reindex
+- get_mask_by_region, get_mask_by_blacklist, get_mask_by_exon: positional SNP filters
+- get_mask_by_depth, get_mask_by_het_balanced: coverage and normal-balance SNP filters
 """
 
 import logging

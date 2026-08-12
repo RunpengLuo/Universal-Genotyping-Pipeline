@@ -1,20 +1,22 @@
-"""Joint phase-and-concat for ALL non-bulk assays on one shared SNP set.
+"""Single-cell: one phased allele matrix over every non-bulk cell, on one shared SNP set.
 
-Every non-bulk replicate (across every non-bulk assay) is piled up against the same phased
-het-SNP VCF, so ``map_allele_mat_to_snps`` aligns them all to ONE shared parent SNP set.
-The SNP filters are therefore applied once, to that shared set, and every assay's matrices
-carry the same rows -- combine_counts_nonbulk reads them directly instead of re-unioning.
+Last update: 2026-08-11
 
-Parent het SNPs are kept when they are: in a region, not blacklisted, and (when
-``exon_only``) exonic. An RNA assay's own coverage filter cannot drop a shared row, so it
-ZEROES instead: SNPs outside that assay's h5ad feature set keep their row and lose their
-counts, which is what the downstream union produced before.
-
-Everything is written once, flat in ``allele_dir/``: ``snps.tsv.gz`` (the rows),
-``snp.{T,A,B}allele.npz`` (one matrix over every assay's cells), ``barcodes.tsv.gz`` (the
-column axis, ``{raw}_{dataset_id}_{assay_type}`` per column) and ``sample_ids.tsv`` (a
-roster, one row per ``(dataset_id, assay_type)`` -- NOT column-aligned). Only the QC PDFs
-stay per assay, since their cells differ. Joint binning happens downstream in combine_counts_nonbulk.
+Inputs:
+- phase_dir/phased_het_snps.vcf.gz: the parent SNP set every replicate maps onto
+- pileup_dir/{assay}_{dataset_id}/cellSNP.base.vcf.gz: per-replicate cellsnp-lite loci
+- pileup_dir/{assay}_{dataset_id}/cellSNP.samples.tsv: per-replicate cell barcodes
+- pileup_dir/{assay}_{dataset_id}/cellSNP.tag.DP.mtx: per-replicate total depth
+- pileup_dir/{assay}_{dataset_id}/cellSNP.tag.AD.mtx: per-replicate alt depth
+- bb_dir/{assay}.h5ad: per RNA assay; uncovered SNPs are zeroed, not dropped
+- aux_dir/segment.bed: region and segment bounds for filtering
+- blacklist_bed, gtf_file, genome_size: SNP filters and QC shading
+Outputs:
+- allele_dir/snps.tsv.gz: kept SNPs, shared by every assay
+- allele_dir/snp.{T,A,B}allele.npz: one sparse matrix over every assay's cells
+- allele_dir/barcodes.tsv.gz: column axis, {raw}_{dataset_id}_{assay_type}, assay-major
+- allele_dir/sample_ids.tsv: dataset x assay roster; not column-aligned
+- qc_dir/phase_and_concat.{assay}.pdf: one per assay, whose cells differ
 """
 
 import logging

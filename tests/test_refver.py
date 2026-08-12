@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
-"""reference_version canonicalization: the alias table and its lookup helpers.
+"""Unit tests for reference-version aliasing.
 
-Runpeng Luo
 Last update: 2026-08-06
 
-Pure-function tests; no sample file, no snakemake, no network.
-
-Dependencies:
-  pytest; config/const.py of this repo.
-
-Usage:
-  pytest tests/test_refver.py
-
-Notes/References:
-  Alias table and matching rules: docs/sample_sheet.md
+Covers:
+- folding: every alias resolves to its canonical version
+- uniqueness: no alias is claimed by two versions
+- matching: case-insensitive and stripped, exact not substring
+- unknown: folds to lowercase and is reported as unknown
 """
 
 import os

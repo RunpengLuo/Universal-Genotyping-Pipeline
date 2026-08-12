@@ -1,11 +1,19 @@
+"""Convert a Visium HD 3' BAM from <src_col> resolution to <tgt_col> resolution.
+
+Last update: 2026-07-26
+
+Inputs:
+- argv: parquet_file, bam_in, bam_out, src_col, tgt_col
+- parquet_file: the Space Ranger square_XXXum barcode mapping
+Outputs:
+- bam_out: the input BAM with CB retagged to the target resolution
+"""
+
 import sys
 
 import pysam
 import pandas as pd
 
-"""
-This script convert visium HD 3' BAM files from <src_col> resolution to <tgt_col> resolution.
-"""
 
 [_, parquet_file, bam_in, bam_out, src_col, tgt_col] = sys.argv
 

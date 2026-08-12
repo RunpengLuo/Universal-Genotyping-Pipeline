@@ -1,40 +1,14 @@
 #!/usr/bin/env python3
-"""Build mm10 genetic maps (Eagle2 + SHAPEIT5) from the CoxMapV3 table.
+"""Build an mm10 genetic map from the published mouse recombination rates.
 
-Runpeng Luo
 Last update: 2026-08-06
 
-Dependencies:
-  numpy, pandas
-
-Usage:
-  python build_mouse_gmap_mm10.py <CoxMaps_rev_build38.csv> <out_dir>
-          CoxMaps_rev_build38.csv  # CoxMapV3 markers with mm10 (GRCm38/b38) coordinates
-          out_dir                  # writes eagle2/ and shapeit5/ under here
-
-Inputs
-  CoxMaps_rev_build38.csv: CoxMapV3 revised mouse genetic map, columns
-      snpID, chr_b37, bp_b37, chr_b38, bp_b38, fem_cM, mal_cM, ave_cM. Download from
-      https://raw.githubusercontent.com/kbroman/CoxMapV3/main/OrigMaps/CoxMaps_rev_build38.csv
-      Positions are mm10 (`chr_b38`, `bp_b38`); autosomes use sex-averaged cM
-      (`ave_cM`), chrX uses female cM (`fem_cM`) since males do not recombine on X
-      (`mal_cM`/`ave_cM` are NA there).
-Parameters
-  (none)
-Outputs
-  eagle2/genetic_map_mm10_withX.txt.gz: single space-delimited Eagle2 map,
-      columns `chr position COMBINED_rate(cM/Mb) Genetic_Map(cM)`, chr without prefix.
-  shapeit5/chr{N}.mm10.gmap.gz: per-chromosome SHAPEIT5 map, tab-delimited,
-      columns `pos chr cM`, chr with prefix.
-Notes/References:
-  CoxMapV3: Cox et al. 2009, Genetics 182:1335, doi:10.1534/genetics.109.105486;
-      revised map https://github.com/kbroman/CoxMapV3 (b37->mm10/b38 lifted upstream).
-  COMBINED_rate is the forward interval rate (cM/Mb) to the next marker; the last
-      marker per chromosome carries 0. The per-chromosome zero anchor (bp_b38==0) is
-      dropped so the map starts at the first genotyped marker.
-  CoxMapV3 has centromeric inversions (chr10, chr14): sorted by bp_b38, cM can dip.
-      A marker whose cM falls below the running max is dropped, keeping the map
-      monotonic non-decreasing (a genetic map cannot have negative recombination rates).
+Inputs:
+- argv: see parse_args for the source table and output path
+Outputs:
+- gmap: #CHR POS cM, one row per map position
+References:
+- resources/README.md: how the mouse panel and map are built
 """
 
 import argparse

@@ -1,13 +1,9 @@
-"""Pseudobulk SNP annotation helpers.
+"""Legacy pseudobulk SNP statistics, kept for reference.
 
-Runpeng Luo
 Last update: 2026-08-06
 
-Dependencies:
-  pandas; script_utils (io_utils, utils).
-
-Notes/References:
-  Caller: workflow/scripts/annotate_snps_pseudobulk.py
+Functions:
+- compute_snp_statistics: per-chromosome SNP counts and depth summary
 """
 
 import pandas as pd  # noqa: F401

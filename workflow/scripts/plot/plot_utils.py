@@ -1,9 +1,13 @@
-"""Shared plotting helpers: genome axis, region shading, page layout, histograms.
+"""Shared plotting base: genome axis, shading, page layout, histograms.
 
-The common base imported by the per-step plot modules (``plot_genome``,
-``plot_count_reads``, ``plot_alleles``, ``plot_combine_counts``,
-``plot_genotype_snps``); it draws into axes and figures the callers create, and
-opens no figure of its own.
+Last update: 2026-08-11
+
+Functions:
+- _get_axis, _shade, _load_shading: the cnplot genome axis and region shading
+- _observation_labels: the one place a per-observation display label is built
+- _suptitle, _finish_page, _bold_chrnames: page titling and layout
+- _hist_with_stats: a histogram with a mean/median-annotated title
+- _val_full: full title name for a value-type abbreviation
 """
 
 import numpy as np

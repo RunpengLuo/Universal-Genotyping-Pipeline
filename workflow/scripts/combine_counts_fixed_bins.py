@@ -1,18 +1,22 @@
-"""Aggregate one non-bulk assay's SNP and gene counts onto pre-computed bbs.
+"""copytyping_preprocess: count one non-bulk assay onto pre-computed bbs.
 
-The `copytyping_preprocess` mode: the bbs come from `bb_file` (config), so nothing is
-binned here. SNPs are assigned to their containing bb and summed; the per-cell count
-matrix is the h5ad UMIs (RNA) or raw 10x fragments (scATAC). Input for Copy-typing.
+Last update: 2026-08-11
 
-Inputs
-  snp_info, {tot,a,b}_mtx_snp: this assay's SNP-level matrices, from phase_and_concat
-  bb_file: pre-computed bbs, the feature axis of every output
-  h5ad_file / frag_files: the per-cell count source, by modality
+Inputs:
+- bb_file: pre-computed bbs, the feature axis of every output
+- allele_dir/snps.tsv.gz: the union SNP set, matrix rows
+- allele_dir/snp.{T,A,B}allele.npz: union allele counts, sliced to this assay
+- allele_dir/barcodes.tsv.gz: union column axis, sliced to this assay
+- allele_dir/sample_ids.tsv: dataset roster, sliced to this assay
+- bb_dir/{assay}.h5ad: RNA UMI source for Xcount
+- atac_fragments.tsv.gz: scATAC fragment source for Xcount
+- genome_size: chrom sizes TSV
 Outputs:
-  bb_file: the given bbs, re-stamped with this assay's `#SNPS` / `feature_id`, plus
-    `bb_id` and (RNA) `#feature`; every other column of the input passes through
-  bb.{Xcount,Tallele,Aallele,Ballele}.npz: (bb x cell) matrices
-  barcodes, sample_ids: this assay's slice of the union inputs
+- bb_dir/{assay}/bb.tsv.gz: the given bbs, re-stamped for this assay
+- bb_dir/{assay}/bb.{Xcount,Tallele,Aallele,Ballele}.npz: per-bb count matrices
+- bb_dir/{assay}/barcodes.tsv.gz: this assay's cells, matrix column order
+- bb_dir/{assay}/sample_ids.tsv: this assay's datasets
+- qc_dir/combine_counts_fixed_bins.{assay}.pdf: two-page BAF QC
 """
 
 import logging

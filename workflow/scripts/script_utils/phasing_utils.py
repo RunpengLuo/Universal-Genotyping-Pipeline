@@ -1,9 +1,13 @@
-"""Phasing helpers: phase clusters, phase application, flips, switch probabilities.
+"""Carry a haplotype across SNPs and bbs, after the phaser.
 
-Everything downstream of the phaser that decides how a haplotype is carried across SNPs
-and bbs: which SNPs share a phase cluster (the VCF ``PS`` tag), how a per-SNP phase
-label turns REF/ALT counts into A/B counts, where a phase flip splits a cluster, and the
-probability that a haplotype switches between consecutive bbs.
+Last update: 2026-08-11
+
+Functions:
+- apply_phase_to_mat: turn REF/ALT counts into phased A/B counts
+- detect_phase_flips: split a cluster where the haplotype orientation switches
+- interp_cM_between_bbs: centimorgan distance between consecutive bbs
+- estimate_switchprobs_cM: Haldane switch probability from a cM distance
+- estimate_switchprobs_PS: switch probability from phase-cluster (PS) membership
 """
 
 import logging

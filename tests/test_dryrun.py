@@ -1,26 +1,15 @@
 #!/usr/bin/env python3
 """Dry-run the DAG for every workflow mode, from both sample-file formats.
 
-Runpeng Luo
 Last update: 2026-08-06
 
-These tests build the DAG only (`snakemake -n`); no rule is executed and no real
-data is needed. They cover sample-file parsing and validation, rule wiring, the
-storage() wrapping of remote inputs, and the final targets of each mode. A JSON
-sample file and the equivalent TSV must yield the same DAG.
-
-Executing the rules on real data is not covered; see docs/TODO.md.
-
-Dependencies:
-  pytest; snakemake on PATH.
-
-Usage:
-  pytest tests/                 # dry-run tests (run from the repo root)
-  pytest tests/ -m network      # also hit the GIAB URLs
-
-Notes/References:
-  Snakemake's own per-rule test generator (`--generate-unit-tests`) needs a prior
-  successful run, so it is only usable once real fixtures exist: docs/TODO.md.
+Covers:
+- modes: each of the three builds a non-empty DAG
+- formats: a TSV sheet plans exactly the same jobs as JSON
+- validation: bad sample sheets and configs fail at DAG build
+- wiring: window build, repliseq, streaming, and the short-circuit VCFs
+Notes:
+- cost: no rule runs and no real data is needed
 """
 
 import json

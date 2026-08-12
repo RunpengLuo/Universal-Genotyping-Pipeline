@@ -1,4 +1,10 @@
-"""Genotyping QC plot: reference-AF and depth histograms by genotype (het vs hom-alt)."""
+"""Genotype QC histograms: het versus hom-alt reference allele fraction.
+
+Last update: 2026-07-28
+
+Functions:
+- plot_genotype_af_depth: per-genotype allele-fraction and depth histograms
+"""
 
 import numpy as np
 

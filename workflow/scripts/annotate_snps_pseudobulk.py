@@ -1,14 +1,13 @@
-"""Annotate and filter pseudobulk SNPs called by cellsnp-lite.
+"""Merge the per-modality cellsnp-lite calls into filtered het/hom-alt SNP VCFs.
 
-Merges the per-modality cellsnp-lite calls of every replicate and keeps unique
-bi-allelic het (or hom-alt) SNPs. The emitted VCFs are read back by cellsnp-lite,
-so their contigs follow the alignment naming (``input_nochr``), not ours.
+Last update: 2026-08-11
 
-Inputs
-  raw_snp_vcfs: per-modality cellsnp-lite base VCFs
-  genome_size: two-column chrom<TAB>size file, for the ##contig header
+Inputs:
+- snp_dir/pseudobulk_{modality}/cellSNP.base.vcf.gz: cellsnp-lite base calls
+- genome_size: chrom sizes TSV, for the ##contig header
 Outputs:
-  het/hom-alt VCFs in the alignment's chromosome naming
+- snp_dir/chr{chrname}.vcf.gz: unique bi-allelic het or hom-alt SNPs
+- snp_dir/chr{chrname}.vcf.gz.tbi: tabix index of the above
 """
 
 import logging

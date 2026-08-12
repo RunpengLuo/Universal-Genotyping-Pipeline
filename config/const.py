@@ -1,4 +1,19 @@
-"""Assay-type, data-type, and reference constants shared by Snakefile and scripts."""
+"""Assay, reference and sample-file constants shared by the Snakefile and scripts.
+
+Last update: 2026-08-11
+
+Constants:
+- WORKFLOW_MODES, ALLOWED_ASSAY_TYPES, ASSAY_TYPE2MODALITY: mode and assay vocabulary
+- REQUIRED_RECORD_KEYS, REQUIRED_FILES: the sample-file schema
+- BULK_TARGETS, SINGLE_CELL_TARGETS, COPYTYPING_TARGETS: the per-mode final outputs
+- REFVERS, REFVERS_ALIAS, SPECIES2SEXCHROM: reference builds and their spellings
+- RANGER_*, RANGER_LAYOUT: 10x Cell and Space Ranger filenames
+- REPLISEQ_*, LIFTOVER_CHAIN_URL: the ENCODE Repli-seq sources
+Functions:
+- canonical_refver, is_known_refver: fold a reference_version spelling
+- get_phasing_panel_path, get_genetic_map_path: per-chromosome path builders
+- is_url: does a sample-file value name a remote input
+"""
 
 import os
 

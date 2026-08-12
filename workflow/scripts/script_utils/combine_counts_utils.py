@@ -1,11 +1,11 @@
-"""Observation and RDR helpers for the combine_counts scripts.
+"""Observation bookkeeping and bulk depth/RDR summaries for combine_counts.
 
-Two groups, in pipeline order:
+Last update: 2026-08-11
 
-1. observations  - which matrix column belongs to which replicate/assay
-2. depth and RDR - fixed-bin depth onto bbs, then the RDR ratio
-
-The upstream half of the pipeline is ``phase_and_concat_utils``; nothing is shared.
+Functions:
+- observation_cluster_ids: map each matrix column to its roster row
+- summarize_read_depth_bb: length-weighted fixed-bin depth aggregated per bb
+- summarize_rdr_bb: per-bb RDR, matched-normal or median-centered
 """
 
 import logging

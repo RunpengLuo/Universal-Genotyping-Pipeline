@@ -1,21 +1,12 @@
 #!/usr/bin/env python3
-"""Chromosome-name helpers behind the resolution in parse_workflow.
+"""Unit tests for the chromosome-naming helpers and the size-file reader.
 
-Runpeng Luo
 Last update: 2026-08-06
 
-parse_workflow inlines the resolution itself from read_chrom_sizes and
-strip_chr_prefix; its behaviour is covered end to end by tests/test_chrstyle.py
-and the absent-chromosome case in tests/test_dryrun.py.
-
-Dependencies:
-  pytest; workflow/scripts/script_utils of this repo, which imports pandas.
-
-Usage:
-  pytest tests/test_io_utils.py
-
-Notes/References:
-  Naming rules per file: .claude/chr-QA.md
+Covers:
+- naming: strip and add the chr prefix, per row
+- sizes: file order is kept, both namings are read
+- bundled: every shipped size file covers its chromosomes
 """
 
 import os

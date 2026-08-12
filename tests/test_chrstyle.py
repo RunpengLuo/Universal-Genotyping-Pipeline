@@ -1,21 +1,12 @@
 #!/usr/bin/env python3
-"""Chromosome naming style: region strings follow the genome-size file.
+"""The chromosome naming of a run follows the reference, not the pipeline.
 
-Runpeng Luo
 Last update: 2026-08-06
 
-The genome-size file declares how the raw inputs name their contigs. Region strings
-handed to bcftools/mosdepth must use that spelling, or the tool silently matches
-nothing. These build the DAG only.
-
-Dependencies:
-  pytest; snakemake on PATH.
-
-Usage:
-  pytest tests/test_chrstyle.py
-
-Notes/References:
-  Naming style: docs/reference.md, `genome_size`
+Covers:
+- chr-prefixed genome: region strings keep the prefix
+- bare-contig genome: the prefix is dropped at the boundary sites
+- segment_bed: read in one style whichever the file uses
 """
 
 import os

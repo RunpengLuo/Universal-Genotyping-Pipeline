@@ -1,27 +1,16 @@
 """Assign query positions or ranges to a reference range set.
 
-Coordinates are 0-based throughout: a pos is a 0-based offset (``POS0``, never the
-1-based VCF ``POS``) and a range is a 0-based half-open ``[START, END)`` pair, on either
-side. Both are asserted on every call. The 1-based boundaries are named in
-``docs/DEVELOPER.md``.
+Last update: 2026-08-08
 
-Three frame-level entry points, all keyed on ``#CHR``, all returning
-``(annotated_qry, na_idx)``:
-
-- ``assign_pos_to_range`` - a query POSITION lands in the range containing it.
-- ``assign_pos_to_range_ovlp`` - the many-hit variant: every overlapping id, joined.
-- ``assign_range_to_range`` - a query RANGE, by ``rule``: largest overlap, midpoint, or
-  contained (both ends in one reference id).
-
-They never mutate *qry*; the out-column is built as one positional array, so a duplicate
-index is harmless. ``na_idx`` holds the positional indices of the unassigned rows, which
-is what makes ``dropna=True`` usable when a parallel matrix has to be subset the same way.
-
-``overlaps_any_range`` is the boolean variant and ``merge_ranges_to_clusters`` the
-array-level one: its ranges index into an ordered sequence rather than a coordinate.
-
-``trim_range_by_range`` is the one entry point that reshapes rather than annotates:
-interval difference, cutting one range set out of another.
+Functions:
+- assign_pos_to_range: a position lands in its containing range
+- assign_pos_to_range_ovlp: every overlapping id, sep-joined, for nested references
+- assign_range_to_range: a range, by max_overlap, midpoint or contained
+- overlaps_any_range: boolean membership mask, no id carried
+- trim_range_by_range: interval difference, cutting one range set out
+- merge_ranges_to_clusters: cluster ordered items so no range splits
+References:
+- docs/DEVELOPER.md: the 0-based half-open invariant, asserted on every call
 """
 
 import heapq

@@ -1,26 +1,26 @@
-"""Joint per-sample adaptive binning for non-bulk assays.
+"""Single-cell: joint adaptive binning over all non-bulk assays of the sample.
 
-All non-bulk assays present in the sample (e.g. scRNA + scATAC for multiome) are segmented
-onto ONE shared set of bbs. Each (replicate x assay) is pseudobulked into one observation;
-``build_adaptive_bins`` then requires ``min_snp_reads`` in EVERY observation, so bbs jointly
-satisfy every (dataset_id, assay) -- exactly the bulk multi-sample pattern (see combine_counts.py),
-but with single cells pseudobulked per replicate first.
+Last update: 2026-08-11
 
-The allele matrices come from phase_and_concat_nonbulk on ONE shared SNP grid (read
-directly, no union); only the cells differ per assay.
-
-The fixed bins are the window BED, the same grid bulk bins on: windows exist where no SNP
-does, so a SNP-free segment still yields bbs carrying Xcount, and no window lies in a
-blacklist hole. The two count types reach a bb differently, on purpose: scATAC fragments
-are routed through the windows (a fragment in a hole hits no window and is dropped), while
-scRNA/VISIUM genes go to the bb hull, since a gene is indivisible and would land in an
-arbitrary window otherwise.
-
-All outputs live under ``bb_dir/MSR{msr}/{assay}/``: the shared ``bb.tsv.gz`` (duplicated
-per assay) plus that assay's slice of everything else -- ``sample_ids.tsv`` (its datasets),
-``barcodes.tsv.gz`` (its cells, the matrix column axis) and the (n_bins x n_cells) matrices
-``bb.{T,A,B}allele.npz``, ``bb.Xcount.npz``, ``multi_snp.*``. Input for HATCHet3 and
-CalicoST.
+Inputs:
+- allele_dir/snps.tsv.gz: the union SNP set, matrix rows
+- allele_dir/snp.{T,A,B}allele.npz: one matrix over every assay's cells
+- allele_dir/barcodes.tsv.gz: the matrix column axis
+- allele_dir/sample_ids.tsv: dataset x assay roster, one pseudobulk each
+- aux_dir/windows.bed.gz: the fixed bins, shared with bulk
+- atac_fragments.tsv.gz: scATAC Xcount source, counted through the windows
+- bb_dir/{assay}.h5ad: RNA Xcount source, genes assigned to bb hulls
+- phase_dir/genetic_map.tsv.gz: optional, for cM-based switch probabilities
+- genome_size: chrom sizes TSV
+Outputs:
+- bb_dir/MSR{msr}/{assay}/bb.tsv.gz: shared bb definitions, duplicated per assay
+- bb_dir/MSR{msr}/{assay}/bb.{T,A,B}allele.npz: this assay's per-bb allele counts
+- bb_dir/MSR{msr}/{assay}/bb.Xcount.npz: this assay's per-bb native counts
+- bb_dir/MSR{msr}/{assay}/barcodes.tsv.gz: this assay's cells, matrix column order
+- bb_dir/MSR{msr}/{assay}/sample_ids.tsv: this assay's datasets
+- bb_dir/MSR{msr}/{assay}/multi_snp.tsv.gz: multi-SNP diagnostic groups
+- bb_dir/MSR{msr}/{assay}/multi_snp.{T,A,B}allele.npz: per-group allele counts
+- qc_dir/combine_counts.{assay}.MSR{msr}.pdf: allele-frequency QC per assay
 """
 
 import logging

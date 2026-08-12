@@ -1,4 +1,12 @@
-"""Bin-level combine_counts QC plots: segmentation, genome-wide RDR/BAF, RDR-vs-BAF 2D."""
+"""Bin-level combine_counts QC: segmentation, genome-wide RDR/BAF, RDR-vs-BAF.
+
+Last update: 2026-08-11
+
+Functions:
+- plot_segmentation_qc: bb length and per-dataset raw count histograms
+- plot_rdr_baf: one page per tumor, depth then RDR then BAF
+- plot_rdr_baf_2d: RDR-vs-BAF cloud with marginal densities
+"""
 
 import logging
 

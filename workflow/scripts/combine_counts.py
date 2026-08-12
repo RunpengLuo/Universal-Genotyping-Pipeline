@@ -1,15 +1,23 @@
-"""SNP-informed adaptive binning across all bulk assays + depth aggregation + RDR.
+"""Bulk: SNP-informed adaptive binning over all bulk assays, plus depth and RDR.
 
-All bulk assays (WGS/WGS-lr/WES) share ONE set of fixed bins tiled from ``segment.bed``
-(the window BED). ``build_adaptive_bins`` closes a bb only when every tumor observation
-meets ``min_snp_reads``, clustered by ``seg_id`` (the segment). Fixed-bin depth is
-aggregated per assay onto the same bbs. Allele counts are aggregated per bb across all
-samples; RDR is computed per assay, normalizing each tumor by the RDR base observation
-named in its ``rdr_base_dataset_id`` (median-normalized when unset).
+Last update: 2026-08-11
 
-The allele matrices come as one joint set from phase_and_concat_bulk (read directly, no
-union); depth/fixed-bin inputs stay per-assay (index-aligned to ``params.assay_types``).
-Outputs go under ``bb_dir/MSR{msr}/bulk/``; matrix observations are the bulk samples.
+Inputs:
+- allele_dir/snps.tsv.gz: the shared SNP set, matrix rows
+- allele_dir/snp.{T,A,B}allele.npz: joint allele counts, samples as columns
+- allele_dir/sample_ids.tsv: one row per matrix column
+- pileup_dir/{assay}/window.tsv.gz: per-assay fixed bins, row-aligned to depth
+- pileup_dir/{assay}/window.dp.npz: per-assay bias-corrected depth
+- aux_dir/segment.bed: region_id and seg_id cluster keys
+- phase_dir/genetic_map.tsv.gz: optional, for cM-based switch probabilities
+- blacklist_bed, genome_size: QC plot shading and axis
+Outputs:
+- bb_dir/MSR{msr}/bulk/bb.tsv.gz: bb definitions, one row each
+- bb_dir/MSR{msr}/bulk/bb.{T,A,B}allele.npz: per-bb phased allele counts
+- bb_dir/MSR{msr}/bulk/bb.depth.npz: per-bb mean depth per dataset
+- bb_dir/MSR{msr}/bulk/bb.rdr.npz: per-bb RDR per tumor
+- bb_dir/MSR{msr}/bulk/sample_ids.tsv: one row per matrix column
+- qc_dir/combine_counts.bulk.MSR{msr}.pdf: segmentation, RDR/BAF and 2D QC
 """
 
 import logging

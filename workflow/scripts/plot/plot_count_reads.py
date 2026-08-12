@@ -1,4 +1,11 @@
-"""Read-depth bias-correction QC plots (rd_correct / count_reads step)."""
+"""Read-depth bias-correction QC for rd_correct.
+
+Last update: 2026-08-06
+
+Functions:
+- plot_rd_1d_scatter: genome-wide depth before and after correction
+- plot_rd_2d_kde: depth against GC, mappability and replication timing
+"""
 
 import logging
 

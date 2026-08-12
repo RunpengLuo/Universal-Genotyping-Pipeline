@@ -1,10 +1,18 @@
+"""Reformat a barcode/label Visium annotation file.
+
+Last update: 2026-07-26
+
+Inputs:
+- argv: ann_file, out_file
+- ann_file: barcode/label annotation table
+Outputs:
+- out_file: the same table with simplified labels
+"""
+
 import sys
 
 import pandas as pd
 
-"""
-Take a barcode/label visium annotation file, convert to correct format.
-"""
 
 _, ann_file, out_file = sys.argv
 

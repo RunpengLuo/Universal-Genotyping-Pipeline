@@ -1,3 +1,18 @@
+"""Read the pipeline's input files and write its tabular outputs.
+
+Last update: 2026-08-11
+
+Functions:
+- read_VCF, read_BED, read_gtf, read_genes_gtf_file: parse the annotation inputs
+- read_chrom_sizes, read_bedgraph, read_window_bed: parse the reference and bin inputs
+- read_allele_mat, read_snp_mats: allele matrices, dense bulk or sparse single-cell
+- read_barcodes, read_barcodes_by_dataset: the single-cell column axis
+- read_chunks_from_atac_fragments: stream a 10x fragment file in chunks
+- read_10x_ranger_scRNA, read_10x_ranger_spatial: Cell and Space Ranger matrices
+- read_bcftools_pileup_counts: a bcftools AD table as count matrices
+- write_snp_info, write_bb_file, write_sample_ids: the three output schemas
+"""
+
 import logging
 import os
 import tempfile

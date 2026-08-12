@@ -1,11 +1,16 @@
-"""Per-fixed-bin GC/mappability/replication-timing bias correction for bulk samples.
+"""Bulk: GC/mappability/replication-timing bias correction of per-fixed-bin depth.
 
-Loads mosdepth fixed-bin depth, joins the pre-filtered bin BED (GC/MAP/REPLI/region_id),
-corrects each sample with ``correct_readcount_quadreg`` or ``correct_readcount_lowess``
-(``gc_correct_method``), and saves the corrected depth matrix + the filtered bin frame.
+Last update: 2026-08-11
 
-The bin BED (config `window_bed`) is expected to be pre-filtered by region and blacklist
-(produced by build_window_bed.py), with region_id column already present.
+Inputs:
+- pileup_dir/{assay}/out_mosdepth/{dataset_id}.regions.bed.gz: per-dataset per-bin depth
+- aux_dir/windows.bed.gz: fixed bins with GC, MAP, REPLI, region_id
+- genome_size, region_bed, blacklist_bed: QC plot axis and shading
+Outputs:
+- pileup_dir/{assay}/window.dp.npz: corrected depth, one column per dataset
+- pileup_dir/{assay}/window.tsv.gz: bins kept, row-aligned to the depth
+- pileup_dir/{assay}/depth_statistics.tsv: per-dataset depth summary
+- qc_dir/rd_correction.{assay}.pdf: depth scatter before/after plus covariate KDE
 """
 
 import os
