@@ -53,6 +53,13 @@ if workflow_mode == "bulk_genotyping":
                 bb_dir + f"/MSR{{msr}}/bulk/sample_ids.tsv",
                 msr=msr_list,
             ),
+            multi_bb_file=bb_dir + "/multi_snp/bulk/bb.tsv.gz",
+            multi_tot_mtx=bb_dir + "/multi_snp/bulk/bb.Tallele.npz",
+            multi_a_mtx=bb_dir + "/multi_snp/bulk/bb.Aallele.npz",
+            multi_b_mtx=bb_dir + "/multi_snp/bulk/bb.Ballele.npz",
+            multi_dp_mtx=bb_dir + "/multi_snp/bulk/bb.depth.npz",
+            multi_rdr_mtx=bb_dir + "/multi_snp/bulk/bb.rdr.npz",
+            multi_sample_file=bb_dir + "/multi_snp/bulk/sample_ids.tsv",
             qc_pdf=report(
                 expand(
                     qc_dir + f"/combine_counts.bulk.MSR{{msr}}.pdf",
@@ -80,6 +87,7 @@ if workflow_mode == "bulk_genotyping":
             switchprob_ps=config["params_combine_counts"]["switchprob_ps"],
             min_snp_reads=msr_list,
             min_snp_per_bin=config["params_combine_counts"]["min_snp_per_bin"],
+            nsnp_multi=config["params_combine_counts"]["nsnp_multi"],
             gene_aware_binning=config["params_combine_counts"]["gene_aware_binning"],
             max_blocksize=config["params_combine_counts"]["max_blocksize"],
             phase_flip_test=config["params_combine_counts"]["phase_flip_test"],
@@ -139,25 +147,15 @@ elif workflow_mode == "single_cell_genotyping":
                 for at in assay_types
                 for msr in msr_list
             ],
-            multi_snp_file=[
-                bb_dir + f"/MSR{msr}/{at}/multi_snp.tsv.gz"
-                for at in assay_types
-                for msr in msr_list
-            ],
+            multi_snp_file=[bb_dir + f"/multi_snp/{at}/bb.tsv.gz" for at in assay_types],
             tot_mtx_multi=[
-                bb_dir + f"/MSR{msr}/{at}/multi_snp.Tallele.npz"
-                for at in assay_types
-                for msr in msr_list
+                bb_dir + f"/multi_snp/{at}/bb.Tallele.npz" for at in assay_types
             ],
             a_mtx_multi=[
-                bb_dir + f"/MSR{msr}/{at}/multi_snp.Aallele.npz"
-                for at in assay_types
-                for msr in msr_list
+                bb_dir + f"/multi_snp/{at}/bb.Aallele.npz" for at in assay_types
             ],
             b_mtx_multi=[
-                bb_dir + f"/MSR{msr}/{at}/multi_snp.Ballele.npz"
-                for at in assay_types
-                for msr in msr_list
+                bb_dir + f"/multi_snp/{at}/bb.Ballele.npz" for at in assay_types
             ],
             all_barcodes=[
                 bb_dir + f"/MSR{msr}/{at}/barcodes.tsv.gz"

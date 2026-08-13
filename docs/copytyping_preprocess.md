@@ -1,6 +1,6 @@
 # Copytyping Preprocess
 
-This documentation covers input preparation and result interpretation for the copytyping preprocess mode, which aggregates single-cell / spatial (**scRNA**, **scATAC**, **Visium**) allele and native counts onto a **pre-computed** set of copy-number bbs to run [CalicoST](https://github.com/raphael-group/CalicoST). This mode never genotypes or phases: a pre-computed phased het-SNP VCF (`het_snp_vcf`) and the genomic bin annotations (`bb_file`) are **required** inputs from running genotyping using matched bulk samples. Refer to the [README](../README.md) for Snakemake pipeline installation and execution instructions.
+This documentation covers input preparation and result interpretation for the copytyping preprocess mode, which aggregates single-cell / spatial (**scRNA**, **scATAC**, **Visium**) allele and native counts onto a **pre-computed** set of copy-number bbs to run [Copy-typing](https://github.com/raphael-group/Copy-typing). Refer to the [README](../README.md) for Snakemake pipeline installation and execution instructions.
 
 ## Table of Contents
 1. [Overview](#overview) <br>
@@ -18,7 +18,7 @@ The rule graph below shows the stages of the copytyping preprocess workflow.
 ## Input
 
 ### Sample file
-A sample sheet in JSON format is required to specify the locations and data configurations for input datasets. Detailed JSON format can be found at [sample_sheet.md](./sample_sheet.md). Here is an example for a 10x Epi Multiome dataset `U1` from patient `HT001`.
+A sample sheet in JSON format records one or more samples representing patients or cell lines identified by `sample_id`. Each sample can have one or more datasets representing multiple sequencing runs collected from same sample identified by `dataset_id`. Detailed JSON format can be found at [sample_sheet.md](./sample_sheet.md). Here is an example for a 10x Epi Multiome dataset `U1` from patient `HT001`.
 
 ```json
 {
@@ -53,12 +53,9 @@ A sample sheet in JSON format is required to specify the locations and data conf
 ```
 
 > [!IMPORTANT]
-> Here are a few important constraints for sample files:
-> - All alignment files must come from same reference version.
-> - Each tuple (`sample_id`, `dataset_id`) defines a unique dataset; 
-> - A multiome paired dataset share the same `dataset_id`, one `scRNA` and one `scATAC` record.
-> - BAM file (`alignment`) must be sorted, and its index file (`alignment_index`) must present!
-> - Each assay reads a specific set of `files` (`barcodes`, `fragments`, `matrix_h5`, etc.,); see [sample_sheet.md](sample_sheet.md#files) for the per-assay requirement.
+> - (`sample_id`, `dataset_id`) must uniquely define a dataset.
+> - A paired multiome dataset is represented by two entries with same (`sample_id`, `dataset_id`) and different `assay_type` (`scRNA` and `scATAC`).
+> - alignment file (`alignment`) must be sorted, and its index file (`alignment_index`) must present.
 
 ### Config file
 
@@ -75,9 +72,10 @@ sample_file: /path/to/samples.json
 chromosomes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
 ```
 
-2. specify the paths to reference files. Commonly used reference versions for human (`hg19`, `hg38`, `T2T-CHM13v2.0`) and mouse (`mm10`) have pre-built files at [../resources/data/](../resources/data/). Here is an example configuration for `hg38`. See [../resources/README.md](../resources/README.md) for detailed descriptions and public URLs.
+2. specify the paths to reference files, see [../resources/README.md](../resources/README.md) for detailed descriptions for pre-built reference files. Only datasets with `reference_version` recorded in config will be processed.
 
 ```yaml
+species: human
 reference_version: hg38
 reference: /path/to/reference.fasta
 genome_size: resources/data/hg38.chrom.sizes
@@ -86,16 +84,13 @@ gtf_file: /path/to/gencode.v38.annotation.gtf.gz
 gene_blacklist_file: resources/data/ig_gene_list.txt
 ```
 
-3. specify the pre-computed phased het-SNP VCF (`het_snp_vcf`) and the copy-number bb annotations (`bb_file`). Both are **required** in this mode: genotyping and phasing are skipped, and the counts are aggregated onto the given bbs. A natural source is a prior `bulk_genotyping` run of the same patient (its `phase/phased_het_snps.vcf.gz` and a `bb.tsv.gz`).
+3. specify the pre-computed **phased** het-SNP VCF (`het_snp_vcf`) and the copy-number bb annotations (`bb_file`). Both are **required** in this mode: genotyping and phasing are skipped, and the counts are aggregated onto the given bbs. A natural source is a prior `bulk_genotyping` run of the same patient (its `phase/phased_het_snps.vcf.gz` and a `bb.tsv.gz`).
 
 ```yaml
 het_snp_vcf: /path/to/phased_het_snps.vcf.gz
 het_snp_vcf_phased: true
 bb_file: /path/to/bb.tsv.gz
 ```
-
-> [!IMPORTANT]
-> `het_snp_vcf` must be **phased** in this mode: `het_snp_vcf_phased` defaults to `true` and setting it `false` is a parse-time error. This mode never phases, so an unphased VCF cannot be used here; phase it first (e.g. via a `bulk_genotyping` or `single_cell_genotyping` run) and pass the phased VCF.
 
 ## Output
 
@@ -106,11 +101,10 @@ Refer to [Final bins](reference.md#final-bins) for the full specification of eac
   bb/
     {assay_type}.h5ad                          # gene x cell AnnData (scRNA/VISIUM)
     {assay_type}/                              # per assay, flat (no MSR{msr}/ layer)
-      cnv_segments.tsv                         # bb annotations
+      bb.tsv.gz                                # bb annotations (the given bb_file, re-stamped)
       bb.{Xcount,Tallele,Aallele,Ballele}.npz # per-bb native + phased allele counts, bbs x cells
-      barcodes.tsv.gz                          # {BARCODE}_{REP_ID} per row
-      barcodes.full.tsv.gz                     # REP_ID, BARCODE columns
-      sample_ids.tsv                           # one row per replicate x assay, in matrix-column order
+      barcodes.tsv.gz                          # {BARCODE}_{dataset_id}_{assay_type} per row
+      sample_ids.tsv                           # roster: one row per dataset x assay (barcodes.tsv.gz is the column axis)
   qc/
     phase_and_concat.{assay_type}.pdf          # SNP allele frequency + depth histogram
     combine_counts_fixed_bins.{assay_type}.pdf # SNP- and BB-level BAF

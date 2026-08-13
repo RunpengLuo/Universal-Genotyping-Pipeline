@@ -24,7 +24,7 @@ import pandas as pd
 import numpy as np
 
 from const import GTF_COLUMNS, RANGER_MATRIX_H5, RANGER_SPATIAL_DIR
-from utils import add_chr_prefix, sort_chroms, sort_df_chr
+from utils import add_chr_prefix, log_ratios, sort_chroms, sort_df_chr
 
 
 def read_chrom_sizes(sz_file: str):
@@ -304,7 +304,17 @@ def read_window_bed(bed_file, chroms=None, keep_covariates=False):
     bin_df = bin_df[cols].copy()
     bin_df["#CHR"] = add_chr_prefix(bin_df["#CHR"])
     if chroms is not None:
-        bin_df = bin_df[bin_df["#CHR"].isin(chroms)]
+        n_raw = len(bin_df)
+        keep = bin_df["#CHR"].isin(chroms)
+        dropped = (bin_df["END"] - bin_df["START"])[~keep]
+        bin_df = bin_df[keep]
+        log_ratios(
+            f"{bed_file}, bins off the run's {len(chroms)} contigs",
+            n_raw - len(bin_df),
+            n_raw,
+            dropped,
+            "bin",
+        )
     bin_df = sort_df_chr(bin_df, ch="#CHR", pos="START").reset_index(drop=True)
     if "seg_id" not in bin_df.columns:
         bin_df["seg_id"] = bin_df["region_id"]

@@ -50,10 +50,12 @@ The profile at [`profile/config.yaml`](profile/config.yaml) holds run-wide setti
 
 ---
 
-The sample sheet ([template](resources/templates/samples.json)) is a JSON file lists the input datasets & configurations. Copy the template and modify from it according to [schema](docs/sample_sheet.md). Validate the format and check the file existence via:
+The sample sheet ([template](resources/templates/samples.json)) is a JSON file lists the input datasets & configurations. Copy the template and modify from it according to [schema](docs/sample_sheet.md). The sample sheet is parsed and validated at DAG build, so a dry run checks it without executing anything:
 
 ```sh
-python resources/scripts/validate_sample_file.py /path/to/samples.json --check-files
+snakemake --profile profile/ -s workflow/Snakefile --configfile /path/to/my_config.yaml \
+  --directory <output_dir> --config sample_file=/path/to/samples.json sample_id=<PATIENT_ID> \
+  --dry-run
 ```
 
 ---

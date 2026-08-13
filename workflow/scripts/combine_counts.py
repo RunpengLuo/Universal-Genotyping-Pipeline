@@ -1,6 +1,6 @@
 """Bulk: SNP-informed adaptive binning over all bulk assays, plus depth and RDR.
 
-Last update: 2026-08-11
+Last update: 2026-08-13
 
 Inputs:
 - allele_dir/snps.tsv.gz: the shared SNP set, matrix rows
@@ -17,6 +17,7 @@ Outputs:
 - bb_dir/MSR{msr}/bulk/bb.depth.npz: per-bb mean depth per dataset
 - bb_dir/MSR{msr}/bulk/bb.rdr.npz: per-bb RDR per tumor
 - bb_dir/MSR{msr}/bulk/sample_ids.tsv: one row per matrix column
+- bb_dir/multi_snp/bulk/: the same six files over nsnp_multi-SNP groups, binning-independent
 - qc_dir/combine_counts.bulk.MSR{msr}.pdf: segmentation, RDR/BAF and 2D QC
 """
 
@@ -24,7 +25,7 @@ import logging
 
 snakemake_handle = snakemake
 
-from utils import set_omp_threads, setup_logging, log_hist, maybe_path
+from utils import set_omp_threads, setup_logging, log_hist, log_ratios, maybe_path
 
 set_omp_threads(snakemake_handle)
 setup_logging(snakemake_handle.log[0])
@@ -33,10 +34,18 @@ import numpy as np
 import pandas as pd
 
 from segmentation_utils import build_adaptive_bins, sum_features_to_bbs
-from range_utils import assign_pos_to_range, merge_ranges_to_clusters
+from range_utils import (
+    assign_pos_to_range,
+    assign_range_to_range,
+    merge_ranges_to_clusters,
+)
 from feature_utils import explode_feature_ids, merge_feature_ids
 from io_utils import read_snp_mats, read_window_bed, write_bb_file
-from combine_counts_utils import summarize_read_depth_bb, summarize_rdr_bb
+from combine_counts_utils import (
+    summarize_read_depth_bb,
+    summarize_rdr_bb,
+    tumor_observation_indices,
+)
 from phasing_utils import (
     detect_phase_flips,
     estimate_switchprobs_PS,
@@ -76,6 +85,7 @@ gene_aware_binning = bool(snakemake_handle.params["gene_aware_binning"])
 max_blocksize = int(snakemake_handle.params["max_blocksize"])
 msr_list = [int(m) for m in snakemake_handle.params["min_snp_reads"]]
 min_snp_per_bin = int(snakemake_handle.params["min_snp_per_bin"])
+nsnp_multi = int(snakemake_handle.params["nsnp_multi"])
 nu = float(snakemake_handle.params["nu"])
 min_switchprob = float(snakemake_handle.params["min_switchprob"])
 switchprob_ps = float(snakemake_handle.params["switchprob_ps"])
@@ -88,6 +98,13 @@ out_b_mtx_bb = list(snakemake_handle.output["b_mtx_bb"])
 out_dp_mtx_bb = list(snakemake_handle.output["dp_mtx_bb"])
 out_rdr_mtx_bb = list(snakemake_handle.output["rdr_mtx_bb"])
 out_sample_file = list(snakemake_handle.output["sample_file"])
+out_multi_bb_file = snakemake_handle.output["multi_bb_file"]
+out_multi_tot_mtx = snakemake_handle.output["multi_tot_mtx"]
+out_multi_a_mtx = snakemake_handle.output["multi_a_mtx"]
+out_multi_b_mtx = snakemake_handle.output["multi_b_mtx"]
+out_multi_dp_mtx = snakemake_handle.output["multi_dp_mtx"]
+out_multi_rdr_mtx = snakemake_handle.output["multi_rdr_mtx"]
+out_multi_sample_file = snakemake_handle.output["multi_sample_file"]
 out_qc_pdf = list(snakemake_handle.output["qc_pdf"])
 
 ##################################################
@@ -105,8 +122,7 @@ genetic_map = pd.read_table(gmap_file, sep="\t") if gmap_file is not None else N
 num_datasets = len(sample_df)
 dataset_assays = sample_df["assay_type"].to_numpy()
 dataset_ids = sample_df["dataset_id"].tolist()
-sample_types = sample_df["sample_type"].to_numpy()
-tumor_dataset_indices = np.flatnonzero(sample_types == "tumor").tolist()
+tumor_dataset_indices = tumor_observation_indices(sample_df)
 tumor_dataset_ids = [dataset_ids[c] for c in tumor_dataset_indices]
 tumor_assays = [dataset_assays[c] for c in tumor_dataset_indices]
 
@@ -145,6 +161,10 @@ logging.info(
 # assign SNPs to windows, then drop the misses from the matrices too
 tot_tumor = np.ascontiguousarray(tot_mtx[:, tumor_dataset_indices], dtype=np.float64)
 snps_binned, off_idx = assign_pos_to_range(snps, bin_df, ref_id="bin_id", dropna=True)
+snp_spans = (snps["END"] - snps["START"]).to_numpy()
+log_ratios(
+    "SNPs outside every window", len(off_idx), len(snps), snp_spans[off_idx], "snp"
+)
 if len(off_idx):
     log_hist(tot_tumor[off_idx].sum(axis=1), "depth of SNPs outside every bin")
 log_hist(
@@ -192,6 +212,151 @@ if gene_aware_binning:
     )
 
 ##################################################
+# multi-SNP groups: nsnp_multi SNPs each, independent of the binning sweep
+multi_cols = ["#CHR", "START", "END", "region_id"] + (
+    ["seg_id"] if "seg_id" in snps_binned.columns else []
+)
+multi_bins = snps_binned[multi_cols].reset_index(drop=True)
+multi_bins["bin_id"] = np.arange(len(multi_bins))
+multi_snps_in, off_multi = assign_pos_to_range(
+    snps_binned, multi_bins, ref_id="bin_id", dropna=True
+)
+keep_multi = np.ones(len(multi_bins), dtype=bool)
+keep_multi[off_multi] = False
+multi_bin_spans = (multi_bins["END"] - multi_bins["START"]).to_numpy()
+log_ratios(
+    "SNPs with no per-SNP range, dropped from the multi-SNP grouping",
+    len(off_multi),
+    len(multi_bins),
+    multi_bin_spans[off_multi],
+    "snp",
+)
+if len(off_multi):
+    log_hist(tot_tumor[off_multi].sum(axis=1), "depth of SNPs with no per-SNP range")
+
+multi_bbs, snps_multi = build_adaptive_bins(
+    multi_bins,
+    multi_snps_in,
+    np.ascontiguousarray(tot_tumor[keep_multi]),
+    0,
+    nsnp_multi,
+    cluster_cols=[c for c in ("region_id", "seg_id") if c in multi_bins.columns],
+    max_blocksize=0,
+    gene_aware=False,
+)
+num_multi = len(multi_bbs)
+multi_ids = snps_multi["bb_id"].to_numpy()
+multi_tot = sum_features_to_bbs(tot_mtx[keep_multi], multi_ids, num_multi)
+multi_a = sum_features_to_bbs(a_mtx[keep_multi], multi_ids, num_multi)
+multi_b = sum_features_to_bbs(b_mtx[keep_multi], multi_ids, num_multi)
+
+# the groups tile each region, so every window falls in one; depth follows by midpoint
+multi_spans = (
+    multi_bbs.groupby("bb_id", sort=True)
+    .agg(
+        **{"#CHR": ("#CHR", "first"), "START": ("START", "min"), "END": ("END", "max")}
+    )
+    .reset_index()
+)
+mapped, off_win = assign_range_to_range(
+    bin_df[["#CHR", "START", "END"]], multi_spans, "bb_id", rule="midpoint"
+)
+win_multi = (
+    pd.to_numeric(mapped["bb_id"], errors="coerce").fillna(-1).to_numpy(np.int64)
+)
+inside = win_multi >= 0
+win_spans = (bin_df["END"] - bin_df["START"]).to_numpy()
+logging.info(f"multi-SNP groups: {num_multi} over {int(keep_multi.sum())} SNPs")
+log_ratios(
+    "bins outside every multi-SNP group",
+    int((~inside).sum()),
+    len(bin_df),
+    win_spans[~inside],
+    "bin",
+)
+multi_bin_df = bin_df.loc[inside].assign(bb_id=win_multi[inside])
+multi_dp, multi_bases = summarize_read_depth_bb(
+    multi_bin_df, dp_corrected[inside], num_multi, dataset_ids=dataset_ids
+)
+multi_rdr = summarize_rdr_bb(
+    multi_bin_df,
+    dp_corrected[inside],
+    multi_dp,
+    tumor_dataset_indices,
+    get_rdr_base_dataset_id,
+    dataset_ids,
+)
+
+multi_baf = np.divide(
+    multi_b,
+    multi_tot,
+    where=multi_tot > 0,
+    out=np.full_like(multi_b, np.nan, dtype=np.float32),
+)
+multi_nan_baf = np.isnan(multi_baf).any(axis=1)
+multi_nan_dp = np.isnan(multi_dp).any(axis=1)
+multi_nan_rdr = np.isnan(multi_rdr).any(axis=1)
+multi_nan = multi_nan_baf | multi_nan_dp | multi_nan_rdr
+multi_spans_bp = multi_bbs["BLOCKSIZE"].to_numpy()
+log_ratios(
+    "multi-SNP NaN row filter, dropped",
+    int(multi_nan.sum()),
+    num_multi,
+    multi_spans_bp[multi_nan],
+    "bb",
+)
+for _cause, _m in (
+    ("BAF", multi_nan_baf),
+    ("depth", multi_nan_dp),
+    ("RDR", multi_nan_rdr),
+):
+    log_ratios(
+        f"NaN by cause (overlapping) {_cause}",
+        int(_m.sum()),
+        num_multi,
+        multi_spans_bp[_m],
+        "bb",
+        prefix="  ",
+    )
+valid_multi = ~multi_nan
+multi_bbs = multi_bbs.loc[valid_multi].reset_index(drop=True)
+multi_tot, multi_a, multi_b = (
+    multi_tot[valid_multi],
+    multi_a[valid_multi],
+    multi_b[valid_multi],
+)
+multi_dp, multi_rdr = multi_dp[valid_multi], multi_rdr[valid_multi]
+old_to_new_multi = {old: new for new, old in enumerate(np.where(valid_multi)[0])}
+snps_multi_valid = snps_multi[snps_multi["bb_id"].isin(old_to_new_multi)].copy()
+snps_multi_valid["bb_id"] = snps_multi_valid["bb_id"].map(old_to_new_multi)
+multi_bbs["bb_id"] = np.arange(len(multi_bbs))
+
+if genetic_map is not None:
+    multi_bbs["switchprobs"] = estimate_switchprobs_cM(
+        interp_cM_between_bbs(
+            multi_bbs, snps_multi_valid, genetic_map, bb_id_col="bb_id"
+        ),
+        nu=nu,
+        min_switchprob=min_switchprob,
+    )
+else:
+    multi_bbs["switchprobs"] = estimate_switchprobs_PS(multi_bbs, switchprob_ps)
+multi_bbs["feature_id"] = (
+    multi_bbs["bb_id"]
+    .map(snps_multi_valid.groupby("bb_id")["feature_id"].agg(merge_feature_ids))
+    .fillna("intergenic")
+)
+
+write_bb_file(multi_bbs, out_multi_bb_file)
+np.savez_compressed(out_multi_tot_mtx, mat=multi_tot)
+np.savez_compressed(out_multi_a_mtx, mat=multi_a)
+np.savez_compressed(out_multi_b_mtx, mat=multi_b)
+np.savez_compressed(out_multi_dp_mtx, mat=multi_dp)
+np.savez_compressed(out_multi_rdr_mtx, mat=multi_rdr)
+sample_df.to_csv(out_multi_sample_file, sep="\t", index=False)
+logging.info(f"wrote {len(multi_bbs)} multi-SNP groups to {out_multi_bb_file}")
+
+##################################################
 # one adaptive binning per min_snp_reads, on the shared fixed bins
 for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zip(
     msr_list,
@@ -216,6 +381,17 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         gene_aware=gene_aware_binning,
     )
     num_bbs = len(bbs)
+    bb_spans = bbs["BLOCKSIZE"].to_numpy()
+    empty_bb = (bbs["#SNPS"] == 0).to_numpy()
+    n_empty = int(empty_bb.sum())
+    logging.info(f"{num_bbs} bbs from {len(bin_df)} bins")
+    log_ratios(
+        "SNP-free bbs (all-zero allele rows, dropped below)",
+        n_empty,
+        num_bbs,
+        bb_spans[empty_bb],
+        "bb",
+    )
 
     bb_ids = snps_bb["bb_id"].to_numpy()
     a_mtx_bb = sum_features_to_bbs(a_mtx, bb_ids, num_bbs)
@@ -230,7 +406,9 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     )
 
     logging.info("aggregating corrected fixed-bin depth into bbs")
-    bb_dp, bb_bases = summarize_read_depth_bb(bin_df, dp_corrected, num_bbs)
+    bb_dp, bb_bases = summarize_read_depth_bb(
+        bin_df, dp_corrected, num_bbs, dataset_ids=dataset_ids
+    )
 
     logging.info(
         f"compute bb RDR, {len(get_rdr_base_dataset_id)}/{len(tumor_dataset_indices)} tumors with RDR base"
@@ -245,16 +423,32 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     )
 
     # drop bbs carrying a NaN, before the QC plots, so the PDF shows what is written
-    nan_mask = (
-        np.isnan(baf_mtx_bb).any(axis=1)
-        | np.isnan(bb_dp).any(axis=1)
-        | np.isnan(bb_rdr).any(axis=1)
-    )
+    nan_baf = np.isnan(baf_mtx_bb).any(axis=1)
+    nan_dp = np.isnan(bb_dp).any(axis=1)
+    nan_rdr = np.isnan(bb_rdr).any(axis=1)
+    nan_mask = nan_baf | nan_dp | nan_rdr
     n_nan_rows = int(nan_mask.sum())
     n_valid = num_bbs - n_nan_rows
-    logging.info(
-        f"NaN row filter: {n_nan_rows}/{num_bbs} bins have NaN, "
-        f"keeping {n_valid} ({n_valid / max(num_bbs, 1) * 100:.1f}%)"
+    log_ratios("NaN row filter, dropped", n_nan_rows, num_bbs, bb_spans[nan_mask], "bb")
+    log_ratios("NaN row filter, kept", n_valid, num_bbs, bb_spans[~nan_mask], "bb")
+    for _cause, _m in (("BAF", nan_baf), ("depth", nan_dp), ("RDR", nan_rdr)):
+        log_ratios(
+            f"NaN by cause (overlapping) {_cause}",
+            int(_m.sum()),
+            num_bbs,
+            bb_spans[_m],
+            "bb",
+            prefix="  ",
+        )
+    _zero_read = nan_baf & ~empty_bb
+    log_ratios("BAF no SNP", n_empty, num_bbs, bb_spans[empty_bb], "bb", prefix="    ")
+    log_ratios(
+        "BAF zero-read column",
+        int(_zero_read.sum()),
+        num_bbs,
+        bb_spans[_zero_read],
+        "bb",
+        prefix="    ",
     )
 
     if n_nan_rows > 0:
@@ -347,6 +541,4 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     sample_df.to_csv(out_samp, sep="\t", index=False)
     logging.info(f"MSR={msr}: wrote {len(bbs)} bins")
 
-# TODO: recommend a default MSR (e.g. elbow of lag-1 RDR/BAF dispersion vs #bins;
-# see docs/combine_counts_pseudocode.md section 4) and record the pick.
 logging.info("finished combine_counts.")

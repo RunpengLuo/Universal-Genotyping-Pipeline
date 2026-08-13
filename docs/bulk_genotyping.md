@@ -21,14 +21,10 @@ The rule graph below shows the stages of the bulk genotyping workflow.
 - Sequencing read-depth bias correction (GC-content, mappability, replication timing).
 - Multi-sample adaptive genomic bin segmentation to achieve sufficient count statistics.
 
-### Limitations
-- We require a matched-normal sample for genotyping germline SNPs. We plan to extend the pipeline to genotype germline SNPs using tumor-only samples in the future.
-- Automated model-selection for segmentation parameters with respect to sequencing coverages and segmentation variances.
-
 ## Input
 
 ### Sample file
-A sample sheet in JSON format is required to specify the locations and data configurations for input datasets. Detailed JSON format can be found at [sample_sheet.md](./sample_sheet.md), Here is an example for one tumor WGS dataset `T1` with matched normal WGS sample `N1` from patient `HT001`. 
+A sample sheet in JSON format records one or more samples representing patients or cell lines identified by `sample_id`. Each sample can have one or more datasets representing multiple sequencing runs collected from same sample identified by `dataset_id`. Detailed JSON format can be found at [sample_sheet.md](./sample_sheet.md), Here is an example for one tumor WGS dataset `T1` with matched normal WGS sample `N1` from patient `HT001`.
 
 ```json
 {
@@ -60,12 +56,8 @@ A sample sheet in JSON format is required to specify the locations and data conf
 ```
 
 > [!IMPORTANT]
-> - All alignment files must come from same reference version.
-> - Each tuple (`sample_id`, `dataset_id`) defines a unique dataset.
-> - BAM file (`alignment`) must be sorted, and its index file (`alignment_index`) must present!
-
-> [!NOTE]
-> (Experimental!) For long-read data, a pre-defined confident SV breakpoints in [BEDPE](https://bedtools.readthedocs.io/en/latest/content/general-usage.html#bedpe-format) format can also be provided via `files.breakpoint_bedpe` such that segmentation will avoid to over-segment across the breakpoints. See [sample_sheet.md](sample_sheet.md#files).
+> - (`sample_id`, `dataset_id`) must uniquely define a dataset.
+> - alignment file (`alignment`) must be sorted, and its index file (`alignment_index`) must present.
 
 ### Config file
 
@@ -82,7 +74,7 @@ sample_file: /path/to/samples.json
 chromosomes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
 ```
 
-2. specify the paths to reference files. Commonly used reference versions for human (`hg19`, `hg38`, `T2T-CHM13v2.0`) and mouse (`mm10`) have pre-built files at [../resources/data/](../resources/data/). Here is an example configuration for `hg38`. See [../resources/README.md](../resources/README.md) for detailed descriptions and public URLs.
+2. specify the paths to reference files, see [../resources/README.md](../resources/README.md) for detailed descriptions for pre-built reference files. Only datasets with `reference_version` recorded in config will be processed.
 
 ```yaml
 species: human
@@ -97,17 +89,17 @@ gene_blacklist_file: resources/data/ig_gene_list.txt
 gtf_file: /path/to/gencode.v38.annotation.gtf.gz
 ```
 
-> [!NOTE]
-> (Experimental!) When SV breakpoints are provided, `window_bed` will be ignored and re-built according to `window_size` (default: 1kbp) and breakpoints.
+> [!TIP]
+> User may specify path via `segment_bed` listing genomic segments segmented by upstream SV breakpoints, and `window_bed` will avoid to segment across different genomic segments.
 
-3. specify the targeted positions (`snp_targets`) and list of normal datasets (`genotype_dataset_ids`, default is all normal samples) for germline SNPs genotyping via [bcftools](https://github.com/samtools/bcftools). See [snp-panels](../resources/README.md#snp-panels) for details.
+3. specify the targeted positions (`snp_targets`) and list of normal datasets (`genotype_dataset_ids`, default is all normal samples if leave blank) for germline SNPs genotyping via [bcftools](https://github.com/samtools/bcftools). See [snp-panels](../resources/README.md#snp-panels) for details.
 
 ```yaml
 snp_targets: /path/to/target_positions
 ```
 
 > [!TIP]
-> - If a set of confident germline (phased) Het SNPs information already exist, user may specify the path via `het_snp_vcf` and set `het_snp_vcf_phased` to indicate if the VCF file is phased or not. This will skip the germline SNP genotyping (and haplotype phasing if `het_snp_vcf_phased=true`).
+> - If a set of confident germline (phased) Het SNPs already exist, user may specify the path via `het_snp_vcf` and set `het_snp_vcf_phased` to indicate if the VCF file is phased or not. This will skip the germline SNP genotyping (and haplotype phasing if `het_snp_vcf_phased=true`).
 > - For long-read datasets, set `params_bcftools.extra_params` to the matching bcftools mpileup platform preset so genotyping and pileup use the correct long-read error model: `-X ont-sup` (Oxford Nanopore) or `-X pacbio-ccs` (PacBio HiFi). Run `bcftools mpileup -X list` for all available profiles.
 
 4. our pipeline supports various haplotype phasing softwares:
@@ -121,9 +113,6 @@ phasing_panel: /path/to/1kGP_3202_hg38/phasing_panel
 gmap_path: /path/to/Eagle_v2.4.1/tables/genetic_map_hg38_withX.txt.gz
 ```
 
-> [!TIP]
-> For long-read phasing via LongPhase, set `params_longphase.extra_params` to the sequencing platform flag: `--ont` (Oxford Nanopore) or `--pb` (PacBio HiFi/CCS).
-
 5. For each dataset, our pipeline (by default) performs read-depth sequencing bias correction (`gc_correct_method`, default: median regression) against covariates including GC-content and replication timing (RT). User may disable them:
 
 ```yaml
@@ -133,9 +122,10 @@ params_count_reads:
 ```
 
 > [!NOTE]
-> We recommend user to apply this correction and inspect the effects via `<qc_dir>/rd_correction.{assay_type}.pdf`.
+> user should inspect the effects via `<qc_dir>/rd_correction.bulk.pdf`.
+> Repli-seq covariate is only applicable to `hg19`, `hg38`, or `chm13v2`.
 
-6. The final step of the pipeline is to perform adaptive binning over the fixed bins jointly across all tumor samples and obtain genomic bin by sample read-depth ratio (RDR), phased B-allele counts, and total-allele count matrices. each value in the minimum-SNP-covering reads parameter (`min_snp_reads`) gives one binning result. We recommend setting `min_snp_reads` to a list of values and inspect the QC plots for varying `min_snp_reads`, then pick the lowest value that gives reliable BAF signals.
+6. The final step performs adaptive binning over the fixed bins jointly across all tumor datasets and obtain genomic bin by dataset read-depth ratio (RDR), phased B-allele counts, and total-allele counts. Each value in the minimum-SNP-covering reads parameter (`min_snp_reads`) gives one binning result. We recommend user to set `min_snp_reads` to a list of values and inspect the QC plots at `<qc_dir>/combine_counts.bulk.MSR{msr}.pdf` for varying `min_snp_reads`, then pick the lowest value that gives reliable BAF and RDR signals.
 ```yaml
 params_combine_counts:
   min_snp_reads: [100, 500, 1000, 2000, 3000, 5000, 7500, 10000]
@@ -143,8 +133,8 @@ params_combine_counts:
 ```
 
 > [!TIP]
-> 1. For high-coverage (>=30x) data, we recommend to use `min_snp_reads>1000`. In practice we usually use 5000.
-> 2. For low-coverage/targeted data, we recommend to use `min_snp_reads<200`. In practice we usually use 100.
+> 1. For high-coverage (>=30x) data, we recommend to use `min_snp_reads>1000&<=5000`.
+> 2. For low-coverage/targeted data, we recommend to use `min_snp_reads>50&<=200`.
 
 ## Output
 
@@ -161,8 +151,7 @@ Refer to [Final bins](reference.md#final-bins) for the full specification of eac
         bb.{depth,rdr}.npz             # read depth (all samples) and RDR (tumor columns)
         sample_ids.tsv                 # one row per sample, in matrix-column order
   qc/
-    genotype_snp_qc.pdf                # het vs hom-alt ref-AF diagnostic (qc_genotype_snps)
     phase_and_concat.bulk.pdf          # SNP allele frequency + per-dataset depth (phase_and_concat)
-    rd_correction.{assay_type}.pdf     # read-depth bias correction, one per assay
+    rd_correction.bulk.pdf             # read-depth bias correction, one panel per dataset
     combine_counts.bulk.MSR{msr}.pdf   # binning QC (segmentation, genome-wide RDR/BAF, RDR-vs-BAF 2D), one per min_snp_reads value
 ```

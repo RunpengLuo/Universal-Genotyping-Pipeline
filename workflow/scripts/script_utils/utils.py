@@ -1,11 +1,12 @@
 """Thread limits, logging, and chromosome naming and ordering.
 
-Last update: 2026-08-12
+Last update: 2026-08-13
 
 Functions:
 - set_omp_threads: cap every BLAS/OpenMP runtime, before numpy loads
 - setup_logging, logging_snakemake: the rule log and the Snakemake run log
 - log_hist: one-line summary plus an ASCII histogram
+- log_ratios: one masking step, as a count, a fraction and a span in Mbp
 - is_url: does a path name a remote input
 - maybe_path, check_local_path: coerce and validate an optional input path
 - strip_chr_prefix, add_chr_prefix: convert between the two chromosome namings
@@ -97,6 +98,30 @@ def logging_snakemake(msg):
         return
     handler.handle(
         logging.LogRecord("snakemake", logging.INFO, __file__, 0, msg, None, None)
+    )
+
+
+def log_ratios(label, n, total, lengths, unit, prefix=""):
+    """Log one masking step as ``label: n/total (%unit=0.xxx) (x.xxx Mbps)``.
+
+    Every drop or mask in the binning stage logs through here, in one format, so a run's
+    log reads for both how many units and how much sequence each step removed. numpy is
+    imported here, not at module scope, for the reason given in :func:`log_hist`.
+
+    Args:
+        label: What was masked; the leading text of the line.
+        n: Number of units masked.
+        total: Number of units before masking; ``0`` yields a ``0.000`` fraction.
+        lengths: bp length of each masked unit, or their scalar total.
+        unit: What is counted: ``snp``, ``bin`` (fixed tile) or ``bb`` (merged bin).
+        prefix: Prepended to the line, to indent a breakdown under its total.
+    """
+    import numpy as np
+
+    frac = n / total if total else 0.0
+    logging.info(
+        f"{prefix}{label}: {n}/{total} (%{unit}={frac:.3f}) "
+        f"({float(np.sum(lengths)) / 1e6:.3f} Mbps)"
     )
 
 

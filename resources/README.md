@@ -168,9 +168,11 @@ Optional; set `mappability_bed` in config to add the `MAP` column. Convert the b
 
 ### Replication timing
 
-This is automatically handled by the pipeline via rule `repliseq_bigwig_to_bedgraph` and lift-over to `hg38` via [hg19ToHg38.over.chain.gz](https://hgdownload.cse.ucsc.edu/goldenpath/hg19/liftOver/hg19ToHg38.over.chain.gz) using `repliseq_liftover` if needed.
+This is automatically handled by the pipeline via rule `repliseq_bigwig_to_bedgraph`, then `repliseq_liftover` when the run is not hg19 (`REPLI_LIFTOVER` in `config/const.py`).
 
 | Track | Species | Reference | Source |
 |-------|---------|-----------|----------|
-| ENCODE UW Repli-seq WaveSignal (16 bigWig) | Human | hg19 | [UCSC](http://hgdownload.cse.ucsc.edu/goldenpath/hg19/encodeDCC/wgEncodeUwRepliSeq/) |
+| ENCODE UW Repli-seq WaveSignal (16 bigWig) | Human | hg19 | [UCSC](https://hgdownload.soe.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeUwRepliSeq/) |
+| liftOver chain hg19 -> hg38 | Human | hg38 | [hg19ToHg38.over.chain.gz](https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz) |
+| liftOver chain hg19 -> chm13v2 (`hs1`) | Human | chm13v2 | [hg19ToHs1.over.chain.gz](https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHs1.over.chain.gz) |
 
