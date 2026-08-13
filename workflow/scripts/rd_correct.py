@@ -61,7 +61,7 @@ routlier = float(snakemake_handle.params["routlier"])
 doutlier = float(snakemake_handle.params["doutlier"])
 min_mappability = float(snakemake_handle.params["min_mappability"])
 gc_correct = bool(snakemake_handle.params["gc_correct"])
-gc_correct_method = snakemake_handle.params["gc_correct_method"]
+rd_correct_method = snakemake_handle.params["rd_correct_method"]
 rt_correct = bool(snakemake_handle.params["rt_correct"])
 
 # outputs
@@ -130,7 +130,7 @@ gc_rmse_list = None
 if gc_correct:
     dp_corrected = np.zeros_like(dp_raw, dtype=np.float32)
     gc_rmse_list = []
-    if gc_correct_method == "median":
+    if rd_correct_method == "median":
         correct_readcount = correct_readcount_quadreg
         extra_kwargs = {}
     else:

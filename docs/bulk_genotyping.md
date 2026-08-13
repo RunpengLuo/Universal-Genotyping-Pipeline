@@ -113,7 +113,7 @@ phasing_panel: /path/to/1kGP_3202_hg38/phasing_panel
 gmap_path: /path/to/Eagle_v2.4.1/tables/genetic_map_hg38_withX.txt.gz
 ```
 
-5. For each dataset, our pipeline (by default) performs read-depth sequencing bias correction (`gc_correct_method`, default: median regression) against covariates including GC-content and replication timing (RT). User may disable them:
+5. For each dataset, our pipeline (by default) performs read-depth sequencing bias correction (`rd_correct_method`, default: median regression) against covariates including GC-content and replication timing (RT). User may disable them:
 
 ```yaml
 params_count_reads:

@@ -167,7 +167,7 @@ rule rd_correct:
         doutlier=config["params_count_reads"]["doutlier"],
         min_mappability=config["params_count_reads"]["min_mappability"],
         gc_correct=config["params_count_reads"]["gc_correct"],
-        gc_correct_method=config["params_count_reads"]["gc_correct_method"],
+        rd_correct_method=config["params_count_reads"]["rd_correct_method"],
         rt_correct=config["params_count_reads"]["rt_correct"],
         run_id=_run_id,
     script:

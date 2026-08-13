@@ -120,7 +120,7 @@ params_mosdepth:
 
 params_count_reads:
   gc_correct: true
-  gc_correct_method: "median"
+  rd_correct_method: "median"
   rt_correct: true
   samplesize: 50000
   routlier: 0.01
