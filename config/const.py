@@ -5,7 +5,8 @@ Last update: 2026-08-12
 Constants:
 - WORKFLOW_MODES, REMOTE_MODES: run modes and remote input handling
 - ALLOWED_ASSAY_TYPES, MULTIOME_ASSAYS, ASSAY_TYPE2MODALITY: assay vocabulary
-- SAMPLE_FILE_EXTS, SAMPLE_TYPES, REQUIRED_RECORD_KEYS, REQUIRED_FILES: sample-file schema
+- SAMPLE_FILE_EXTS, SAMPLE_TYPES, RECORD_ID_KEYS, RECORD_ID_PATTERN,
+  REQUIRED_RECORD_KEYS, REQUIRED_FILES: sample-file schema
 - BULK_TARGETS, SINGLE_CELL_TARGETS, COPYTYPING_TARGETS: the per-mode final outputs
 - REFVERS, REFVERS_ALIAS, SPECIES2SEXCHROM: reference builds and their spellings
 - RANGER_*, RANGER_LAYOUT: 10x Cell and Space Ranger filenames
@@ -35,6 +36,8 @@ RDR_NORMALIZATIONS = ("auto", "median", "normal")
 # sample-file schema
 SAMPLE_FILE_EXTS = (".json", ".tsv", ".txt")
 SAMPLE_TYPES = ("normal", "tumor")
+RECORD_ID_KEYS = ("sample_id", "dataset_id")
+RECORD_ID_PATTERN = r"[A-Za-z0-9_-]+"
 REQUIRED_RECORD_KEYS = (
     "sample_id",
     "dataset_id",

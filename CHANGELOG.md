@@ -29,7 +29,8 @@ One explicit segmentation and one shared bin grid in every mode, references with
 
 #### Development
 - `docs/DEVELOPER.md`: the vocabulary, coordinate conventions and module map.
-- Unit tests for the range primitives, refver folding, contig naming and IO readers.
+- Unit tests for the range primitives, refver folding, contig naming, IO readers and the
+  sample-sheet loader.
 - `ruff` and `snakefmt --check workflow/` run in CI.
 
 ### Changed
@@ -88,6 +89,9 @@ One explicit segmentation and one shared bin grid in every mode, references with
 - TSV sheets can now carry remote URLs and name single-cell files explicitly.
 - `chromosomes` is validated against `genome_size`; a missing chromosome is an error.
 - Every sample-file input is checked at DAG build; a URL is never fetched.
+- `sample_id` and `dataset_id` must match `[A-Za-z0-9_-]+`, checked as the sheet loads.
+- It replaces the `dataset_id`-only check in `parse_records`, which took non-ASCII
+  letters and never saw `sample_id`.
 
 #### Internals
 - One word per concept: `region` > `segment` > `bin` > `bb`, `feature` x `observation`.

@@ -16,6 +16,7 @@ References:
 import csv
 import json
 import os
+import re
 
 from const import (
     ALLOWED_ASSAY_TYPES,
@@ -30,6 +31,8 @@ from const import (
     MULTIOME_ASSAYS,
     NONBULK_ASSAYS,
     PANEL_PHASER,
+    RECORD_ID_KEYS,
+    RECORD_ID_PATTERN,
     REMOTE_MODES,
     REPLISEQ_REFVERS,
     RDR_NORMALIZATIONS,
@@ -50,6 +53,8 @@ from const import (
 from io_utils import read_chrom_sizes
 from utils import check_local_path, logging_snakemake, strip_chr_prefix
 
+_RECORD_ID_RE = re.compile(RECORD_ID_PATTERN)
+
 
 def read_sample_sheet(path):
     """Read the sample file, in either encoding, into records.
@@ -58,8 +63,10 @@ def read_sample_sheet(path):
     accepted. The TSV is a flat encoding of the same schema, not a reduced one:
     columns are the record keys, and each input is its own ``files.<key>`` column;
     an empty cell omits the key. Each encoding only loads; the record checks
-    (non-empty, REQUIRED_RECORD_KEYS) run once on the loaded records, so nothing
-    downstream re-checks. Spec: docs/sample_sheet.md.
+    (non-empty REQUIRED_RECORD_KEYS, RECORD_ID_KEYS charset) run once on the loaded
+    records, so nothing downstream re-checks. ``sample_id`` and ``dataset_id`` reach
+    output paths, wildcards and TSV columns, so both are held to RECORD_ID_PATTERN:
+    no whitespace, no separator, no shell metacharacter. Spec: docs/sample_sheet.md.
 
     Args:
         path: Path to the sample file.
@@ -68,8 +75,8 @@ def read_sample_sheet(path):
         List of record dicts, with scalar fields coerced to str.
 
     Raises:
-        AssertionError: The file has the wrong shape, or a record is malformed or
-            missing a required key.
+        AssertionError: The file has the wrong shape, or a record is malformed,
+            missing a required key, or carries an id outside RECORD_ID_PATTERN.
     """
     ext = os.path.splitext(path)[1].lower()
     assert ext in SAMPLE_FILE_EXTS, (
@@ -115,6 +122,10 @@ def read_sample_sheet(path):
     for idx, rec in enumerate(records):
         missing = [k for k in REQUIRED_RECORD_KEYS if rec.get(k) in (None, "")]
         assert not missing, f"{idx}th dataset: missing required key(s) {missing}"
+        for key in RECORD_ID_KEYS:
+            assert _RECORD_ID_RE.fullmatch(rec[key]), (
+                f"{idx}th dataset: {key} {rec[key]!r} must match {RECORD_ID_PATTERN}"
+            )
     return records
 
 
@@ -150,9 +161,6 @@ def parse_records(
         if assay_type not in config_assay_types:
             continue
         dataset_id = rec["dataset_id"]
-        assert dataset_id and all((c.isalnum() or c in "_-") for c in dataset_id), (
-            f"dataset_id {dataset_id!r}, must match [A-Za-z0-9_-]"
-        )
         sample_type = rec["sample_type"]
         assert rec["sample_type"] in SAMPLE_TYPES, (
             f"{dataset_id}: sample_type must be one of {SAMPLE_TYPES}, "

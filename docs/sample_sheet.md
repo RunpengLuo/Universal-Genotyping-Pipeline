@@ -41,8 +41,8 @@ Sample file is a JSON-format configuration file contains dataset records over mu
 
 | Key | Required | Description |
 |-----|----------|-------------|
-| `sample_id` | Yes | Patient ID |
-| `dataset_id` | Yes | Dataset ID, unique with each patient |
+| `sample_id` | Yes | Patient ID; `[A-Za-z0-9_-]+`. |
+| `dataset_id` | Yes | Dataset ID, unique with each patient; `[A-Za-z0-9_-]+`. |
 | `assay_type` | Yes | `bulkWGS` \| `bulkWGS-lr` \| `bulkWES` \| `scRNA` \| `scATAC` \| `VISIUM` \| `VISIUM3prime`. |
 | `sample_type` | Yes | `normal` \| `tumor`. |
 | `reference_version` | Yes | reference version, e.g. `GRCh38`; see [Reference version](#reference-version). |
