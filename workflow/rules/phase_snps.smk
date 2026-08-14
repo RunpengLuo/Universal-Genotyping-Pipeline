@@ -43,7 +43,7 @@ if phaser == "shapeit":
                 --thread "{threads}" \
                 --output "{output.bcf_file}" > {log} 2>&1
 
-            bcftools view -Ov "{output.bcf_file}" | bgzip > "{output.phased_file}"
+            bcftools view --output-type v "{output.bcf_file}" | bgzip > "{output.phased_file}"
             tabix -f -p vcf "{output.phased_file}"
             """
 
@@ -154,17 +154,18 @@ rule concat_and_extract_phased_het_snps:
         printf "#CHR\ttotal\thet_phased\thet_unphased\thom_alt\thom_ref\n" > "{output.snp_stats}"
         for vcf in {input.vcf_files}; do
             chr=$(basename "$vcf" .vcf.gz)
-            n_het_phased=$(bcftools view -H -i 'GT="0|1" || GT="1|0"' "$vcf" 2>/dev/null | wc -l)
-            n_het_unphased=$(bcftools view -H -i 'GT="0/1"' "$vcf" 2>/dev/null | wc -l)
-            n_hom_alt=$(bcftools view -H -i 'GT="1|1" || GT="1/1"' "$vcf" 2>/dev/null | wc -l)
-            n_hom_ref=$(bcftools view -H -i 'GT="0|0" || GT="0/0"' "$vcf" 2>/dev/null | wc -l)
-            n_total=$(bcftools view -H "$vcf" 2>/dev/null | wc -l)
+            n_het_phased=$(bcftools view --no-header --include 'GT="0|1" || GT="1|0"' "$vcf" 2>/dev/null | wc -l)
+            n_het_unphased=$(bcftools view --no-header --include 'GT="0/1"' "$vcf" 2>/dev/null | wc -l)
+            n_hom_alt=$(bcftools view --no-header --include 'GT="1|1" || GT="1/1"' "$vcf" 2>/dev/null | wc -l)
+            n_hom_ref=$(bcftools view --no-header --include 'GT="0|0" || GT="0/0"' "$vcf" 2>/dev/null | wc -l)
+            n_total=$(bcftools view --no-header "$vcf" 2>/dev/null | wc -l)
             printf "%s\t%d\t%d\t%d\t%d\t%d\n" "$chr" "$n_total" "$n_het_phased" "$n_het_unphased" "$n_hom_alt" "$n_hom_ref" >> "{output.snp_stats}"
         done
         printf "%s\n" {input.vcf_files} > "{output.lst_file}"
-        bcftools concat -f "{output.lst_file}" -Ou \
-        | bcftools view -Oz -m2 -M2 -i 'GT="0|1" || GT="1|0"' \
-            -o "{output.phased_vcf}" 2> "{log}"
+        bcftools concat --file-list "{output.lst_file}" --output-type u \
+        | bcftools view --output-type z --min-alleles 2 --max-alleles 2 \
+            --include 'GT="0|1" || GT="1|0"' \
+            --output "{output.phased_vcf}" 2> "{log}"
         tabix -f -p vcf "{output.phased_vcf}" 2>> "{log}"
         """
 

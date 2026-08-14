@@ -43,6 +43,7 @@ from const import (
     SAMPLE_TYPES,
     SCALAR_RECORD_KEYS,
     SINGLE_CELL_TARGETS,
+    SNP_PANEL_EXTS,
     SPECIES,
     WORKFLOW_MODES,
     canonical_refver,
@@ -51,7 +52,7 @@ from const import (
     get_phasing_panel_path,
 )
 from io_utils import read_chrom_sizes
-from utils import check_local_path, logging_snakemake, strip_chr_prefix
+from utils import check_local_path, is_url, logging_snakemake, strip_chr_prefix
 
 _RECORD_ID_RE = re.compile(RECORD_ID_PATTERN)
 
@@ -416,15 +417,19 @@ def parse_workflow(config):
         logging_snakemake(f"run_genotyping is skipped, use input {het_snp_vcf}")
         run_genotyping = False
 
-    snp_targets = config["snp_targets"]
     snp_panel = config["snp_panel"]
     genotype_files = None
     if run_genotyping:
-        if workflow_mode == "bulk_genotyping":
-            assert snp_targets, "snp_targets is required for bulk genotyping"
-        else:
-            assert snp_panel, "snp_panel is required for single-cell genotyping"
-            check_local_path(snp_panel, "snp_panel")
+        assert snp_panel, f"snp_panel is required for {workflow_mode}"
+        check_local_path(snp_panel, "snp_panel")
+        assert snp_panel.endswith(SNP_PANEL_EXTS), (
+            f"snp_panel: extension must be one of {SNP_PANEL_EXTS} "
+            f"(bcftools --targets-file cannot read BCF), got {snp_panel!r}"
+        )
+        if not is_url(snp_panel):
+            assert os.path.exists(snp_panel + ".tbi") or os.path.exists(
+                snp_panel + ".csi"
+            ), f"snp_panel is not indexed, run: tabix -p vcf {snp_panel}"
         genotype_dataset_ids = config["genotype_dataset_ids"]
         genotype_records = []
         if genotype_dataset_ids:
@@ -654,7 +659,6 @@ def parse_workflow(config):
         "reference": reference,
         "genome_size": genome_size,
         "gtf_file": gtf_file,
-        "snp_targets": snp_targets,
         "bb_file": bb_file,
         "mappability_bed": mappability_bed,
         "region_bed": region_bed,

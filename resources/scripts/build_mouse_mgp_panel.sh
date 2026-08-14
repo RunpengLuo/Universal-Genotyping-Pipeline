@@ -3,12 +3,11 @@ set -euo pipefail
 
 # Build a mouse SNP panel + phasing panel from the UCSC MGP v5 strain VCF.
 #
-# Produces three artifacts compatible with the universal-genotyping pipeline:
-#   1. snp_panel        — sites-only biallelic SNP VCF (no GT columns).
+# Produces two artifacts compatible with the universal-genotyping pipeline:
+#   1. snp_panel        — sites-only biallelic SNP VCF (no GT columns), indexed.
 #   2. phasing_panel/   — per-chromosome multi-strain BCFs with phased GTs.
 #                         Inbred strain calls are phased trivially: 0/0->0|0,
 #                         1/1->1|1, strain-het -> ./. (assumed noise in inbred).
-#   3. target_positions — per-chromosome SNP position files for bcftools mpileup.
 #
 # Strains: by default all strains in the MGP v5 VCF (36) are used. Pass --strains
 # to restrict to a subset (e.g. a B6 x 129 cross): both panels are subset to those
@@ -21,13 +20,11 @@ set -euo pipefail
 # Output (under <out-dir>):
 #   mgpV5.biallelic_snps.vcf.gz[.tbi]
 #   phasing_panel/chr{1..19,X}.genotypes.bcf[.csi]
-#   target_positions/target.chr{1..19,X}.pos.gz[.tbi]
 #
 # Usage:
 #   bash build_mouse_mgp_panel.sh \
 #       --out-dir /path/to/mouse_panel \
-#       [--strains C57BL_6NJ,129S1_SvImJ] \
-#       [--build-snp-targets /path/to/build_snp_targets.sh]
+#       [--strains C57BL_6NJ,129S1_SvImJ]
 #
 # Requires: bcftools, bgzip, tabix, wget, awk
 
@@ -43,20 +40,17 @@ Usage: $0 --out-dir DIR [options]
   --strains LIST            Comma-separated strain subset (default: all strains in the VCF).
                             Restricts both panels to these strains and to sites polymorphic
                             among them, e.g. C57BL_6NJ,129S1_SvImJ for a B6 x 129 cross.
-  --build-snp-targets PATH  Path to build_snp_targets.sh. [default: sibling in this scripts/ dir]
 EOF
   exit 1
 }
 
 OUT=""
 STRAINS=""
-BUILD_SNP_TARGETS=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --out-dir) OUT="$2"; shift 2 ;;
     --strains) STRAINS="$2"; shift 2 ;;
-    --build-snp-targets) BUILD_SNP_TARGETS="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "unknown arg: $1" >&2; usage ;;
   esac
@@ -144,24 +138,7 @@ for chr in ${MOUSE_CHROMS}; do
 done
 
 ##################################################
-# 5. target_positions/ for bcftools mpileup -T
-##################################################
-if [[ -z "${BUILD_SNP_TARGETS}" ]]; then
-  SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-  CANDIDATE="${SCRIPT_DIR}/build_snp_targets.sh"
-  if [[ -f "${CANDIDATE}" ]]; then
-    BUILD_SNP_TARGETS="${CANDIDATE}"
-  else
-    echo "ERROR: build_snp_targets.sh not found; pass --build-snp-targets PATH" >&2
-    exit 1
-  fi
-fi
-echo "[snp_targets] running build_snp_targets.sh"
-bash "${BUILD_SNP_TARGETS}" --chroms "${MOUSE_CHROMS}" \
-    "${PANEL_VCF}" "${OUT}/target_positions"
-
-##################################################
-# 6. Stats: multi-allelic SNPs dropped + final counts
+# 5. Stats: multi-allelic SNPs dropped + final counts
 ##################################################
 echo
 echo "=== panel stats ==="
@@ -180,7 +157,7 @@ echo "per-chrom phasing_panel (sites / rows with any strain-het masked):"
 column -t -s $'\t' "${STATS_TSV}" | sed 's/^/  /'
 
 ##################################################
-# 7. Cleanup raw download
+# 6. Cleanup raw download
 ##################################################
 rm -rf "${OUT}/raw"
 
@@ -188,6 +165,5 @@ date
 echo "=====summary====="
 echo "snp_panel:      ${PANEL_VCF}"
 echo "phasing_panel:  ${OUT}/phasing_panel/   ($(ls "${OUT}/phasing_panel"/*.bcf 2>/dev/null | wc -l | tr -d ' ') chrom BCFs)"
-echo "snp_targets:    ${OUT}/target_positions/"
 echo "stats TSV:      ${STATS_TSV}"
 exit 0

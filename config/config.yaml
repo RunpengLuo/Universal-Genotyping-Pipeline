@@ -59,7 +59,6 @@ params_build_windows:
 ##################################################
 # Genotyping
 snp_panel: null
-snp_targets: null
 genotype_dataset_ids: []
 
 # bulk genotyping + bulk pileup (bcftools mpileup)
@@ -144,8 +143,12 @@ params_combine_counts:
   phase_flip_alpha: 0.05
 
 ##################################################
+# bcftools mpileup is single-threaded: --threads only sizes the output compressor
+# (hts_set_threads on the output handle, never on the BAM/CRAM readers). genotype and
+# pileup therefore spend these on bgzip/BCF writing only, and both rules fan out per
+# chromosome, so a small number here buys more concurrent jobs.
 threads:
-  genotype: 4
+  genotype: 2
   phase: 4
-  pileup: 8
+  pileup: 2
   mosdepth: 4

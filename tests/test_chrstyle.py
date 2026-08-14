@@ -46,7 +46,7 @@ def test_chr_prefixed_genome_keeps_chr_regions(workspace):
     )
     assert proc.returncode == 0, proc.stderr[-1500:]
     assert "chrom.sizes chr-prefix=True" in proc.stdout
-    assert "-r chr22" in proc.stdout
+    assert "--regions chr22" in proc.stdout
     assert "-c chr22" in proc.stdout
     assert "sed 's/^chr//'" not in proc.stdout
 
@@ -63,7 +63,7 @@ def test_bare_contig_genome_drops_the_prefix(workspace):
     )
     assert proc.returncode == 0, proc.stderr[-1500:]
     assert "chrom.sizes chr-prefix=False" in proc.stdout
-    assert "-r 22" in proc.stdout and "-r chr22" not in proc.stdout
+    assert "--regions 22" in proc.stdout and "--regions chr22" not in proc.stdout
     assert "-c 22" in proc.stdout and "-c chr22" not in proc.stdout
     assert "sed 's/^chr//'" in proc.stdout, "windows.3col must drop the prefix"
 

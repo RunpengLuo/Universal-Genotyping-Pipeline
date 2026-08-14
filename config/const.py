@@ -7,6 +7,9 @@ Constants:
 - ALLOWED_ASSAY_TYPES, MULTIOME_ASSAYS, ASSAY_TYPE2MODALITY: assay vocabulary
 - SAMPLE_FILE_EXTS, SAMPLE_TYPES, RECORD_ID_KEYS, RECORD_ID_PATTERN,
   REQUIRED_RECORD_KEYS, REQUIRED_FILES: sample-file schema
+- SNP_PANEL_EXTS: snp_panel extensions bcftools --targets-file can parse. It picks the
+  parser from the filename suffix, so .bcf and .vcf.bgz reach the tab parser and match
+  nothing without erroring (samtools/bcftools#690, #1368)
 - BULK_TARGETS, SINGLE_CELL_TARGETS, COPYTYPING_TARGETS: the per-mode final outputs
 - REFVERS, REFVERS_ALIAS, SPECIES2SEXCHROM: reference builds and their spellings
 - RANGER_*, RANGER_LAYOUT: 10x Cell and Space Ranger filenames
@@ -31,6 +34,9 @@ URL_SCHEMES = ("http://", "https://", "ftp://", "s3://")
 
 # params_combine_counts.rdr_normalization mode
 RDR_NORMALIZATIONS = ("auto", "median", "normal")
+
+# snp_panel file extensions
+SNP_PANEL_EXTS = (".vcf.gz",)
 
 ##################################################
 # sample-file schema

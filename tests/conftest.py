@@ -33,6 +33,7 @@ REF_FILES = (
     "genes.gtf",
     "gmap.txt.gz",
     "snp_panel.vcf.gz",
+    "snp_panel.vcf.gz.tbi",
     "bb.tsv.gz",
 )
 
@@ -87,7 +88,6 @@ def workspace(tmp_path_factory):
     with gzip.open(str(ref / "het_snps.vcf.gz"), "wt") as fh:
         fh.write(VCF_HEADER + rows)
     for chrom in ("22",):
-        _touch(str(ref / "targets" / f"target.chr{chrom}.pos.gz"))
         _touch(str(ref / "panel" / f"chr{chrom}.genotypes.bcf"))
 
     outs = root / "outs"
@@ -296,7 +296,6 @@ def dryrun(workspace, sample_file, sample_id, workflow_mode, assay_types, extra=
         f"gtf_file={ref}/genes.gtf",
         f"gmap_path={ref}/gmap.txt.gz",
         f"snp_panel={ref}/snp_panel.vcf.gz",
-        f"snp_targets={ref}/targets",
         f"phasing_panel={ref}/panel",
         *extra,
     ]

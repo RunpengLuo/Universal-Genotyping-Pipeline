@@ -66,13 +66,17 @@ def test_bulk_rules(workspace):
     )
     counts = job_counts(proc.stdout)
     assert {"genotype_snps_bulk", "phase_snps_eagle", "combine_counts"} <= set(counts)
-    # one bcftools pileup and one mosdepth per dataset (normal + tumor)
-    assert counts["pileup_snps_bulk_bcftools"] == 2
+    # one pileup chunk per (dataset, chromosome) + one merge per dataset; chromosomes=[22]
+    assert counts["pileup_snps_bulk_bcftools_chrom"] == 2
+    assert counts["merge_pileup_counts"] == 2
     assert counts["run_mosdepth"] == 2
+    # genotyping targets the panel VCF and scopes the chromosome itself
+    assert "--targets-file" in proc.stdout and "snp_panel.vcf.gz" in proc.stdout
+    assert "--regions chr22" in proc.stdout
 
 
 def test_bulk_stream_mode(workspace):
-    """remote_mode=stream: bcftools rules carry -r and mosdepth is per-chrom + merged."""
+    """remote_mode=stream: mosdepth is per-chrom + merged, bcftools keeps its regions."""
     proc = dryrun(
         workspace,
         workspace["bulk_json"],
@@ -87,7 +91,41 @@ def test_bulk_stream_mode(workspace):
     assert "run_mosdepth_chrom" in counts and "merge_mosdepth" in counts
     assert "run_mosdepth" not in counts
     # genotype/pileup restrict to the config chroms via index jumps
-    assert "-r chr22" in proc.stdout
+    assert "--regions chr22" in proc.stdout
+
+
+def test_snp_panel_must_be_vcf_gz(workspace):
+    """A BCF panel is refused: bcftools --targets-file matches nothing on BCF."""
+    ref = workspace["ref"]
+    panel = os.path.join(ref, "snp_panel.bcf")
+    open(panel, "wb").close()
+    proc = dryrun(
+        workspace,
+        workspace["bulk_json"],
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=(f"snp_panel={panel}",),
+    )
+    assert proc.returncode != 0
+    assert "extension must be one of" in (proc.stdout + proc.stderr)
+
+
+def test_snp_panel_must_be_indexed(workspace):
+    """A panel with no .tbi/.csi beside it is refused at parse time."""
+    ref = workspace["ref"]
+    panel = os.path.join(ref, "unindexed.vcf.gz")
+    open(panel, "wb").close()
+    proc = dryrun(
+        workspace,
+        workspace["bulk_json"],
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=(f"snp_panel={panel}",),
+    )
+    assert proc.returncode != 0
+    assert "not indexed" in (proc.stdout + proc.stderr)
 
 
 def test_stream_rejected_for_single_cell(workspace):
@@ -538,7 +576,7 @@ def test_phased_het_snp_vcf_skips_phasing(workspace):
     for rule in counts:
         assert not rule.startswith(("genotype_snps", "phase_snps", "split_het_snp_vcf"))
     assert "concat_and_extract_phased_het_snps" not in counts
-    assert "pileup_snps_bulk_bcftools" in counts
+    assert "pileup_snps_bulk_bcftools_chrom" in counts
 
 
 def test_copytyping_requires_phased_vcf(workspace):

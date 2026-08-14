@@ -3,7 +3,10 @@
 Last update: 2026-08-11
 
 Rules:
-- pileup_snps_bulk_bcftools: bcftools REF and ALT depths per bulk replicate
+- pileup_snps_bulk_bcftools_chrom: bcftools REF and ALT depths, one chromosome of one
+  bulk replicate, so a replicate fans out instead of walking the whole alignment once
+- merge_pileup_counts: concat the per-chrom counts in config-chrom order. mpileup emits
+  regions in that order, so the merge is byte-identical to a single whole-genome job
 - pileup_snps_nonbulk_mode1a: cellsnp-lite per-cell counts per replicate
 Outputs:
 - pileup_dir/{assay}_{dataset_id}/bcftools.counts.tsv.gz: bulk allele depths
@@ -11,8 +14,8 @@ Outputs:
 """
 
 
-rule pileup_snps_bulk_bcftools:
-    """Bulk het-SNP read counting with bcftools (REF/ALT allele depths at the phased loci)."""
+rule pileup_snps_bulk_bcftools_chrom:
+    """One chromosome of a bulk replicate's het-SNP REF/ALT depths (index jump)."""
     input:
         alignment=lambda wc: bam_stream_input(get_data[(wc.assay_type, wc.dataset_id)]),
         alignment_index=lambda wc: bam_stream_index_input(
@@ -21,11 +24,16 @@ rule pileup_snps_bulk_bcftools:
         snp_vcf=phased_snp_vcf,
         reference=reference,
     output:
-        counts=pileup_dir + "/{assay_type}_{dataset_id}/bcftools.counts.tsv.gz",
+        counts=temp(
+            pileup_dir
+            + "/{assay_type}_{dataset_id}/bcftools.counts.chr{chrname}.tsv.gz"
+        ),
     log:
-        log_dir + f"/pileup_snps/bcftools.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
+        log_dir
+        + f"/pileup_snps/bcftools.{{assay_type}}_{{dataset_id}}.chr{{chrname}}.{_run_id}.log",
     benchmark:
-        bench_dir + f"/pileup_snps/bcftools.{{assay_type}}_{{dataset_id}}.{_run_id}.tsv"
+        bench_dir
+        + f"/pileup_snps/bcftools.{{assay_type}}_{{dataset_id}}.chr{{chrname}}.{_run_id}.tsv"
     conda:
         "../envs/bcftools.yaml"
     threads: config["threads"]["pileup"]
@@ -37,31 +45,46 @@ rule pileup_snps_bulk_bcftools:
         max_depth=config["params_bcftools"]["max_depth"],
         extra_params=config["params_bcftools"]["extra_params"],
         bam_arg=lambda wc: bam_stream_arg(get_data[(wc.assay_type, wc.dataset_id)]),
-        region_arg=(
-            "-r " + ",".join(nochr_chromosomes if input_nochr else chr_chromosomes)
-            if remote_mode == "stream"
-            else ""
-        ),
+        chrom=lambda wc: input_chrom(wc.chrname),
     shell:
         r"""
         set -euo pipefail
         ALN="{input.alignment}"; [ -z "$ALN" ] && ALN="{params.bam_arg}"
         (
           bcftools mpileup "$ALN" \
-              -f "{input.reference}" \
-              -Ou \
-              --threads {threads} \
-              -a FORMAT/AD \
+              --fasta-ref "{input.reference}" \
+              --output-type u \
+              --annotate FORMAT/AD \
               --skip-indels \
-              -q {params.min_mapq} \
-              -Q {params.min_baseq} \
-              -d {params.max_depth} \
+              --min-MQ {params.min_mapq} \
+              --min-BQ {params.min_baseq} \
+              --max-depth {params.max_depth} \
               {params.extra_params} \
-              {params.region_arg} \
-              -T "{input.snp_vcf}" \
-          | bcftools query -f '%CHROM\t%POS\t%REF\t%ALT\t[%AD]\n' \
-          | bgzip -c > {output.counts}
+              --regions {params.chrom} \
+              --targets-file "{input.snp_vcf}" \
+          | bcftools query --format '%CHROM\t%POS\t%REF\t%ALT\t[%AD]\n' \
+          | bgzip -@ {threads} -c > {output.counts}
         ) 2> {log}
+        """
+
+
+rule merge_pileup_counts:
+    """Concat per-chrom counts (config-chrom order) -> the file phase_and_concat reads."""
+    input:
+        per_chrom=lambda wc: [
+            pileup_dir
+            + f"/{wc.assay_type}_{wc.dataset_id}/bcftools.counts.chr{c}.tsv.gz"
+            for c in nochr_chromosomes
+        ],
+    output:
+        counts=pileup_dir + "/{assay_type}_{dataset_id}/bcftools.counts.tsv.gz",
+    log:
+        log_dir
+        + f"/pileup_snps/merge_pileup_counts.{{assay_type}}_{{dataset_id}}.{_run_id}.log",
+    threads: 1
+    shell:
+        r"""
+        cat {input.per_chrom} > {output.counts} 2> {log}
         """
 
 

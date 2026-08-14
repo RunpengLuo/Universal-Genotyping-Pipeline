@@ -3,7 +3,9 @@
 Last update: 2026-08-11
 
 Rules:
-- [bulk] genotype_snps_bulk: bcftools calls one chromosome from the alignments
+- [bulk] genotype_snps_bulk: bcftools calls one chromosome from the alignments,
+  over the snp_panel positions (`-T` reads CHROM/POS only, the panel alleles are
+  ignored; REF comes from the reference, ALT from the reads)
 - [single-cell] genotype_snps_pseudobulk_mode1b: cellsnp-lite calls one modality
 - [single-cell] annotate_snps_pseudobulk: filter those calls to het or hom-alt
 - [optional] split_het_snp_vcf: split a given het_snp_vcf per chromosome
@@ -17,7 +19,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
         input:
             alignment=bam_stream_input(genotype_files),
             alignment_index=bam_stream_index_input(genotype_files),
-            target_pos=snp_targets + "/target.chr{chrname}.pos.gz",
+            snp_panel=snp_panel,
             reference=reference,
         output:
             snp_vcf=snp_dir + "/chr{chrname}.vcf.gz",
@@ -41,40 +43,40 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
             min_qual=config["params_bcftools"]["min_qual"],
             extra_params=config["params_bcftools"]["extra_params"],
             bam_arg=bam_stream_arg(genotype_files),
-            region_arg=lambda wc: (
-                f"-r {input_chrom(wc.chrname)}" if remote_mode == "stream" else ""
-            ),
+            chrom=lambda wc: input_chrom(wc.chrname),
         shell:
             r"""
             ALN="{input.alignment}"; [ -z "$ALN" ] && ALN="{params.bam_arg}"
             bcftools mpileup $ALN \
-                -f "{input.reference}" \
-                -Ou \
-                --threads {threads} \
-                -a INFO/AD,AD,DP \
+                --fasta-ref "{input.reference}" \
+                --output-type u \
+                --annotate INFO/AD,AD,DP \
                 --skip-indels \
-                -q {params.min_mapq} \
-                -Q {params.min_baseq} \
-                -d {params.max_depth} \
+                --min-MQ {params.min_mapq} \
+                --min-BQ {params.min_baseq} \
+                --max-depth {params.max_depth} \
                 {params.extra_params} \
-                {params.region_arg} \
-                -T {input.target_pos} \
-            | bcftools call -m \
-                -Oz -o {output.unfiltered_vcf} 2> {log}
+                --regions {params.chrom} \
+                --targets-file "{input.snp_panel}" \
+            | bcftools call --multiallelic-caller \
+                --threads {threads} \
+                --output-type z --output {output.unfiltered_vcf} 2> {log}
 
-            NSAMPLE=$(bcftools query -l {output.unfiltered_vcf} | wc -l | tr -d ' ')
+            NSAMPLE=$(bcftools query --list-samples {output.unfiltered_vcf} | wc -l | tr -d ' ')
             if [ "$NSAMPLE" -ne 1 ]; then
                 echo "ERROR: genotyping produced $NSAMPLE samples; expected 1. Pooled alignments must share one @RG SM tag (config genotype_dataset_ids)." >> {log}
                 exit 1
             fi
 
-            TOTAL=$(bcftools view -H {output.unfiltered_vcf} | wc -l | tr -d ' ')
+            TOTAL=$(bcftools query --format '\n' {output.unfiltered_vcf} | wc -l | tr -d ' ')
 
-            bcftools view {output.unfiltered_vcf} -v snps -m2 -M2 \
-                -i 'QUAL>={params.min_qual} && GT="alt" && FMT/DP>={params.min_dp}' \
-                -Oz -o {output.snp_vcf} 2>> {log}
+            bcftools view {output.unfiltered_vcf} \
+                --types snps --min-alleles 2 --max-alleles 2 \
+                --include 'QUAL>={params.min_qual} && GT="alt" && FMT/DP>={params.min_dp}' \
+                --threads {threads} \
+                --output-type z --output {output.snp_vcf} 2>> {log}
 
-            PASS=$(bcftools view -H {output.snp_vcf} | wc -l | tr -d ' ')
+            PASS=$(bcftools query --format '\n' {output.snp_vcf} | wc -l | tr -d ' ')
             echo "Total called: $TOTAL, Passed filters: $PASS, Filtered: $((TOTAL - PASS))" >> {log}
 
             tabix -p vcf {output.snp_vcf}
@@ -194,7 +196,7 @@ if not run_genotyping and run_phasing:
             if [ ! -f "{input.het_snp_vcf}.tbi" ] && [ ! -f "{input.het_snp_vcf}.csi" ]; then
                 tabix -f -p vcf "{input.het_snp_vcf}" 2> {log}
             fi
-            bcftools view "{input.het_snp_vcf}" -r "{params.chrom}" \
-                -Oz -o "{output.snp_vcf}" 2>> {log}
+            bcftools view "{input.het_snp_vcf}" --regions "{params.chrom}" \
+                --output-type z --output "{output.snp_vcf}" 2>> {log}
             tabix -f -p vcf "{output.snp_vcf}" 2>> {log}
             """

@@ -51,7 +51,6 @@ mappability_bed: null
 ##################################################
 # Genotyping
 snp_panel: /path/to/snps.vcf.gz
-snp_targets: /path/to/target_positions
 
 ##################################################
 # Phasing

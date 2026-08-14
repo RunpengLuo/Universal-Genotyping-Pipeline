@@ -18,7 +18,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install ruff snakefmt
+      # Both are capped: neither pins a rule set, so a minor release changes the
+      # verdict on an unchanged commit. ruff 0.16 adds LOG015/I001/EXE001 (217 hits)
+      # and formats python blocks inside Markdown; snakefmt 2.0 runs shfmt over every
+      # shell: directive. Raise a cap only together with the churn it brings.
+      - run: pip install "ruff>=0.15,<0.16" "snakefmt>=1.1,<2"
       # F821 is the point: no `import *` hides an undefined name in a script:
       - run: ruff check .
       - run: ruff format --check .
