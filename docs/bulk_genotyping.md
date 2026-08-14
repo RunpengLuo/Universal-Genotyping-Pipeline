@@ -92,10 +92,10 @@ gtf_file: /path/to/gencode.v38.annotation.gtf.gz
 > [!TIP]
 > User may specify path via `segment_bed` listing genomic segments segmented by upstream SV breakpoints, and `window_bed` will avoid to segment across different genomic segments.
 
-3. specify the targeted positions (`snp_targets`) and list of normal datasets (`genotype_dataset_ids`, default is all normal samples if leave blank) for germline SNPs genotyping via [bcftools](https://github.com/samtools/bcftools). See [snp-panels](../resources/README.md#snp-panels) for details.
+3. specify the population SNP panel (`snp_panel`) and list of normal datasets (`genotype_dataset_ids`, default is all normal samples if leave blank) for germline SNPs genotyping via [bcftools](https://github.com/samtools/bcftools). The panel is passed to `bcftools mpileup -T`, which reads CHROM/POS only: the panel's alleles are ignored, REF comes from `reference` and ALT from the reads. It must be a bgzipped, indexed VCF. See [snp-panels](../resources/README.md#snp-panels) for details.
 
 ```yaml
-snp_targets: /path/to/target_positions
+snp_panel: /path/to/snps.vcf.gz
 ```
 
 > [!TIP]

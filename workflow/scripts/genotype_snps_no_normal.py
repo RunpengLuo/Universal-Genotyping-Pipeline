@@ -1,6 +1,10 @@
-"""Merge the per-modality cellsnp-lite calls into filtered het/hom-alt SNP VCFs.
+"""Genotype het/hom-alt SNPs from read counts alone, with no matched normal.
 
-Last update: 2026-08-11
+Merges the per-modality cellsnp-lite calls, sums their DP/AD/OTH per site, and keeps the
+sites whose allele balance reads as heterozygous (or hom-alt). Used where no germline
+sample exists to call against, so genotype comes from the counts rather than a caller.
+
+Last update: 2026-08-14
 
 Inputs:
 - snp_dir/pseudobulk_{modality}/cellSNP.base.vcf.gz: cellsnp-lite base calls
@@ -44,7 +48,7 @@ modalities = list(snakemake_handle.params["modalities"])
 snp_vcfs = list(snakemake_handle.output["snp_vcfs"])
 
 logging.info(
-    f"start annotate_snps_pseudobulk, filter_nz_OTH={filter_nz_OTH}, filter_hom_ALT={filter_hom_ALT}"
+    f"start genotype_snps_no_normal, filter_nz_OTH={filter_nz_OTH}, filter_hom_ALT={filter_hom_ALT}"
 )
 logging.info(
     f"min_het_reads={min_het_reads}, min_hom_dp={min_hom_dp}, min_vaf_thres={min_vaf_thres}"
@@ -223,4 +227,4 @@ for chrom, out_snp_vcf in zip(chroms, snp_vcfs):
     # out_snp_vcf[:-3] will be removed by bgzip.
     subprocess.run(["bgzip", "-f", out_snp_vcf[:-3]], check=True)
     subprocess.run(["tabix", "-f", "-p", "vcf", out_snp_vcf], check=True)
-logging.info("finished annotate_snps_pseudobulk")
+logging.info("finished genotype_snps_no_normal")

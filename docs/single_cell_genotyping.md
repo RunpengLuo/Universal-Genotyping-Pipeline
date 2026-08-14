@@ -87,7 +87,7 @@ gene_blacklist_file: resources/data/ig_gene_list.txt
 > [!TIP]
 > User may specify path via `segment_bed` listing genomic segments segmented by upstream SV breakpoints, and `window_bed` will avoid to segment across different genomic segments.
 
-3. specify the population SNP panel (`snp_panel`) for germline SNP genotyping. Unlike bulk mode, single-cell genotyping piles up a pseudobulk of all datasets of a modality with [cellsnp-lite](https://cellsnp-lite.readthedocs.io/en/latest/) over `snp_panel` (no `snp_targets`). See [snp-panels](../resources/README.md#snp-panels) for details.
+3. specify the population SNP panel (`snp_panel`) for germline SNP genotyping. Unlike bulk mode, single-cell genotyping piles up a pseudobulk of all datasets of a modality with [cellsnp-lite](https://cellsnp-lite.readthedocs.io/en/latest/) over `snp_panel`. See [snp-panels](../resources/README.md#snp-panels) for details.
 
 ```yaml
 snp_panel: /path/to/snp_panel.vcf.gz

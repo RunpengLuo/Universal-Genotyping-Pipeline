@@ -7,7 +7,8 @@ Rules:
   over the snp_panel positions (`-T` reads CHROM/POS only, the panel alleles are
   ignored; REF comes from the reference, ALT from the reads)
 - [single-cell] genotype_snps_pseudobulk_mode1b: cellsnp-lite calls one modality
-- [single-cell] annotate_snps_pseudobulk: filter those calls to het or hom-alt
+- [single-cell] genotype_snps_no_normal: genotype het/hom-alt from the pseudobulk counts,
+  there being no matched normal to call against
 - [optional] split_het_snp_vcf: split a given het_snp_vcf per chromosome
 Outputs:
 - snp_dir/chr{chrname}.vcf.gz: bi-allelic het and hom-alt SNPs
@@ -58,7 +59,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
                 {params.extra_params} \
                 --regions {params.chrom} \
                 --targets-file "{input.snp_panel}" \
-            | bcftools call --multiallelic-caller \
+            | bcftools call --multiallelic-caller --variants-only \
                 --threads {threads} \
                 --output-type z --output {output.unfiltered_vcf} 2> {log}
 
@@ -77,7 +78,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
                 --output-type z --output {output.snp_vcf} 2>> {log}
 
             PASS=$(bcftools query --format '\n' {output.snp_vcf} | wc -l | tr -d ' ')
-            echo "Total called: $TOTAL, Passed filters: $PASS, Filtered: $((TOTAL - PASS))" >> {log}
+            echo "Variant sites called: $TOTAL, Passed filters: $PASS, Filtered: $((TOTAL - PASS))" >> {log}
 
             tabix -p vcf {output.snp_vcf}
             """
@@ -133,7 +134,7 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
                 --gzip > {log} 2>&1
             """
 
-    rule annotate_snps_pseudobulk:
+    rule genotype_snps_no_normal:
         input:
             raw_snp_vcfs=[
                 snp_dir + f"/pseudobulk_{modality}/cellSNP.base.vcf.gz"
@@ -150,11 +151,10 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
                 chrname=nochr_chromosomes,
             ),
         log:
-            log_dir
-            + f"/annotate_snps_pseudobulk/annotate_snps_pseudobulk.{_run_id}.log",
+            log_dir + f"/genotype_snps_no_normal/genotype_snps_no_normal.{_run_id}.log",
         benchmark:
             bench_dir
-            + f"/annotate_snps_pseudobulk/annotate_snps_pseudobulk.{_run_id}.tsv"
+            + f"/genotype_snps_no_normal/genotype_snps_no_normal.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1
@@ -168,7 +168,7 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
             filter_nz_OTH=config["params_annotate_snps"]["filter_nz_OTH"],
             filter_hom_ALT=config["params_annotate_snps"]["filter_hom_ALT"],
         script:
-            "../scripts/annotate_snps_pseudobulk.py"
+            "../scripts/genotype_snps_no_normal.py"
 
 
 if not run_genotyping and run_phasing:

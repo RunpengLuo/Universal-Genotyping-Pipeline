@@ -5,7 +5,6 @@
   - [Converting NCBI accession-style GTF to Chr notations](#converting-ncbi-accession-style-gtf-to-chr-notations)
 - [Pre-built Window BED Files](#pre-built-window-bed-files)
 - [SNP Panels](#snp-panels)
-  - [Support external SNP panel](#support-external-snp-panel)
 - [Population-haplotype Panels](#population-haplotype-panels)
   - [Genetic Maps](#genetic-maps)
 - [ENCODE Blacklist](#encode-blacklist)
@@ -71,26 +70,19 @@ zcat GCF_009914755.1_T2T-CHM13v2.0_genomic.gtf.gz \
 
 ## SNP Panels
 
-VCF format. Set via `snp_panel` or `snp_targets` in config; download and preprocess them
-yourself. Both are passed to bcftools / cellsnp-lite unconverted, so their contigs must
-already match the alignments. Use the full panel, without an AF cutoff, when possible.
+Set via `snp_panel` in config; download and preprocess it yourself. The panel is passed to
+bcftools / cellsnp-lite unconverted, so its contigs must already match the alignments. Use
+the full panel, without an AF cutoff, when possible.
+
+> [!IMPORTANT]
+> `snp_panel` must be a bgzipped, tabix-indexed VCF (`.vcf.gz` + `.tbi`/`.csi`). BCF format
+> is not supported by bcftools for `-T`, see ([samtools/bcftools#690](https://github.com/samtools/bcftools/issues/690)).
 
 | Panel | Species | Reference | Source |
 |-------|---------|-----------|----------|
 | 1kGP phase3 (n=3,202) | Human | hg38 | [FTP](https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/) -> use [`scripts/process_1kGP_3202_panel.sh --ref hg38`](scripts/process_1kGP_3202_panel.sh) |
 | 1kGP phase3 (n=3,202) | Human | chm13v2 | [S3](https://s3-us-west-2.amazonaws.com/human-pangenomics/T2T/CHM13/assemblies/variants/1000_Genomes_Project/chm13v2.0/Phased_SHAPEIT5_v1.1/) -> use [`scripts/process_1kGP_3202_panel.sh --ref chm13v2`](scripts/process_1kGP_3202_panel.sh) |
-| MGP v5 | Mouse | mm10 | [UCSC MGP v5 VCF](https://hgdownload.soe.ucsc.edu/gbdb/mm10/mouseStrains/mgpV5MergedSNPsAlldbSNP142.vcf.gz) -> [`scripts/build_mouse_mgp_panel.sh`](scripts/build_mouse_mgp_panel.sh) (all strains; `--strains` to subset; biallelic SNP panel + phasing panel + targets) |
-
-### Support external SNP panel
-
-`genotype_snps_bulk` reads `snp_targets`, a directory of per-chromosome position files.
-[`scripts/build_snp_targets.sh`](./scripts/build_snp_targets.sh) builds it from any SNP panel
-VCF; it needs `bcftools`, `bgzip` and `tabix` on `$PATH`.
-
-```bash
-bash resources/scripts/build_snp_targets.sh /path/to/snp_panel.vcf.gz /path/to/snp_targets
-# /path/to/snp_targets/target.chr{1..22,X}.pos.gz + .tbi
-```
+| MGP v5 | Mouse | mm10 | [UCSC MGP v5 VCF](https://hgdownload.soe.ucsc.edu/gbdb/mm10/mouseStrains/mgpV5MergedSNPsAlldbSNP142.vcf.gz) -> [`scripts/build_mouse_mgp_panel.sh`](scripts/build_mouse_mgp_panel.sh) (all strains; `--strains` to subset; biallelic SNP panel + phasing panel) |
 
 ---
 

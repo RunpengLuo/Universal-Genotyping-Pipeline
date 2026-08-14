@@ -55,8 +55,7 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 | `mappability_bed` | Optional | BED mappability track (4th column = score). |
 | `blacklist_bed` | Optional | ENCODE-style blacklist; pre-built at `resources/data/hg38-blacklist.v2.bed.gz`. |
 | `gene_blacklist_file` | Optional | Genes to exclude from AnnData (single-cell). |
-| `snp_panel` | Genotyping | Population SNP VCF. |
-| `snp_targets` | Bulk genotyping | Per-chromosome position files; build via `resources/scripts/build_snp_targets.sh`. |
+| `snp_panel` | Genotyping | Population SNP VCF, bgzipped and indexed (`.vcf.gz` + `.tbi`/`.csi`). Bulk passes it to `bcftools mpileup -T` (positions only, panel alleles ignored); single-cell to `cellsnp-lite -R`. |
 | `phaser` | Genotyping | `eagle` \| `shapeit` \| `longphase`. |
 | `phasing_panel` | eagle/shapeit | Per-chromosome BCF reference panel directory. |
 | `gmap_path` | eagle/shapeit | Genetic map; `{chrname}` placeholder for per-chromosome maps (SHAPEIT5), literal path for a single map (Eagle2). |
@@ -68,7 +67,7 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 
 > [!IMPORTANT]
 > - `genome_size` defines the contig naming convention in `reference` and input alignment files.
-> - `snp_panel`, `snp_targets`, `phasing_panel` and `het_snp_vcf` must follow the same naming
+> - `snp_panel`, `phasing_panel` and `het_snp_vcf` must follow the same naming
 > convention as `genome_size`.
 > - Final outputs always use chr-prefix contig naming regardless of input convention.
 
@@ -90,7 +89,8 @@ consumer of the GC/MAP/REPLI columns; a single-cell window BED carries just
 | `window_size` | Window size (bp); fixed tiling of the segment BED, shared by every assay of the run. |
 
 #### `params_bcftools`
-Used by `genotype_snps_bulk` and `pileup_snps_bulk_bcftools` (bulk het-SNP read counting).
+Used by `genotype_snps_bulk` and `pileup_snps_bulk_bcftools_chrom` (bulk het-SNP read
+counting). Both call one chromosome per job and restrict it with `--regions`.
 
 | Field | Description |
 |---|---|
@@ -114,7 +114,8 @@ Used by `genotype_snps_pseudobulk_mode1b`, `pileup_snps_*` (single-cell).
 | `minCOUNT_pileup` | Minimum aggregate count when piling up. |
 
 #### `params_annotate_snps`
-Used by `annotate_snps_pseudobulk` (single-cell).
+Used by `genotype_snps_no_normal` (single-cell), which genotypes from read counts because
+no matched normal exists to call against.
 
 | Field | Description |
 |---|---|
@@ -211,10 +212,16 @@ Used by all multi-thread rules.
 
 | Field | Description |
 |---|---|
-| `genotype` | Threads for genotyping. |
+| `genotype` | Threads for genotyping; `bcftools mpileup` is single-threaded, so these size the `call` and `view` output compressors only. |
 | `phase` | Threads for phasing. |
-| `pileup` | Threads for the pileup step (bulk `bcftools mpileup`; single-cell cellsnp-lite). |
+| `pileup` | Threads for the pileup step (bulk: the `bgzip` writing the counts; single-cell: cellsnp-lite, which is genuinely parallel). |
 | `mosdepth` | Threads for mosdepth. |
+
+> [!NOTE]
+> `bcftools` applies `--threads` to the output handle only, never to the BAM/CRAM
+> readers, so a bulk `mpileup` runs on one core whatever this is set to. Bulk genotyping
+> and pileup both fan out per chromosome instead, and small values here leave cores free
+> for more concurrent chromosome jobs.
 
 ---
 
@@ -293,7 +300,7 @@ columns are cells.
 | `snp_dir/pseudobulk_{modality}/` | cellsnp-lite pseudobulk output. |
 | `phase_dir/chr{chrname}.vcf.gz` | Phased SNPs, concatenated to `phased_het_snps.vcf.gz`. |
 | `phase_dir/genetic_map.tsv.gz` | Parsed genetic map (eagle/shapeit). |
-| `pileup_dir/{assay_type}_{dataset_id}/` | Bulk `bcftools.counts.tsv.gz`, single-cell `cellSNP.*`. |
+| `pileup_dir/{assay_type}_{dataset_id}/` | Bulk `bcftools.counts.tsv.gz`, concatenated from per-chromosome `bcftools.counts.chr{chrname}.tsv.gz` (temporary); single-cell `cellSNP.*`. |
 | `pileup_dir/{assay_type}/out_mosdepth/` | Per-dataset mosdepth (bulk). |
 | `pileup_dir/bulk/window.dp.npz` | Corrected depth, windows x every bulk dataset. |
 | `allele_dir/` | `snps.tsv.gz`, `snp.{T,A,B}allele.npz`, `sample_ids.tsv`, `barcodes.tsv.gz`. |

@@ -93,6 +93,36 @@ One explicit segmentation and one shared bin grid in every mode, references with
 - It replaces the `dataset_id`-only check in `parse_records`, which took non-ASCII
   letters and never saw `sample_id`.
 
+#### Genotyping (breaking)
+- Bulk genotyping reads `snp_panel` directly, via `bcftools mpileup -T`, which takes
+  CHROM/POS only: REF comes from `reference`, ALT from the reads.
+- `snp_panel` is required in both genotyping modes and must be a bgzipped, indexed VCF.
+  `.bcf` is refused at parse time: `--targets-file` cannot read it and matches nothing
+  without erroring (samtools/bcftools#690).
+- `genotype_snps_bulk` and `pileup_snps_bulk_bcftools` pass `--regions` in every
+  `remote_mode`, not only `stream`; it scopes the per-chromosome genotyping job and lets
+  local runs index-jump the alignment instead of streaming it whole.
+- Every bcftools option in `workflow/rules/` is spelled long (`--min-MQ`, `--annotate`,
+  `--targets-file`, `--output-type` ...).
+
+#### Performance (same outputs)
+- Bulk pileup splits per chromosome (`pileup_snps_bulk_bcftools_chrom`) and is joined by
+  `merge_pileup_counts`, so a replicate fans out instead of walking its whole alignment
+  in one job. mpileup emits regions in `--regions` order, so the concatenation is
+  byte-identical to the single-job counts file.
+- `--threads` no longer sits on `bcftools mpileup`, which is single-threaded: bcftools
+  applies the count to the output handle only, and both pipelines write uncompressed BCF
+  into a pipe. The threads now go where compression happens (`bcftools call`, the
+  filtering `bcftools view`, `bgzip`).
+- `threads.genotype` 4 -> 2 and `threads.pileup` 8 -> 2, so the freed cores run more
+  chromosome jobs instead of idling inside one.
+- Genotyping counts its records with `bcftools query --format '\n'` rather than
+  `bcftools view --no-header`, which formatted every record just to be discarded.
+- `bcftools call --variants-only` in `genotype_snps_bulk`: the hom-ref rows it drops were
+  already excluded by the `--min-alleles 2` + `GT="alt"` filter, so the SNP VCF is
+  unchanged while the temporary unfiltered VCF loses most of its rows. Its log line now
+  reads `Variant sites called:`, since that count no longer covers every callable site.
+
 #### Internals
 - One word per concept: `region` > `segment` > `bin` > `bb`, `feature` x `observation`.
 - `rep` becomes `dataset_id` in every identifier.
@@ -135,6 +165,9 @@ One explicit segmentation and one shared bin grid in every mode, references with
   amplifications.
 - **Breaking**: the genotyping QC plot, `qc_genotype_snps` and `quality_control.smk`.
 - **Breaking**: `pseudobulk_snp_statistics.tsv` and its single-cell `report()` entry.
+- **Breaking**: `snp_targets`; `snp_panel` is the only SNP-site input in every mode.
+- `resources/scripts/build_snp_targets.sh`, and the `target_positions/` output of the
+  1kGP and mouse MGP panel builders.
 - `verify_window_bed` and the `window_bed.checked` gate; the build cannot cross a segment.
 - `resources/scripts/validate_sample_file.py`; the DAG build runs the same validation.
 - The `tests/data/` end-to-end cases (COLO829, HCC1395) and their CI dry-run step.

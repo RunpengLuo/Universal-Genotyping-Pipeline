@@ -18,7 +18,7 @@ def compute_snp_statistics(
 ):
     """LEGACY, unused: per-chromosome SNP genotyping statistics.
 
-    No caller since annotate_snps_pseudobulk stopped writing
+    No caller since genotype_snps_no_normal stopped writing
     pseudobulk_snp_statistics.tsv. Kept for reference; delete when nothing needs it.
 
     Returns a DataFrame with columns:
