@@ -3,9 +3,10 @@
 Last update: 2026-08-11
 
 Rules:
-- [bulk] genotype_snps_bulk: bcftools calls one chromosome from the alignments,
-  over the snp_panel positions (`-T` reads CHROM/POS only, the panel alleles are
-  ignored; REF comes from the reference, ALT from the reads)
+- [bulk] genotype_snps_bulk: bcftools calls one chromosome from the alignments, over
+  the snp_panel positions. By default `-T` reads CHROM/POS only, so REF comes from the
+  reference and ALT from the reads; `fix_panel_allele` instead constrains the
+  call to the panel's REF/ALT, discarding reads that carry any other allele
 - [single-cell] genotype_snps_pseudobulk_mode1b: cellsnp-lite calls one modality
 - [single-cell] genotype_snps_no_normal: genotype het/hom-alt from the pseudobulk counts,
   there being no matched normal to call against
@@ -45,6 +46,13 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
             extra_params=config["params_bcftools"]["extra_params"],
             bam_arg=bam_stream_arg(genotype_files),
             chrom=lambda wc: input_chrom(wc.chrname),
+            alleles_arg=lambda wc, input: (
+                "--constrain alleles --targets-file "
+                f"<(bcftools query --regions {input_chrom(wc.chrname)} "
+                f"--format '%CHROM\\t%POS\\t%REF,%ALT\\n' {input.snp_panel})"
+                if fix_panel_allele
+                else ""
+            ),
         shell:
             r"""
             ALN="{input.alignment}"; [ -z "$ALN" ] && ALN="{params.bam_arg}"
@@ -60,6 +68,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
                 --regions {params.chrom} \
                 --targets-file "{input.snp_panel}" \
             | bcftools call --multiallelic-caller --variants-only \
+                {params.alleles_arg} \
                 --threads {threads} \
                 --output-type z --output {output.unfiltered_vcf} 2> {log}
 

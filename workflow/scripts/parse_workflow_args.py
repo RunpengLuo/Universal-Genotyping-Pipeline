@@ -418,6 +418,10 @@ def parse_workflow(config):
         run_genotyping = False
 
     snp_panel = config["snp_panel"]
+    # NB: cellsnp-lite -R already genotypes at the panel's alleles
+    fix_panel_allele = bool(config["fix_panel_allele"]) and (
+        run_genotyping and workflow_mode == "bulk_genotyping"
+    )
     genotype_files = None
     if run_genotyping:
         assert snp_panel, f"snp_panel is required for {workflow_mode}"
@@ -468,6 +472,16 @@ def parse_workflow(config):
                 f"WARN: genotype_dataset_ids includes non-normal dataset(s) "
                 f"{non_normal}; germline SNPs may carry somatic signal"
             )
+        if workflow_mode == "bulk_genotyping" and len(non_normal) == len(
+            genotype_records
+        ):
+            if not fix_panel_allele:
+                logging_snakemake(
+                    "no matched normal to genotype: forcing "
+                    "fix_panel_allele, so ALT comes from snp_panel and a "
+                    "somatic allele cannot become the called ALT"
+                )
+            fix_panel_allele = True
         genotype_files = [rec["files"] for rec in genotype_records]
 
     # === phasing check ===
@@ -656,6 +670,7 @@ def parse_workflow(config):
         "bench_dir": bench_dir,
         "input_segment_bed": input_segment_bed,
         "snp_panel": snp_panel,
+        "fix_panel_allele": fix_panel_allele,
         "reference": reference,
         "genome_size": genome_size,
         "gtf_file": gtf_file,

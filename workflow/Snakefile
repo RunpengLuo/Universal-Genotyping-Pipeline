@@ -103,6 +103,7 @@ if _has_config:
     gene_blacklist_file = _wf["gene_blacklist_file"]
     mappability_bed = _wf["mappability_bed"]
     snp_panel = _wf["snp_panel"]
+    fix_panel_allele = _wf["fix_panel_allele"]
     bb_file = _wf["bb_file"]
 
     # === segment and window BEDs ===
