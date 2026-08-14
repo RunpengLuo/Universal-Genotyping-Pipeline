@@ -150,9 +150,9 @@ rule rd_correct:
             subcategory="read-depth correction",
         ),
     log:
-        log_dir + f"/rd_correct/rd_correct.bulk.{_run_id}.log",
+        log_dir + f"/rd_correct.bulk.{_run_id}.log",
     benchmark:
-        bench_dir + f"/rd_correct/rd_correct.bulk.{_run_id}.tsv"
+        bench_dir + f"/rd_correct.bulk.{_run_id}.tsv"
     conda:
         "../envs/base.yaml"
     params:

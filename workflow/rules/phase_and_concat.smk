@@ -38,9 +38,9 @@ if workflow_mode == "bulk_genotyping":
                 subcategory="phasing / allele freq (bulk)",
             ),
         log:
-            log_dir + f"/phase_and_concat/phase_and_concat.bulk.{_run_id}.log",
+            log_dir + f"/phase_and_concat.bulk.{_run_id}.log",
         benchmark:
-            bench_dir + f"/phase_and_concat/phase_and_concat.bulk.{_run_id}.tsv"
+            bench_dir + f"/phase_and_concat.bulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         params:
@@ -106,9 +106,9 @@ else:
                 subcategory="phasing / allele freq",
             ),
         log:
-            log_dir + f"/phase_and_concat/phase_and_concat.nonbulk.{_run_id}.log",
+            log_dir + f"/phase_and_concat.nonbulk.{_run_id}.log",
         benchmark:
-            bench_dir + f"/phase_and_concat/phase_and_concat.nonbulk.{_run_id}.tsv"
+            bench_dir + f"/phase_and_concat.nonbulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         params:

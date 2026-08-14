@@ -24,9 +24,9 @@ rule build_segment_bed:
     output:
         segment_bed=segment_bed,
     log:
-        log_dir + f"/build_segment_bed/build_segment_bed.{_run_id}.log",
+        log_dir + f"/build_segment_bed.{_run_id}.log",
     benchmark:
-        bench_dir + f"/build_segment_bed/build_segment_bed.{_run_id}.tsv"
+        bench_dir + f"/build_segment_bed.{_run_id}.tsv"
     conda:
         "../envs/base.yaml"
     script:
@@ -109,9 +109,9 @@ if build_windows:
         output:
             window_bed=window_bed,
         log:
-            log_dir + f"/build_window_bed/build_window_bed.{_run_id}.log",
+            log_dir + f"/build_window_bed.{_run_id}.log",
         benchmark:
-            bench_dir + f"/build_window_bed/build_window_bed.{_run_id}.tsv"
+            bench_dir + f"/build_window_bed.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         params:
@@ -129,9 +129,9 @@ rule window_bed_to_3bed:
     output:
         mosdepth_bed=temp(aux_dir + "/windows.3col.bed.gz"),
     log:
-        log_dir + f"/window_bed_to_3bed/window_bed_to_3bed.{_run_id}.log",
+        log_dir + f"/window_bed_to_3bed.{_run_id}.log",
     benchmark:
-        bench_dir + f"/window_bed_to_3bed/window_bed_to_3bed.{_run_id}.tsv"
+        bench_dir + f"/window_bed_to_3bed.{_run_id}.tsv"
     params:
         strip_chr_prefix="sed 's/^chr//' | " if input_nochr else "",
     shell:

@@ -69,9 +69,9 @@ if workflow_mode == "bulk_genotyping":
                 subcategory="bulk binning",
             ),
         log:
-            log_dir + f"/combine_counts/combine_counts.bulk.{_run_id}.log",
+            log_dir + f"/combine_counts.bulk.{_run_id}.log",
         benchmark:
-            bench_dir + f"/combine_counts/combine_counts.bulk.{_run_id}.tsv"
+            bench_dir + f"/combine_counts.bulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1
@@ -177,9 +177,9 @@ elif workflow_mode == "single_cell_genotyping":
                 subcategory="single-cell binning",
             ),
         log:
-            log_dir + f"/combine_counts_nonbulk/combine_counts_nonbulk.{_run_id}.log",
+            log_dir + f"/combine_counts_nonbulk.{_run_id}.log",
         benchmark:
-            bench_dir + f"/combine_counts_nonbulk/combine_counts_nonbulk.{_run_id}.tsv"
+            bench_dir + f"/combine_counts_nonbulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1

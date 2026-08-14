@@ -141,11 +141,9 @@ rule concat_and_extract_phased_het_snps:
         ),
         lst_file=temp(phase_dir + "/phased_snps.lst"),
     log:
-        log_dir
-        + f"/concat_and_extract_phased_het_snps/concat_and_extract_phased_het_snps.{_run_id}.log",
+        log_dir + f"/concat_and_extract_phased_het_snps.{_run_id}.log",
     benchmark:
-        bench_dir
-        + f"/concat_and_extract_phased_het_snps/concat_and_extract_phased_het_snps.{_run_id}.tsv"
+        bench_dir + f"/concat_and_extract_phased_het_snps.{_run_id}.tsv"
     conda:
         "../envs/bcftools.yaml"
     threads: 1
@@ -178,9 +176,9 @@ if gmap_file:
         output:
             gmap_file=gmap_file,
         log:
-            log_dir + f"/parse_genetic_map/parse_genetic_map.{_run_id}.log",
+            log_dir + f"/parse_genetic_map.{_run_id}.log",
         benchmark:
-            bench_dir + f"/parse_genetic_map/parse_genetic_map.{_run_id}.tsv"
+            bench_dir + f"/parse_genetic_map.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1

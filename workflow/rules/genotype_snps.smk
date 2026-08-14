@@ -151,10 +151,9 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
                 chrname=nochr_chromosomes,
             ),
         log:
-            log_dir + f"/genotype_snps_no_normal/genotype_snps_no_normal.{_run_id}.log",
+            log_dir + f"/genotype_snps_no_normal.{_run_id}.log",
         benchmark:
-            bench_dir
-            + f"/genotype_snps_no_normal/genotype_snps_no_normal.{_run_id}.tsv"
+            bench_dir + f"/genotype_snps_no_normal.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1
