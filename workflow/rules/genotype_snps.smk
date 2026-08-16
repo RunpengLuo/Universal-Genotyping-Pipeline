@@ -1,18 +1,23 @@
 """Call het and hom-alt SNPs, or split a given VCF per chromosome.
 
-Last update: 2026-08-11
+Last update: 2026-08-16
 
 Rules:
-- [bulk] genotype_snps_bulk: bcftools calls one chromosome from the alignments, over
-  the snp_panel positions. By default `-T` reads CHROM/POS only, so REF comes from the
-  reference and ALT from the reads; `fix_panel_allele` instead constrains the
-  call to the panel's REF/ALT, discarding reads that carry any other allele
+- [bulk] genotype_snps_bulk: bcftools calls one chromosome from the alignments, always
+  constrained to the snp_panel's REF/ALT. `apply_clonal_loh_hmm` keeps every callable
+  site (`--keep-alts`, no `--variants-only` and no `GT="alt"`), since under clonal LOH a
+  gHET collapses to one allele and only its neighbourhood tells it from a gHOM
+- [bulk] post_genotype_snps_bulk: re-genotype a high-purity tumor's calls with the
+  clonal-LOH HMM, or symlink the calls through, every chromosome in one job
 - [single-cell] genotype_snps_pseudobulk_mode1b: cellsnp-lite calls one modality
-- [single-cell] genotype_snps_no_normal: genotype het/hom-alt from the pseudobulk counts,
-  there being no matched normal to call against
+- [single-cell] post_genotype_snps_nonbulk: genotype het/hom-alt from the pseudobulk
+  counts, there being no matched normal to call against
 - [optional] split_het_snp_vcf: split a given het_snp_vcf per chromosome
 Outputs:
-- snp_dir/chr{chrname}.vcf.gz: bi-allelic het and hom-alt SNPs
+- snp_dir/raw/chr{chrname}.vcf.gz: the bulk caller's own output, before refinement
+- snp_dir/chr{chrname}.vcf.gz: bi-allelic het and hom-alt SNPs, what phasing reads
+- aux_dir/clonal_loh_hmm.{segments,params}.tsv: the fitted chain, header-only when it
+  did not run
 """
 
 if workflow_mode == "bulk_genotyping" and run_genotyping:
@@ -24,8 +29,8 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
             snp_panel=snp_panel,
             reference=reference,
         output:
-            snp_vcf=snp_dir + "/chr{chrname}.vcf.gz",
-            unfiltered_vcf=temp(snp_dir + "/chr{chrname}.unfiltered.vcf.gz"),
+            snp_vcf=snp_dir + "/raw/chr{chrname}.vcf.gz",
+            snp_vcf_tbi=snp_dir + "/raw/chr{chrname}.vcf.gz.tbi",
         log:
             log_dir
             + f"/genotype_snps_bulk/genotype_snps_bulk.chr{{chrname}}.{_run_id}.log",
@@ -50,47 +55,113 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
                 "--constrain alleles --targets-file "
                 f"<(bcftools query --regions {input_chrom(wc.chrname)} "
                 f"--format '%CHROM\\t%POS\\t%REF,%ALT\\n' {input.snp_panel})"
-                if fix_panel_allele
-                else ""
             ),
+            call_arg="--keep-alts" if apply_clonal_loh_hmm else "--variants-only",
+            gt_arg="" if apply_clonal_loh_hmm else '&& GT="alt"',
         shell:
             r"""
+            set -euo pipefail
             ALN="{input.alignment}"; [ -z "$ALN" ] && ALN="{params.bam_arg}"
-            bcftools mpileup $ALN \
-                --fasta-ref "{input.reference}" \
-                --output-type u \
-                --annotate INFO/AD,AD,DP \
-                --skip-indels \
-                --min-MQ {params.min_mapq} \
-                --min-BQ {params.min_baseq} \
-                --max-depth {params.max_depth} \
-                {params.extra_params} \
-                --regions {params.chrom} \
-                --targets-file "{input.snp_panel}" \
-            | bcftools call --multiallelic-caller --variants-only \
-                {params.alleles_arg} \
-                --threads {threads} \
-                --output-type z --output {output.unfiltered_vcf} 2> {log}
+            (
+              bcftools mpileup $ALN \
+                  --fasta-ref "{input.reference}" \
+                  --output-type u \
+                  --annotate INFO/AD,AD,DP \
+                  --skip-indels \
+                  --min-MQ {params.min_mapq} \
+                  --min-BQ {params.min_baseq} \
+                  --max-depth {params.max_depth} \
+                  {params.extra_params} \
+                  --regions {params.chrom} \
+                  --targets-file "{input.snp_panel}" \
+              | bcftools call --multiallelic-caller \
+                  {params.call_arg} \
+                  {params.alleles_arg} \
+                  --output-type u \
+              | bcftools view \
+                  --types snps --min-alleles 2 --max-alleles 2 \
+                  --include 'QUAL>={params.min_qual} && FMT/DP>={params.min_dp} {params.gt_arg}' \
+                  --threads {threads} \
+                  --output-type z --output {output.snp_vcf}
+            ) 2> {log}
 
-            NSAMPLE=$(bcftools query --list-samples {output.unfiltered_vcf} | wc -l | tr -d ' ')
+            NSAMPLE=$(bcftools query --list-samples {output.snp_vcf} | wc -l | tr -d ' ')
             if [ "$NSAMPLE" -ne 1 ]; then
                 echo "ERROR: genotyping produced $NSAMPLE samples; expected 1. Pooled alignments must share one @RG SM tag (config genotype_dataset_ids)." >> {log}
                 exit 1
             fi
 
-            TOTAL=$(bcftools query --format '\n' {output.unfiltered_vcf} | wc -l | tr -d ' ')
-
-            bcftools view {output.unfiltered_vcf} \
-                --types snps --min-alleles 2 --max-alleles 2 \
-                --include 'QUAL>={params.min_qual} && GT="alt" && FMT/DP>={params.min_dp}' \
-                --threads {threads} \
-                --output-type z --output {output.snp_vcf} 2>> {log}
-
             PASS=$(bcftools query --format '\n' {output.snp_vcf} | wc -l | tr -d ' ')
-            echo "Variant sites called: $TOTAL, Passed filters: $PASS, Filtered: $((TOTAL - PASS))" >> {log}
+            echo "Passed filters: $PASS" >> {log}
 
-            tabix -p vcf {output.snp_vcf}
+            tabix -f -p vcf {output.snp_vcf}
             """
+
+    rule post_genotype_snps_bulk:
+        """Re-genotype a high-purity tumor's calls with the clonal-LOH HMM, or symlink.
+
+        Takes the whole per-chromosome set rather than one chromosome, so the HMM is
+        fitted once over the genome; region_bed supplies its per-arm chain groups.
+        """
+        input:
+            raw_snp_vcfs=expand(
+                snp_dir + "/raw/chr{chrname}.vcf.gz",
+                chrname=nochr_chromosomes,
+            ),
+            raw_snp_vcfs_tbi=expand(
+                snp_dir + "/raw/chr{chrname}.vcf.gz.tbi",
+                chrname=nochr_chromosomes,
+            ),
+            snp_panel=snp_panel,
+            region_bed=region_bed,
+            genome_size=genome_size,
+        output:
+            snp_vcfs=expand(
+                snp_dir + "/chr{chrname}.vcf.gz",
+                chrname=nochr_chromosomes,
+            ),
+            snp_vcfs_tbi=expand(
+                snp_dir + "/chr{chrname}.vcf.gz.tbi",
+                chrname=nochr_chromosomes,
+            ),
+            hmm_segments=aux_dir + "/clonal_loh_hmm.segments.tsv",
+            hmm_params=aux_dir + "/clonal_loh_hmm.params.tsv",
+            qc_pdf=report(
+                qc_dir + "/post_genotype_snps.bulk.pdf",
+                category="QC plots",
+                subcategory="genotyping",
+                labels={"plot": "genotype allele frequency"},
+            ),
+        log:
+            log_dir + f"/post_genotype_snps.bulk.{_run_id}.log",
+        benchmark:
+            bench_dir + f"/post_genotype_snps.bulk.{_run_id}.tsv"
+        conda:
+            "../envs/base.yaml"
+        threads: 1
+        params:
+            mode="bulk",
+            apply_clonal_loh_hmm=apply_clonal_loh_hmm,
+            chroms=chr_chromosomes,
+            input_nochr=input_nochr,
+            hom_laf=config["params_genotype_snps"]["hom_laf"],
+            loh_laf=config["params_genotype_snps"]["loh_laf"],
+            pi_het=config["params_genotype_snps"]["pi_het"],
+            breakpoint_rate=config["params_genotype_snps"]["breakpoint_rate"],
+            tau=config["params_genotype_snps"]["tau"],
+            n_retained=config["params_genotype_snps"]["n_retained"],
+            n_iter=config["params_genotype_snps"]["n_iter"],
+            em_tol=config["params_genotype_snps"]["em_tol"],
+            margin=config["params_genotype_snps"]["margin"],
+            learn_pi=config["params_genotype_snps"]["learn_pi"],
+            loh_min=config["params_genotype_snps"]["loh_min"],
+            p_het_min=config["params_genotype_snps"]["p_het_min"],
+            min_dp=config["params_genotype_snps"]["min_dp"],
+            qc_dir=qc_dir,
+            run_id=_run_id,
+            sample_id=sample_id,
+        script:
+            "../scripts/post_genotype_snps.py"
 
 
 if workflow_mode == "single_cell_genotyping" and run_genotyping:
@@ -143,7 +214,8 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
                 --gzip > {log} 2>&1
             """
 
-    rule genotype_snps_no_normal:
+    rule post_genotype_snps_nonbulk:
+        """Genotype het/hom-alt from the pseudobulk counts, no matched normal to call."""
         input:
             raw_snp_vcfs=[
                 snp_dir + f"/pseudobulk_{modality}/cellSNP.base.vcf.gz"
@@ -159,24 +231,35 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
                 snp_dir + "/chr{chrname}.vcf.gz.tbi",
                 chrname=nochr_chromosomes,
             ),
+            qc_pdf=report(
+                qc_dir + "/post_genotype_snps.nonbulk.pdf",
+                category="QC plots",
+                subcategory="genotyping",
+                labels={"plot": "genotype allele frequency"},
+            ),
         log:
-            log_dir + f"/genotype_snps_no_normal.{_run_id}.log",
+            log_dir + f"/post_genotype_snps.nonbulk.{_run_id}.log",
         benchmark:
-            bench_dir + f"/genotype_snps_no_normal.{_run_id}.tsv"
+            bench_dir + f"/post_genotype_snps.nonbulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1
         params:
+            mode="nonbulk",
+            apply_clonal_loh_hmm=apply_clonal_loh_hmm,
             chroms=chr_chromosomes,
             input_nochr=input_nochr,
             modalities=modalities,
-            min_het_reads=config["params_annotate_snps"]["min_het_reads"],
-            min_hom_dp=config["params_annotate_snps"]["min_hom_dp"],
-            min_vaf_thres=config["params_annotate_snps"]["min_vaf_thres"],
-            filter_nz_OTH=config["params_annotate_snps"]["filter_nz_OTH"],
-            filter_hom_ALT=config["params_annotate_snps"]["filter_hom_ALT"],
+            min_het_reads=config["params_genotype_snps"]["min_het_reads"],
+            min_dp=config["params_genotype_snps"]["min_dp"],
+            min_vaf_thres=config["params_genotype_snps"]["min_vaf_thres"],
+            filter_nz_OTH=config["params_genotype_snps"]["filter_nz_OTH"],
+            filter_hom_ALT=config["params_genotype_snps"]["filter_hom_ALT"],
+            qc_dir=qc_dir,
+            run_id=_run_id,
+            sample_id=sample_id,
         script:
-            "../scripts/genotype_snps_no_normal.py"
+            "../scripts/post_genotype_snps.py"
 
 
 if not run_genotyping and run_phasing:

@@ -35,7 +35,7 @@ from io_utils import (
     read_10x_ranger_spatial,
     read_BED,
     read_barcodes,
-    read_genes_gtf_file,
+    read_GTF,
 )
 from feature_utils import assign_features_to_ranges
 
@@ -110,7 +110,7 @@ adata.X = adata.X.tocsr()
 num_total_barcodes = adata.n_obs
 logging.info(f"#concat barcodes={num_total_barcodes}, #union features={adata.n_vars}")
 
-genes_gtf = read_genes_gtf_file(gtf_file, id_col=gene_id_colname)
+genes_gtf = read_GTF(gtf_file, ("gene",), id_col=gene_id_colname)["gene"]
 logging.info(f"#genes in the GTF={len(genes_gtf)}")
 
 var_coords = adata.var.merge(

@@ -15,6 +15,7 @@ Constants:
 - RANGER_*, RANGER_LAYOUT: 10x Cell and Space Ranger filenames
 - REPLISEQ_*, REPLI_LIFTOVER, LIFTOVER_CHAIN_URLS: Repli-seq sources and chains
 - URL_SCHEMES: remote input schemes a sample-file value may use
+- VCF_COLUMNS, VCF_SAMPLE_COLUMNS, GTF_COLUMNS: the parsed file schemas
 Functions:
 - canonical_refver, is_known_refver: fold a reference_version spelling
 - get_phasing_panel_path, get_genetic_map_path: per-chromosome path builders
@@ -228,6 +229,20 @@ RANGER_LAYOUT = {
     "image_hires": (RANGER_IMAGE_HIRES, True),
     "image_lowres": (RANGER_IMAGE_LOWRES, True),
 }
+
+##################################################
+# VCF fixed columns, then the pair a single-sample genotyped VCF adds
+VCF_COLUMNS = [
+    "#CHROM",
+    "POS",
+    "ID",
+    "REF",
+    "ALT",
+    "QUAL",
+    "FILTER",
+    "INFO",
+]
+VCF_SAMPLE_COLUMNS = ["FORMAT", "SAMPLE"]
 
 ##################################################
 # Gene annotation GTF file required columns

@@ -58,16 +58,7 @@ _RECORD_ID_RE = re.compile(RECORD_ID_PATTERN)
 
 
 def read_sample_sheet(path):
-    """Read the sample file, in either encoding, into records.
-
-    JSON is one object holding a ``samples`` list; a bare top-level array is not
-    accepted. The TSV is a flat encoding of the same schema, not a reduced one:
-    columns are the record keys, and each input is its own ``files.<key>`` column;
-    an empty cell omits the key. Each encoding only loads; the record checks
-    (non-empty REQUIRED_RECORD_KEYS, RECORD_ID_KEYS charset) run once on the loaded
-    records, so nothing downstream re-checks. ``sample_id`` and ``dataset_id`` reach
-    output paths, wildcards and TSV columns, so both are held to RECORD_ID_PATTERN:
-    no whitespace, no separator, no shell metacharacter. Spec: docs/sample_sheet.md.
+    """Read the sample file, spec: docs/sample_sheet.md.
 
     Args:
         path: Path to the sample file.
@@ -418,10 +409,10 @@ def parse_workflow(config):
         run_genotyping = False
 
     snp_panel = config["snp_panel"]
-    # NB: cellsnp-lite -R already genotypes at the panel's alleles
-    fix_panel_allele = bool(config["fix_panel_allele"]) and (
-        run_genotyping and workflow_mode == "bulk_genotyping"
-    )
+    # NB: only bulk calls with bcftools; cellsnp-lite genotypes from counts either way
+    apply_clonal_loh_hmm = bool(
+        config["params_genotype_snps"]["apply_clonal_loh_hmm"]
+    ) and (workflow_mode == "bulk_genotyping")
     genotype_files = None
     if run_genotyping:
         assert snp_panel, f"snp_panel is required for {workflow_mode}"
@@ -447,12 +438,13 @@ def parse_workflow(config):
             genotype_records = [
                 rec for rec in records if rec["dataset_id"] in set(genotype_dataset_ids)
             ]
+        want_sample_type = "tumor" if apply_clonal_loh_hmm else "normal"
         if len(genotype_records) == 0:
-            # selects first normal bulkWGS dataset to genotype.
+            # the first bulkWGS dataset of the preferred sample type
             genotype_records = sorted(
                 records,
                 key=lambda r: (
-                    r["sample_type"] != "normal",
+                    r["sample_type"] != want_sample_type,
                     GT_ASSAY_ORD.get(r["assay_type"], len(GT_ASSAY_ORD)),
                 ),
             )
@@ -462,26 +454,19 @@ def parse_workflow(config):
             genotype_records = genotype_records[:1]
         genotype_dataset_ids = [rec["dataset_id"] for rec in genotype_records]
         logging_snakemake(f"genotype_dataset_ids: {genotype_dataset_ids}")
-        non_normal = [
-            rec["dataset_id"]
-            for rec in genotype_records
-            if rec["sample_type"] != "normal"
-        ]
-        if non_normal:
-            logging_snakemake(
-                f"WARN: genotype_dataset_ids includes non-normal dataset(s) "
-                f"{non_normal}; germline SNPs may carry somatic signal"
+        if apply_clonal_loh_hmm:
+            # NB: the check is one-directional; genotyping a tumor without the HMM is fine
+            mismatched = [
+                rec["dataset_id"]
+                for rec in genotype_records
+                if rec["sample_type"] != "tumor"
+            ]
+            assert not mismatched, (
+                "apply_clonal_loh_hmm=True rescues het SNPs from a tumor's clonal LOH, "
+                f"but {mismatched} are not tumor; unset it or set genotype_dataset_ids"
             )
-        if workflow_mode == "bulk_genotyping" and len(non_normal) == len(
-            genotype_records
-        ):
-            if not fix_panel_allele:
-                logging_snakemake(
-                    "no matched normal to genotype: forcing "
-                    "fix_panel_allele, so ALT comes from snp_panel and a "
-                    "somatic allele cannot become the called ALT"
-                )
-            fix_panel_allele = True
+        if workflow_mode == "bulk_genotyping":
+            logging_snakemake(f"apply_clonal_loh_hmm={apply_clonal_loh_hmm}")
         genotype_files = [rec["files"] for rec in genotype_records]
 
     # === phasing check ===
@@ -670,7 +655,7 @@ def parse_workflow(config):
         "bench_dir": bench_dir,
         "input_segment_bed": input_segment_bed,
         "snp_panel": snp_panel,
-        "fix_panel_allele": fix_panel_allele,
+        "apply_clonal_loh_hmm": apply_clonal_loh_hmm,
         "reference": reference,
         "genome_size": genome_size,
         "gtf_file": gtf_file,

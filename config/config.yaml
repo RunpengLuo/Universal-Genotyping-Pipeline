@@ -59,12 +59,6 @@ params_build_windows:
 ##################################################
 # Genotyping
 snp_panel: null
-# true: bcftools is constrained to the panel's REF/ALT (`call -C alleles`), so reads
-# carrying any other allele are discarded and a site can only be genotyped as the panel
-# spells it. false: the panel gives positions only, REF comes from `reference` and ALT
-# from the reads. Forced true when no genotyped dataset is a matched normal.
-# bulk_genotyping only; cellsnp-lite already fixes the alleles.
-fix_panel_allele: true
 genotype_dataset_ids: []
 
 # bulk genotyping + bulk pileup (bcftools mpileup)
@@ -86,13 +80,30 @@ params_cellsnp_lite:
   minMAF_pileup: 0
   minCOUNT_pileup: 1
 
-# single-cell pseudobulk genotype annotation
-params_annotate_snps:
+# genotype from counts (single-cell pseudobulk) and the bulk clonal-LOH HMM
+params_genotype_snps:
+  apply_clonal_loh_hmm: false
+  min_dp: 10
+
+  # single-cell pseudobulk
   min_het_reads: 2
-  min_hom_dp: 10
   min_vaf_thres: 0.1
   filter_nz_OTH: false
   filter_hom_ALT: false
+
+  # bulk clonal-LOH HMM
+  hom_laf: 0.005
+  loh_laf: 0.05
+  pi_het: 0.5
+  breakpoint_rate: 1.0e-6
+  tau: null
+  n_retained: 5
+  n_iter: 10
+  em_tol: 1.0e-5
+  margin: 0.02
+  learn_pi: true
+  loh_min: 0.1
+  p_het_min: 0.1
 
 ##################################################
 # Phasing

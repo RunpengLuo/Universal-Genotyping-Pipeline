@@ -101,6 +101,9 @@ snp_panel: /path/to/snps.vcf.gz
 > [!TIP]
 > - If a set of confident germline (phased) Het SNPs already exist, user may specify the path via `het_snp_vcf` and set `het_snp_vcf_phased` to indicate if the VCF file is phased or not. This will skip the germline SNP genotyping (and haplotype phasing if `het_snp_vcf_phased=true`).
 > - For long-read datasets, set `params_bcftools.extra_params` to the matching bcftools mpileup platform preset so genotyping and pileup use the correct long-read error model: `-X ont-sup` (Oxford Nanopore) or `-X pacbio-ccs` (PacBio HiFi). Run `bcftools mpileup -X list` for all available profiles.
+> - If matched-normal samples are not exist, user can supply confident tumor samples in `genotype_dataset_ids`.
+> if the tumor samples are cell-lines with very high tumor purity, set `params_genotype_snps.apply_clonal_loh_hmm`
+> to genotype gHETs reliably from clonal LOH regions while filtering gHOMs at other regions.
 
 4. our pipeline supports various haplotype phasing softwares:
 - For short-read phasing via [Eagle2](https://github.com/poruloh/Eagle) (preferred) and [Shapeit5](https://github.com/odelaneau/shapeit), genetic map file (`gmap_path`, see [genetic-maps](../resources/README.md#genetic-maps)) and population haplotype panel (`phasing_panel`, see [population-haplotype-panels](../resources/README.md#population-haplotype-panels)) are required. 

@@ -129,6 +129,8 @@ def plot_1d_sample(
     mask: np.ndarray | None = None,
     mask_labels=("kept", "filtered"),
     mask_colors=("blue", "red"),
+    groups: np.ndarray | None = None,
+    group_colors: dict | None = None,
     sample_id: str | None = None,
     region_bed: str | None = None,
     blacklist_bed: str | None = None,
@@ -141,6 +143,10 @@ def plot_1d_sample(
 
     When *mask* is given, ``mask``-true points use ``mask_colors[0]``/``mask_labels[0]``
     and ``mask``-false points use ``mask_colors[1]``/``mask_labels[1]``, with a legend.
+    *groups* generalizes that to any number of classes: a per-point label array plus a
+    ``{label: color}`` map, whose insertion order is the legend order. Either way the
+    legend carries each class's point count, so classes may share a color and stay
+    countable.
     """
     logging.info(
         f"genome-wide {feature_label}-level {val_type} plot, out_file={out_file}"
@@ -160,17 +166,20 @@ def plot_1d_sample(
     fig, ax = plt.subplots(1, 1, figsize=figsize)
     _shade(ax, axis, region_df, blacklist_df)
 
-    if mask is not None:
+    if groups is None and mask is not None:
         mask = np.asarray(mask, dtype=bool)
-        hue = np.where(mask, mask_labels[0], mask_labels[1])
-        palette = {mask_labels[0]: mask_colors[0], mask_labels[1]: mask_colors[1]}
+        groups = np.where(mask, mask_labels[0], mask_labels[1])
+        group_colors = {mask_labels[0]: mask_colors[0], mask_labels[1]: mask_colors[1]}
+
+    if groups is not None:
+        groups = np.asarray(groups)
         plot_scatter_1d(
             ax,
-            pos_df.assign(_y=val, _hue=hue),
+            pos_df.assign(_y=val, _hue=groups),
             axis,
             "_y",
             hue="_hue",
-            palette=palette,
+            palette=dict(group_colors),
             alphas=np.full(len(pos_df), 0.8),
             markersize=s_plot,
             href=0.5 if is_frac else None,
@@ -179,26 +188,26 @@ def plot_1d_sample(
             mb_ticks=True,
             show_gaps=False,
         )
-        on, off = int((m & mask).sum()), int((m & ~mask).sum())
         handles = [
             Line2D(
                 [0],
                 [0],
                 marker="o",
                 linestyle="",
-                color=mask_colors[0],
-                label=f"{mask_labels[0]} ({on})",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                linestyle="",
-                color=mask_colors[1],
-                label=f"{mask_labels[1]} ({off})",
-            ),
+                color=color,
+                label=f"{label} ({int((m & (groups == label)).sum())})",
+            )
+            for label, color in group_colors.items()
         ]
-        ax.legend(handles=handles, loc="upper right", fontsize=8, markerscale=1)
+        ax.legend(
+            handles=handles,
+            loc="upper left",
+            bbox_to_anchor=(1.005, 1.0),
+            borderaxespad=0,
+            fontsize=8,
+            markerscale=1,
+            frameon=False,
+        )
     else:
         plot_scatter_1d(
             ax,

@@ -70,6 +70,9 @@ def test_bulk_rules(workspace):
     assert counts["pileup_snps_bulk_bcftools_chrom"] == 2
     assert counts["merge_pileup_counts"] == 2
     assert counts["run_mosdepth"] == 2
+    # the caller writes snps/raw/, post-processing writes the file phasing reads
+    assert counts["post_genotype_snps_bulk"] == 1
+    assert "raw/chr22.vcf.gz" in proc.stdout
     # genotyping targets the panel VCF and scopes the chromosome itself
     assert "--targets-file" in proc.stdout and "snp_panel.vcf.gz" in proc.stdout
     assert "--regions chr22" in proc.stdout

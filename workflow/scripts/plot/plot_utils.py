@@ -154,10 +154,11 @@ def _finish_page(fig, title, feature_label, out_file=None, dpi=72, pdf=None):
     fig.supxlabel(f"Genome positions (MB) - {feature_label}")
     fig.tight_layout()
     _suptitle(fig, title)
+    # NB: bbox_inches keeps artists drawn outside the axes, such as an offset legend
     if pdf is not None:
-        pdf.savefig(fig, dpi=dpi)
+        pdf.savefig(fig, dpi=dpi, bbox_inches="tight")
     else:
-        fig.savefig(out_file, dpi=dpi)
+        fig.savefig(out_file, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
 
 

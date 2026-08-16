@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from scipy.sparse import csr_matrix
 
-from io_utils import read_chunks_from_atac_fragments, read_gtf
+from io_utils import read_chunks_from_atac_fragments, read_GTF
 from segmentation_utils import sum_features_to_bbs
 from range_utils import (
     assign_pos_to_range_ovlp,
@@ -48,7 +48,7 @@ def annotate_feature_type(snps, gtf_file):
     (``intergenic`` when none), so gene membership is read back off it rather than
     assigned a second time. ``feature_type`` is exon > intron > intergenic.
     """
-    gtf = read_gtf(gtf_file, ("gene", "exon"))
+    gtf = read_GTF(gtf_file, ("gene", "exon"))
     snps, _ = assign_pos_to_range_ovlp(
         snps, gtf["gene"], ref_id="gene_id", out_col="feature_id", fillna="intergenic"
     )

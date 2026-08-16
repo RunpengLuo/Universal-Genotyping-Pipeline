@@ -9,6 +9,7 @@ Functions:
 - log_ratios: one masking step, as a count, a fraction and a span in Mbp
 - is_url: does a path name a remote input
 - maybe_path, check_local_path: coerce and validate an optional input path
+- maybe_list: one Snakemake input/output path or many, always a list
 - strip_chr_prefix, add_chr_prefix: convert between the two chromosome namings
 - chrom_sort_key, sort_chroms, sort_df_chr: genomic ordering of chromosomes
 """
@@ -189,6 +190,15 @@ def maybe_path(x):
     if x == [] or x is None:
         return None
     return x
+
+
+def maybe_list(x):
+    """Return *x* as a list, wrapping a lone path.
+
+    Snakemake hands a named input or output back as a str when the rule names one file
+    and as a list when it names several, so a script serving both shapes iterates this.
+    """
+    return [x] if isinstance(x, str) else list(x)
 
 
 def check_local_path(path, label):

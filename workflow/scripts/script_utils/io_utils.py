@@ -2,29 +2,38 @@
 
 Last update: 2026-08-12
 
-Functions:
-- read_VCF, read_BED, read_segment_bed: parse the coordinate inputs
-- read_gtf, read_genes_gtf_file: parse the gene annotation GTF
-- read_chrom_sizes, read_bedgraph, read_window_bed: parse the reference and bin inputs
-- read_mosdepth_bed: one dataset's per-window depth
-- read_allele_mat, read_snp_mats: allele matrices, dense bulk or sparse single-cell
-- read_barcodes, read_barcodes_by_dataset: the single-cell column axis
-- read_chunks_from_atac_fragments: stream a 10x fragment file in chunks
-- read_10x_ranger_scRNA, read_10x_ranger_spatial: Cell and Space Ranger matrices
-- read_bcftools_pileup_counts: a bcftools AD table as count matrices
-- write_snp_info, write_bb_file, write_sample_ids: the three output schemas
+Grouped by format, each block reading before writing:
+- Universal: read_chrom_sizes, symlink_files
+- GTF: read_GTF
+- VCF: read_VCF, write_VCF
+- BED: read_BED, read_segment_bed, read_window_bed, read_mosdepth_bed, read_bedgraph
+- Pipeline: read_bcftools_pileup_counts, read_allele_mat, read_snp_mats, read_barcodes,
+  read_barcodes_by_dataset, read_chunks_from_atac_fragments, read_10x_ranger_scRNA,
+  read_10x_ranger_spatial, write_snp_info, write_bb_file, write_sample_ids
 """
 
 import logging
 import os
+import subprocess
 import tempfile
 from collections import OrderedDict
 
 import pandas as pd
 import numpy as np
 
-from const import GTF_COLUMNS, RANGER_MATRIX_H5, RANGER_SPATIAL_DIR
+from const import (
+    GTF_COLUMNS,
+    RANGER_MATRIX_H5,
+    RANGER_SPATIAL_DIR,
+    VCF_COLUMNS,
+    VCF_SAMPLE_COLUMNS,
+)
 from utils import add_chr_prefix, log_ratios, sort_chroms, sort_df_chr
+
+
+# --------------------------------------------------------------------------
+# Universal
+# --------------------------------------------------------------------------
 
 
 def read_chrom_sizes(sz_file: str):
@@ -45,6 +54,86 @@ def read_chrom_sizes(sz_file: str):
     return chr_sizes
 
 
+def symlink_files(srcs, dsts):
+    """Point each destination at its source, as a relative symlink.
+
+    For a rule whose output is its input unchanged: linking keeps one copy of the bytes
+    and records the provenance in the link. Relative so the run directory stays movable,
+    and an existing destination is replaced so a rerun does not fail on it. The source
+    must outlive the link, so it may not be a ``temp()`` output.
+
+    Args:
+        srcs: Existing files, in destination order.
+        dsts: Paths to create.
+    """
+    assert len(srcs) == len(dsts), f"symlink_files: {len(srcs)} src for {len(dsts)} dst"
+    for src, dst in zip(srcs, dsts):
+        if os.path.lexists(dst):
+            os.remove(dst)
+        os.symlink(os.path.relpath(src, os.path.dirname(dst) or "."), dst)
+
+
+# --------------------------------------------------------------------------
+# GTF
+# --------------------------------------------------------------------------
+
+
+def read_GTF(gtf_file: str, feature_types=("gene",), id_col="gene_id"):
+    """Parse a GTF once and split it by feature type.
+
+    Contigs are chr-normalized and coordinates become 0-based half-open; genes are
+    deduplicated by their id.
+
+    Args:
+        gtf_file: Path to a GTF annotation file (optionally gzipped).
+        feature_types: Feature types to extract, e.g. ``("gene", "exon")``.
+        id_col: Name of the gene-id column in the output.
+
+    Returns:
+        ``{feature_type: DataFrame}`` with ``#CHR``, ``START``, ``END``, *id_col*.
+
+    Notes/References:
+        Format: https://genome.ucsc.edu/FAQ/FAQformat.html#format4
+    """
+    wanted = list(feature_types)
+    gtf = pd.read_csv(
+        gtf_file,
+        sep="\t",
+        comment="#",
+        header=None,
+        names=GTF_COLUMNS,
+        dtype={"seqname": str},
+        low_memory=False,
+    )
+    gtf = gtf.loc[
+        gtf["feature"].isin(wanted),
+        ["feature", "seqname", "start", "end", "attributes"],
+    ]
+    flat = pd.DataFrame(
+        {
+            "feature": gtf["feature"].values,
+            "#CHR": add_chr_prefix(gtf["seqname"]).values,
+            "START": gtf["start"].values - 1,  # GTF is 1-based -> 0-based
+            "END": gtf["end"].values,  # GTF end is inclusive -> half-open
+            id_col: gtf["attributes"]
+            .str.extract(r'gene_id "([^"]+)"', expand=False)
+            .values,
+        }
+    )
+    out = {}
+    for feature_type in wanted:
+        sub = flat.loc[flat["feature"] == feature_type].drop(columns="feature")
+        if feature_type == "gene":
+            sub = sub.drop_duplicates(id_col, keep="first")
+        out[feature_type] = sub.reset_index(drop=True)
+    return out
+
+
+# --------------------------------------------------------------------------
+# VCF
+# --------------------------------------------------------------------------
+
+
 def read_VCF(
     vcf_file: str,
     addchr=True,
@@ -52,6 +141,8 @@ def read_VCF(
     snps_presorted=False,
     add_pos0=False,
     add_phase1=False,
+    read_AD=False,
+    required_cols=[],
 ):
     """Read a VCF into a DataFrame, exploding its INFO and FORMAT fields into columns.
 
@@ -62,6 +153,10 @@ def read_VCF(
         snps_presorted: Skip the genomic sort.
         add_pos0: Add ``POS0`` (0-based).
         add_phase1: Add ``PHASE``, the second GT allele.
+        read_AD: Split the comma-joined ``AD`` into ``REF_COUNT`` and ``ALT_COUNT``, which
+            requires a bi-allelic single-sample VCF.
+        required_cols: Columns the caller needs, asserted once the INFO/FORMAT keys are
+            exploded; the frame may carry more.
 
     Returns:
         DataFrame with the 8 fixed VCF columns, ``#CHR``, ``RAW_SNP_DF_IDX`` and one
@@ -76,9 +171,9 @@ def read_VCF(
     assert ncols == 8 or ncols >= 10, (
         f"VCF file, expected 8 or >=10 columns, got {ncols}"
     )
-    colnames = ["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO"]
+    colnames = list(VCF_COLUMNS)
     if ncols >= 10:
-        colnames += ["FORMAT", "SAMPLE"]
+        colnames += VCF_SAMPLE_COLUMNS
         snps = snps.iloc[:, :10].copy()
     snps.columns = colnames
     snps["POS"] = snps["POS"].astype(np.int64)
@@ -146,96 +241,79 @@ def read_VCF(
         snps["POS0"] = snps["POS"] - 1
     if add_phase1:
         snps["PHASE"] = snps["GT"].str[2].astype(np.int8).to_numpy()
+    if read_AD:
+        allele_depths = snps["AD"].astype(str).str.split(",", expand=True)
+        assert allele_depths.shape[1] >= 2, (
+            f"{vcf_file}: FORMAT/AD must hold at least REF,ALT; got "
+            f"{allele_depths.shape[1]} field(s). bcftools call needs --keep-alts."
+        )
+        for name, field in (("REF_COUNT", 0), ("ALT_COUNT", 1)):
+            snps[name] = (
+                pd.to_numeric(allele_depths[field], errors="coerce")
+                .fillna(0)
+                .astype(np.int64)
+            )
     snps = snps.reset_index(drop=True)
+
+    missing = [c for c in required_cols if c not in snps.columns]
+    assert not missing, f"{vcf_file}: missing required VCF column(s) {missing}"
     return snps
 
 
-def read_bcftools_pileup_counts(tsv_file: str, parent_alt_by_key: dict):
-    """Read a bcftools per-locus AD table as pseudobulk depth/alt count matrices.
-
-    Counts the parent ALT allele only, looked up in the locus's own ALT list, so
-    ``DP = ref + alt`` and a downstream ``REF = DP - ALT`` is exact.
-
-    Args:
-        tsv_file: Path to the (optionally gzipped) counts TSV.
-        parent_alt_by_key: Parent ALT allele keyed by ``#CHROM_POS``.
-
-    Returns:
-        ``(snps, tot_mtx, ad_mtx)``: *snps* carries ``KEY`` (matching ``read_VCF``) and
-        ``RAW_SNP_DF_IDX`` (file row order); the matrices are ``(len(snps), 1)`` csr,
-        shaped for ``map_allele_mat_to_snps``.
-    """
-    from scipy.sparse import csr_matrix  # scipy is not a runner-env dependency
-
-    df = pd.read_csv(
-        tsv_file,
-        sep="\t",
-        header=None,
-        names=["#CHROM", "POS", "REF", "ALT", "AD"],
-        dtype={"#CHROM": "string", "REF": "string", "ALT": "string", "AD": "string"},
-    )
-    chrom = add_chr_prefix(df["#CHROM"]).str.replace("^chrMT$", "chrM", regex=True)
-    keys = chrom + "_" + df["POS"].astype(np.int64).astype(str)
-    alt_lists = df["ALT"].str.split(",")
-    ad_lists = df["AD"].str.split(",").apply(lambda xs: [int(x) for x in xs])
-    parent_alts = keys.map(parent_alt_by_key)
-
-    ref = np.array([ad[0] if ad else 0 for ad in ad_lists], dtype=np.int64)
-    alt = np.array(
-        [
-            ad[1 + alts.index(pa)] if pa in alts else 0
-            for ad, alts, pa in zip(ad_lists, alt_lists, parent_alts)
-        ],
-        dtype=np.int64,
-    )
-    snps = pd.DataFrame({"KEY": keys.to_numpy(), "RAW_SNP_DF_IDX": np.arange(len(df))})
-    # a csr built from a dense column drops the zeros itself
-    tot_mtx = csr_matrix((ref + alt).reshape(-1, 1))
-    ad_mtx = csr_matrix(alt.reshape(-1, 1))
-    return snps, tot_mtx, ad_mtx
+VCF_HEADER_LINES = [
+    "##fileformat=VCFv4.2\n",
+    '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n',
+    '##INFO=<ID=DP,Number=1,Type=Integer,Description="Total Depth, REF+ALT">\n',
+    '##INFO=<ID=AD,Number=1,Type=Integer,Description="Allele Depth for ALT allele">\n',
+    '##INFO=<ID=OTH,Number=1,Type=Integer,Description="Allele Depth other than REF and ALT">\n',
+]
 
 
-def read_allele_mat(npz_file, mat_dtype=None):
-    """Read one SNP-level allele matrix, dense or sparse, as it was written.
+def write_VCF(snps, out_file, chrname, chrom_length=None, create_index=True):
+    """Write one chromosome's genotyped SNPs as a bgzipped VCF.
 
-    Bulk writes a dense ``mat`` key, single-cell a ``scipy.sparse`` archive; the keys
-    tell them apart.
+    The counterpart of :func:`read_VCF` for the VCFs this pipeline writes itself: one
+    contig, one sample, ``GT`` in FORMAT and the ``DP``/``AD``/``OTH`` counts in INFO.
+    ``#CHROM`` is stamped with *chrname*, so the caller decides the contig spelling once
+    and the frame it passes need not carry it.
 
     Args:
-        npz_file: Path to the ``.npz``.
-        mat_dtype: Cast the matrix to this dtype; ``None`` keeps the stored one.
+        snps: Rows for this contig, carrying VCF_COLUMNS + VCF_SAMPLE_COLUMNS; may be
+            empty, which writes a header-only VCF.
+        out_file: Output path, ending ``.vcf.gz``.
+        chrname: Contig name to write, in the run's input spelling.
+        chrom_length: Contig length for the ``##contig`` header; omitted when None.
+        create_index: Also write the tabix index.
 
     Returns:
-        ``np.ndarray`` for a dense file, ``scipy.sparse.csr_matrix`` for a sparse one.
+        The DataFrame written.
     """
-    from scipy.sparse import load_npz  # scipy is not a runner-env dependency
+    assert out_file.endswith(".vcf.gz"), f"write_VCF: {out_file} is not a .vcf.gz"
+    cols = list(VCF_COLUMNS) + VCF_SAMPLE_COLUMNS
+    missing = [c for c in cols if c not in snps.columns]
+    assert not missing, f"VCF table, missing column(s) {missing}"
 
-    with np.load(npz_file) as npz:
-        is_dense = "mat" in npz.files
-        mat = npz["mat"] if is_dense else load_npz(npz_file)
-    return mat if mat_dtype is None else mat.astype(mat_dtype)
+    contig = f"##contig=<ID={chrname}"
+    contig += ">\n" if chrom_length is None else f",length={chrom_length}>\n"
+    out = snps[cols].copy()
+    out["#CHROM"] = chrname
+
+    plain_file = out_file[:-3]
+    with open(plain_file, "w") as fd:
+        fd.writelines(VCF_HEADER_LINES[:1] + [contig] + VCF_HEADER_LINES[1:])
+        fd.write("\t".join(cols) + "\n")
+        out.to_csv(fd, sep="\t", index=False, header=False)
+
+    # bgzip removes plain_file
+    subprocess.run(["bgzip", "-f", plain_file], check=True)
+    if create_index:
+        subprocess.run(["tabix", "-f", "-p", "vcf", out_file], check=True)
+    return out
 
 
-def read_snp_mats(snp_info_file, tot_file, a_file, b_file, mat_dtype=None):
-    """Read a SNP table and its T/A/B allele matrices, in file row order.
-
-    Args:
-        snp_info_file: ``snps.tsv.gz`` from phase_and_concat.
-        tot_file, a_file, b_file: the total / A-allele / B-allele ``.npz``.
-        mat_dtype: Cast the three matrices to this dtype; ``None`` keeps the stored one,
-            which for a sparse file avoids copying its ``data`` array.
-
-    Returns:
-        ``(snps, tot_mtx, a_mtx, b_mtx)``; the matrices are dense or sparse per
-        ``read_allele_mat``.
-    """
-    snps = pd.read_table(snp_info_file, sep="\t")
-    return (
-        snps,
-        read_allele_mat(tot_file, mat_dtype),
-        read_allele_mat(a_file, mat_dtype),
-        read_allele_mat(b_file, mat_dtype),
-    )
+# --------------------------------------------------------------------------
+# BED
+# --------------------------------------------------------------------------
 
 
 def read_BED(bed_file: str, addchr=True, col_id="region_id"):
@@ -372,6 +450,99 @@ def read_bedgraph(bg_file: str, chroms=None):
     return df.reset_index(drop=True)
 
 
+# --------------------------------------------------------------------------
+# Pipeline
+# --------------------------------------------------------------------------
+
+
+def read_bcftools_pileup_counts(tsv_file: str, parent_alt_by_key: dict):
+    """Read a bcftools per-locus AD table as pseudobulk depth/alt count matrices.
+
+    Counts the parent ALT allele only, looked up in the locus's own ALT list, so
+    ``DP = ref + alt`` and a downstream ``REF = DP - ALT`` is exact.
+
+    Args:
+        tsv_file: Path to the (optionally gzipped) counts TSV.
+        parent_alt_by_key: Parent ALT allele keyed by ``#CHROM_POS``.
+
+    Returns:
+        ``(snps, tot_mtx, ad_mtx)``: *snps* carries ``KEY`` (matching ``read_VCF``) and
+        ``RAW_SNP_DF_IDX`` (file row order); the matrices are ``(len(snps), 1)`` csr,
+        shaped for ``map_allele_mat_to_snps``.
+    """
+    from scipy.sparse import csr_matrix  # scipy is not a runner-env dependency
+
+    df = pd.read_csv(
+        tsv_file,
+        sep="\t",
+        header=None,
+        names=["#CHROM", "POS", "REF", "ALT", "AD"],
+        dtype={"#CHROM": "string", "REF": "string", "ALT": "string", "AD": "string"},
+    )
+    chrom = add_chr_prefix(df["#CHROM"]).str.replace("^chrMT$", "chrM", regex=True)
+    keys = chrom + "_" + df["POS"].astype(np.int64).astype(str)
+    alt_lists = df["ALT"].str.split(",")
+    ad_lists = df["AD"].str.split(",").apply(lambda xs: [int(x) for x in xs])
+    parent_alts = keys.map(parent_alt_by_key)
+
+    ref = np.array([ad[0] if ad else 0 for ad in ad_lists], dtype=np.int64)
+    alt = np.array(
+        [
+            ad[1 + alts.index(pa)] if pa in alts else 0
+            for ad, alts, pa in zip(ad_lists, alt_lists, parent_alts)
+        ],
+        dtype=np.int64,
+    )
+    snps = pd.DataFrame({"KEY": keys.to_numpy(), "RAW_SNP_DF_IDX": np.arange(len(df))})
+    # a csr built from a dense column drops the zeros itself
+    tot_mtx = csr_matrix((ref + alt).reshape(-1, 1))
+    ad_mtx = csr_matrix(alt.reshape(-1, 1))
+    return snps, tot_mtx, ad_mtx
+
+
+def read_allele_mat(npz_file, mat_dtype=None):
+    """Read one SNP-level allele matrix, dense or sparse, as it was written.
+
+    Bulk writes a dense ``mat`` key, single-cell a ``scipy.sparse`` archive; the keys
+    tell them apart.
+
+    Args:
+        npz_file: Path to the ``.npz``.
+        mat_dtype: Cast the matrix to this dtype; ``None`` keeps the stored one.
+
+    Returns:
+        ``np.ndarray`` for a dense file, ``scipy.sparse.csr_matrix`` for a sparse one.
+    """
+    from scipy.sparse import load_npz  # scipy is not a runner-env dependency
+
+    with np.load(npz_file) as npz:
+        is_dense = "mat" in npz.files
+        mat = npz["mat"] if is_dense else load_npz(npz_file)
+    return mat if mat_dtype is None else mat.astype(mat_dtype)
+
+
+def read_snp_mats(snp_info_file, tot_file, a_file, b_file, mat_dtype=None):
+    """Read a SNP table and its T/A/B allele matrices, in file row order.
+
+    Args:
+        snp_info_file: ``snps.tsv.gz`` from phase_and_concat.
+        tot_file, a_file, b_file: the total / A-allele / B-allele ``.npz``.
+        mat_dtype: Cast the three matrices to this dtype; ``None`` keeps the stored one,
+            which for a sparse file avoids copying its ``data`` array.
+
+    Returns:
+        ``(snps, tot_mtx, a_mtx, b_mtx)``; the matrices are dense or sparse per
+        ``read_allele_mat``.
+    """
+    snps = pd.read_table(snp_info_file, sep="\t")
+    return (
+        snps,
+        read_allele_mat(tot_file, mat_dtype),
+        read_allele_mat(a_file, mat_dtype),
+        read_allele_mat(b_file, mat_dtype),
+    )
+
+
 def read_barcodes(bc_file: str):
     """Read a barcode file, one barcode per line.
 
@@ -455,6 +626,25 @@ def read_chunks_from_atac_fragments(frag_file: str, chunksize=5_000_000):
     )
 
 
+def read_10x_ranger_scRNA(matrix_h5):
+    """Read one Cell Ranger gene-expression matrix into an AnnData.
+
+    Args:
+        matrix_h5: Path to ``filtered_feature_bc_matrix.h5``.
+
+    Returns:
+        AnnData of the gene-expression features only, with unique var_names.
+
+    Notes/References:
+        Format: https://www.10xgenomics.com/support/software/cell-ranger/latest/analysis/outputs/cr-outputs-h5-matrices
+    """
+    import scanpy as sc
+
+    adata = sc.read_10x_h5(matrix_h5, gex_only=True)
+    adata.var_names_make_unique()
+    return adata
+
+
 def read_10x_ranger_spatial(
     matrix_h5, names, paths, library_id, assay_type, load_images=True
 ):
@@ -500,89 +690,62 @@ def read_10x_ranger_spatial(
     return adata
 
 
-def read_10x_ranger_scRNA(matrix_h5):
-    """Read one Cell Ranger gene-expression matrix into an AnnData.
+def write_snp_info(
+    snps: pd.DataFrame,
+    out_file: str,
+):
+    """Write the SNP feature axis of the allele matrices.
+
+    ``PS`` (the phaser's phase-set label, which becomes the binning phase clusters) and
+    ``seg_id`` are carried only when present.
 
     Args:
-        matrix_h5: Path to ``filtered_feature_bc_matrix.h5``.
+        snps: Filtered SNPs, in matrix-feature order.
+        out_file: Output TSV path.
 
     Returns:
-        AnnData of the gene-expression features only, with unique var_names.
-
-    Notes/References:
-        Format: https://www.10xgenomics.com/support/software/cell-ranger/latest/analysis/outputs/cr-outputs-h5-matrices
+        The DataFrame written.
     """
-    import scanpy as sc
+    snp_cols = ["#CHR", "POS", "POS0", "START", "END", "GT", "PHASE"]
+    # upstream phaser's phaseset label
+    if "PS" in snps.columns:
+        snp_cols.append("PS")
+    logging.info(f"phase set (PS) column carried: {'PS' in snps.columns}")
 
-    adata = sc.read_10x_h5(matrix_h5, gex_only=True)
-    adata.var_names_make_unique()
-    return adata
+    snp_cols += ["region_id"]
+    if "seg_id" in snps.columns:
+        snp_cols.append("seg_id")
+    snp_cols += ["feature_id", "feature_type"]
+    snp_info = snps[snp_cols]
+    snp_info.to_csv(out_file, sep="\t", header=True, index=False)
+    return snp_info
 
 
-def read_gtf(gtf_file: str, feature_types):
-    """Parse a GTF once and split it by feature type.
+def write_bb_file(bbs: pd.DataFrame, out_file: str):
+    """Write ``bb.tsv.gz``, the feature axis of every bb matrix.
 
-    Contigs are chr-normalized and coordinates become 0-based half-open; genes are
-    deduplicated by ``gene_id``.
+    The three coordinate columns are required and the optional ones are written when
+    present, so one schema covers all three modes; the binning internals (``bb_id``,
+    ``BLOCKSIZE``, ``seg_id``, ``PS``, the cluster keys) are dropped.
 
     Args:
-        gtf_file: Path to a GTF annotation file (optionally gzipped).
-        feature_types: Feature types to extract, e.g. ``("gene", "exon")``.
+        bbs: bbs carrying at least ``#CHR``, ``START``, ``END``.
+        out_file: Output TSV path; ``.gz`` is compressed by pandas.
 
     Returns:
-        ``{feature_type: DataFrame}`` with ``#CHR``, ``START``, ``END``, ``gene_id``.
-
-    Notes/References:
-        Format: https://genome.ucsc.edu/FAQ/FAQformat.html#format4
+        The DataFrame written.
     """
-    wanted = list(feature_types)
-    gtf = pd.read_csv(
-        gtf_file,
-        sep="\t",
-        comment="#",
-        header=None,
-        names=GTF_COLUMNS,
-        dtype={"seqname": str},
-        low_memory=False,
-    )
-    gtf = gtf.loc[
-        gtf["feature"].isin(wanted),
-        ["feature", "seqname", "start", "end", "attributes"],
+    bb_cols = ["#CHR", "START", "END"]
+    missing = [c for c in bb_cols if c not in bbs.columns]
+    assert not missing, f"bb table, missing column(s) {missing}"
+    bb_cols += [
+        c
+        for c in ("#SNPS", "region_id", "switchprobs", "feature_id", "#feature")
+        if c in bbs.columns
     ]
-    flat = pd.DataFrame(
-        {
-            "feature": gtf["feature"].values,
-            "#CHR": add_chr_prefix(gtf["seqname"]).values,
-            "START": gtf["start"].values - 1,  # GTF is 1-based -> 0-based
-            "END": gtf["end"].values,  # GTF end is inclusive -> half-open
-            "gene_id": gtf["attributes"]
-            .str.extract(r'gene_id "([^"]+)"', expand=False)
-            .values,
-        }
-    )
-    out = {}
-    for feature_type in wanted:
-        sub = flat.loc[flat["feature"] == feature_type].drop(columns="feature")
-        if feature_type == "gene":
-            sub = sub.drop_duplicates("gene_id", keep="first")
-        out[feature_type] = sub.reset_index(drop=True)
-    return out
-
-
-def read_genes_gtf_file(gtf_file: str, id_col="gene_ids"):
-    """Gene-level GTF records with 0-based coordinates, deduplicated by gene.
-
-    Args:
-        gtf_file: Path to a GTF annotation file.
-        id_col: Column name for the gene identifier in the output.
-
-    Returns:
-        DataFrame with ``#CHR``, ``START`` (0-based), ``END``, and *id_col*.
-    """
-    genes = read_gtf(gtf_file, ("gene",))["gene"]
-    if id_col != "gene_id":
-        genes = genes.rename(columns={"gene_id": id_col})
-    return genes
+    bb_out = bbs[bb_cols]
+    bb_out.to_csv(out_file, sep="\t", header=True, index=False)
+    return bb_out
 
 
 def write_sample_ids(
@@ -631,61 +794,3 @@ def write_sample_ids(
     sample_df = pd.DataFrame(sample_dict)
     sample_df.to_csv(out_file, sep="\t", header=True, index=False)
     return sample_df
-
-
-def write_bb_file(bbs: pd.DataFrame, out_file: str):
-    """Write ``bb.tsv.gz``, the feature axis of every bb matrix.
-
-    The three coordinate columns are required and the optional ones are written when
-    present, so one schema covers all three modes; the binning internals (``bb_id``,
-    ``BLOCKSIZE``, ``seg_id``, ``PS``, the cluster keys) are dropped.
-
-    Args:
-        bbs: bbs carrying at least ``#CHR``, ``START``, ``END``.
-        out_file: Output TSV path; ``.gz`` is compressed by pandas.
-
-    Returns:
-        The DataFrame written.
-    """
-    bb_cols = ["#CHR", "START", "END"]
-    missing = [c for c in bb_cols if c not in bbs.columns]
-    assert not missing, f"bb table, missing column(s) {missing}"
-    bb_cols += [
-        c
-        for c in ("#SNPS", "region_id", "switchprobs", "feature_id", "#feature")
-        if c in bbs.columns
-    ]
-    bb_out = bbs[bb_cols]
-    bb_out.to_csv(out_file, sep="\t", header=True, index=False)
-    return bb_out
-
-
-def write_snp_info(
-    snps: pd.DataFrame,
-    out_file: str,
-):
-    """Write the SNP feature axis of the allele matrices.
-
-    ``PS`` (the phaser's phase-set label, which becomes the binning phase clusters) and
-    ``seg_id`` are carried only when present.
-
-    Args:
-        snps: Filtered SNPs, in matrix-feature order.
-        out_file: Output TSV path.
-
-    Returns:
-        The DataFrame written.
-    """
-    snp_cols = ["#CHR", "POS", "POS0", "START", "END", "GT", "PHASE"]
-    # upstream phaser's phaseset label
-    if "PS" in snps.columns:
-        snp_cols.append("PS")
-    logging.info(f"phase set (PS) column carried: {'PS' in snps.columns}")
-
-    snp_cols += ["region_id"]
-    if "seg_id" in snps.columns:
-        snp_cols.append("seg_id")
-    snp_cols += ["feature_id", "feature_type"]
-    snp_info = snps[snp_cols]
-    snp_info.to_csv(out_file, sep="\t", header=True, index=False)
-    return snp_info

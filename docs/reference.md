@@ -4,6 +4,8 @@
 - [Environments](#environments)
 - [Configuration](#configuration)
   - [Input Data](#input-data)
+    - [Run settings](#run-settings)
+    - [File paths](#file-paths)
   - [Parameters](#parameters)
 - [Outputs](#outputs)
   - [Genomic unit levels](#genomic-unit-levels)
@@ -36,33 +38,40 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 
 ### Input Data
 
+#### Run settings
+
 | Key | Required | Description |
 |-----|----------|-------------|
 | `workflow_mode` | Yes | `bulk_genotyping` \| `single_cell_genotyping` \| `copytyping_preprocess`. |
 | `assay_types` | Yes | Assay types to run, e.g. `["bulkWGS"]`, `["scRNA","scATAC"]`. |
 | `sample_id` | Yes | Which `sample_id` of the sample file to process. |
-| `sample_file` | Yes | Path to `samples.json`. |
 | `chromosomes` | Yes | Chromosomes to run; default `[1..22]`. |
-| `remote_mode` | Optional | Remote input handling: `storage` (default; download whole file via Snakemake storage) or `stream` (read URLs directly, fetching only `chromosomes`). |
 | `species` | Yes | `human` (default) or `mouse`. |
 | `reference_version` | Yes | Reference version to select samples. See [Reference version](sample_sheet.md#reference-version). |
+| `remote_mode` | Optional | Remote input handling: `storage` (default; download whole file via Snakemake storage) or `stream` (read URLs directly, fetching only `chromosomes`). |
+| `genotype_dataset_ids` | Optional | `dataset_id`s piled up to call germline SNPs. Empty -> auto (normal before tumor, short-read before long-read). >1 are pooled in one `mpileup` and must share an `@RG SM` tag. |
+| `phase_dataset_ids` | Optional | Datasets used for long-read phasing inputs. |
+| `phaser` | Genotyping | `eagle` \| `shapeit` \| `longphase`. |
+| `het_snp_vcf_phased` | Optional | Default `true`: the input `het_snp_vcf` is phased or not. |
+
+#### File paths
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `sample_file` | Yes | Path to `samples.json`. |
 | `reference` | Yes | Genome FASTA. |
 | `genome_size` | Yes | Two-column `chrom\tsize` genome size file. |
+| `gtf_file` | Yes | Gene annotation GTF (gzipped). |
 | `region_bed` | Yes | BED file listing whitelist chromosome arms. Column 4 (BED NAME), when present, is the `region_id`; a BED3 gets `CHR:START-END`. |
 | `segment_bed` | Optional | BED file listing genomic segments separated by novel adjacency. Column 4 (BED NAME), when present, is the `seg_id`; a BED3 gets `CHR:START-END`. Unset -> `region_bed`, one segment per arm. |
 | `window_bed` | Optional | Pre-built window BED with read depth covariates. [pre-built](`resources/data/windows.1kbp.{hg19,hg38,chm13v2}.bed.gz`). |
-| `gtf_file` | Yes | Gene annotation GTF (gzipped). |
 | `mappability_bed` | Optional | BED mappability track (4th column = score). |
 | `blacklist_bed` | Optional | ENCODE-style blacklist; pre-built at `resources/data/hg38-blacklist.v2.bed.gz`. |
 | `gene_blacklist_file` | Optional | Genes to exclude from AnnData (single-cell). |
 | `snp_panel` | Genotyping | Population SNP VCF, bgzipped and indexed (`.vcf.gz` + `.tbi`/`.csi`). Bulk passes it to `bcftools mpileup -T` (positions only, panel alleles ignored); single-cell to `cellsnp-lite -R`. |
-| `phaser` | Genotyping | `eagle` \| `shapeit` \| `longphase`. |
 | `phasing_panel` | eagle/shapeit | Per-chromosome BCF reference panel directory. |
 | `gmap_path` | eagle/shapeit | Genetic map; `{chrname}` placeholder for per-chromosome maps (SHAPEIT5), literal path for a single map (Eagle2). |
-| `genotype_dataset_ids` | Optional | `dataset_id`s piled up to call germline SNPs. Empty -> auto (normal before tumor, short-read before long-read). >1 are pooled in one `mpileup` and must share an `@RG SM` tag. |
-| `phase_dataset_ids` | Optional | datasets used for long-read phasing inputs |
 | `het_snp_vcf` | Optional; required for `copytyping_preprocess` | Pre-computed gHET VCF. |
-| `het_snp_vcf_phased` | Optional | Default `true`: the input `het_snp_vcf` is phased or not. |
 | `bb_file` | copytyping_preprocess | Pre-computed bb annotations TSV. |
 
 > [!IMPORTANT]
@@ -113,17 +122,46 @@ Used by `genotype_snps_pseudobulk_mode1b`, `pileup_snps_*` (single-cell).
 | `minMAF_pileup` | Minimum minor-allele frequency when piling up. |
 | `minCOUNT_pileup` | Minimum aggregate count when piling up. |
 
-#### `params_annotate_snps`
-Used by `genotype_snps_no_normal` (single-cell), which genotypes from read counts because
-no matched normal exists to call against.
+#### `params_genotype_snps`
+Genotyping from allele counts, in both modes.
+
+| Field | Description |
+|---|---|
+| `apply_clonal_loh_hmm` | Bulk only. Default `false`. Set `true` for a high-purity tumor: every callable panel site is kept and re-genotyped by the clonal-LOH HMM below. Every genotyped dataset must then be `sample_type: tumor`. |
+| `min_dp` | Depth floor; below it a site is not called, in either mode. |
+
+##### Single-cell, `post_genotype_snps_nonbulk`
+
+No matched normal exists, so genotype comes from the summed pseudobulk counts.
 
 | Field | Description |
 |---|---|
 | `min_het_reads` | Minimum reads on *each* allele for a het call. |
-| `min_hom_dp` | Minimum depth for a hom call. |
 | `min_vaf_thres` | Het VAF must lie in `[min_vaf_thres, 1 - min_vaf_thres]`. |
 | `filter_nz_OTH` | Drop SNPs with non-zero OTH (non-ref, non-alt) counts. |
 | `filter_hom_ALT` | Drop hom-ALT SNPs. |
+
+##### Bulk, `post_genotype_snps_bulk` under `apply_clonal_loh_hmm`
+
+For a high-purity tumor sample, under clonal LOH, a gHET loses one haplotype and behaves like a gHOM. We use a clonal LOH HMM to re-genotype germline SNPs by a latent markov LOH-state and genotype chain fitted over chromosome arms. See `workflow/scripts/script_utils/genotype_loh_hmm.py`.
+
+| Field | Description |
+|---|---|
+| `hom_laf` | MAF of a gHOM: sequencing and mapping error. |
+| `loh_laf` | MAF of a gHET inside clonal LOH, roughly `(1 - purity) / (2 - purity)`. |
+| `pi_het` | gHET prior; only the EM starting point while `learn_pi` is on. |
+| `learn_pi` | Re-estimate `pi_het` by EM each iteration. On by default. |
+| `breakpoint_rate` | Poisson breakpoints per bp; `1e-6` is a mean segment of 1 Mb. |
+| `tau` | Beta-binomial concentration; `null` is the binomial. |
+| `n_retained` | Non-LOH states beyond the pinned clonal LOH state. |
+| `n_iter` | Maximum EM iterations. |
+| `em_tol` | Relative log-likelihood gain below which EM stops. |
+| `margin` | Minimum separation of a learned level from `loh_laf`. |
+| `loh_min` | Keep `0/1` where `P(LOH segment)` reaches this. Lower protects more; `1.1` disables the fallback. |
+| `p_het_min` | Keep `0/1` where `P(gHET)` reaches this. |
+
+> [!IMPORTANT]
+> If tumor purity is known, one can set `loh_laf` according to `(1 - purity) / (2 - purity)`.
 
 #### `params_longphase`
 Used by `phase_snps_longphase`.
@@ -237,9 +275,9 @@ Set in `config.yaml`, relative to `snakemake --directory`:
 | `allele_dir` | `allele` | The SNP grid and its allele matrices. |
 | `bb_dir` | `bb` | The bbs and their matrices. |
 | `qc_dir` | `qc` | One multi-page PDF per rule. |
-| `log_dir` | `logs` | `{rule}/...`, one log per job. |
+| `log_dir` | `logs` | One log per job. A rule that fans out (per chromosome, dataset or assay) groups its jobs under `{stage}/`; a rule that runs once writes `{rule}.{run_id}.log` at the top level. |
 | `aux_dir` | `aux` | Segment BED, window BED, Repli-seq tracks. |
-| `bench_dir` | `benchmarks` | `{rule}/...`, runtime and `max_rss` per job. |
+| `bench_dir` | `benchmarks` | Runtime and `max_rss` per job, laid out exactly like `log_dir`. |
 
 ### Genomic unit levels
 
@@ -296,7 +334,8 @@ columns are cells.
 
 | Path | Contents |
 |---|---|
-| `snp_dir/chr{chrname}.vcf.gz` | Bi-allelic SNPs. |
+| `snp_dir/raw/chr{chrname}.vcf.gz` | Bulk: the caller's own output, before `post_genotype_snps_bulk`. |
+| `snp_dir/chr{chrname}.vcf.gz` | Bi-allelic SNPs, what phasing reads. |
 | `snp_dir/pseudobulk_{modality}/` | cellsnp-lite pseudobulk output. |
 | `phase_dir/chr{chrname}.vcf.gz` | Phased SNPs, concatenated to `phased_het_snps.vcf.gz`. |
 | `phase_dir/genetic_map.tsv.gz` | Parsed genetic map (eagle/shapeit). |
@@ -305,6 +344,7 @@ columns are cells.
 | `pileup_dir/bulk/window.dp.npz` | Corrected depth, windows x every bulk dataset. |
 | `allele_dir/` | `snps.tsv.gz`, `snp.{T,A,B}allele.npz`, `sample_ids.tsv`, `barcodes.tsv.gz`. |
 | `bb_dir/{assay_type}.h5ad` | Gene x cell AnnData (scRNA / spatial). |
+| `aux_dir/clonal_loh_hmm.{segments,params}.tsv` | The fitted chain; header-only when the HMM did not run. |
 | `aux_dir/segment.bed` | Arm-stamped segments, blacklist subtracted. |
 | `aux_dir/windows.bed.gz` | The shared window BED. |
 | `aux_dir/repliseq/` | Repli-seq tracks, lifted from hg19 when the run is not hg19. |
@@ -318,6 +358,8 @@ columns are cells.
 | `sample_ids.tsv` | `SAMPLE sample_id dataset_id sample_type assay_type`; bulk adds `rdr_base_dataset_id`. |
 | `germline_snp_statistics.tsv` | Per chromosome: het_phased, het_unphased, hom_alt, hom_ref. |
 | `depth_statistics.tsv` | Per-dataset depth summary, every bulk dataset in one table. |
+| `clonal_loh_hmm.segments.tsv` | `#CHR START END state b_s n_snps n_het mean_maf`; the Viterbi path as intervals, one row per run of constant state within an arm. `state` 0 is clonal LOH, `b_s` its fitted het MAF. |
+| `clonal_loh_hmm.params.tsv` | `means pi loglik n_iter converged n_sites n_arms n_segments`; one row describing the fit. |
 
 > [!NOTE]
 > - `PHASE`: 0 = the B-allele is ALT, 1 = the B-allele is REF.

@@ -215,6 +215,8 @@ def plot_allele_freqs(
     cell_dataset_ids=None,
     name_prefix="",
     sample_id=None,
+    snp_groups=None,
+    group_colors=None,
 ):
     """Generate genome-wide allele-frequency scatter plots.
 
@@ -274,6 +276,8 @@ def plot_allele_freqs(
             feature_label=feature_label,
             val_type=val_type,
             mask=snp_mask,
+            groups=snp_groups,
+            group_colors=group_colors,
             sample_id=sample_id,
             region_bed=region_bed,
             blacklist_bed=blacklist_bed,
