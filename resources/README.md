@@ -59,9 +59,11 @@ zcat GCF_009914755.1_T2T-CHM13v2.0_genomic.gtf.gz \
 > [!NOTE]
 > - Columns are `#CHR START END region_id seg_id GC [MAP] [REPLI]`. The grids are tiled from
 >   the bundled `region_bed` with the ENCODE blacklist subtracted, one segment per arm, so
->   they pair with an unset `segment_bed`.
-> - Set one via `window_bed`; its `region_id`/`seg_id` are taken as the `segment_bed` ids and
->   neither those nor the segment bounds are re-checked. See
+>   they pair with an unset `extremity_tsv`. `region_id` is the `region_bed` arm label,
+>   `seg_id` is `{region_id}#{START}-{END}`.
+> - Set one via `window_bed`; its `region_id`/`seg_id` are taken as the `aux/segment.bed` ids
+>   and neither those nor the segment bounds are re-checked. A run with `extremity_tsv` set
+>   ignores it and re-tiles, since these grids cross the cuts. See
 >   [reference.md](../docs/reference.md#configuration).
 > - Leave `window_bed` unset and the pipeline builds its own grid at
 >   `params_build_windows.window_size`, in every workflow mode.
