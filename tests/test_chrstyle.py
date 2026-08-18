@@ -6,7 +6,7 @@ Last update: 2026-08-06
 Covers:
 - chr-prefixed genome: region strings keep the prefix
 - bare-contig genome: the prefix is dropped at the boundary sites
-- segment_bed: read in one style whichever the file uses
+- segment.bed and extremity_tsv: read in one style whichever the file uses
 """
 
 import os
@@ -84,3 +84,22 @@ def test_segment_bed_is_read_in_one_style(tmp_path, style):
     tiled = regions[regions["#CHR"].isin(chroms)]
     assert len(tiled) == 1, f"{style}: segment BED row was filtered out"
     assert set(regions["#CHR"]) == {"chr22"}, "internal frames are chr-prefixed"
+
+
+@pytest.mark.parametrize("style", ["chr22", "22"])
+def test_extremity_tsv_is_read_in_one_style(tmp_path, style):
+    """The cut positions must be chr-prefixed like the arms they cut."""
+    ext = tmp_path / "extremity.tsv"
+    ext.write_text(f"EID\t#CHR\tPOS0\tVAF\ne0\t{style}\t500\t0.5\n")
+    df = io_utils.read_extremity_tsv(str(ext))
+    assert list(df.columns) == ["#CHR", "POS0"]
+    assert set(df["#CHR"]) == {"chr22"}, "internal frames are chr-prefixed"
+    assert df["POS0"].tolist() == [500]
+
+
+def test_extremity_tsv_accepts_a_one_based_pos(tmp_path):
+    """A caller emitting 1-based `POS` is converted, not rejected."""
+    ext = tmp_path / "extremity.tsv"
+    ext.write_text("#CHR\tPOS\nchr22\t501\nchr22\t501\n")
+    df = io_utils.read_extremity_tsv(str(ext))
+    assert df["POS0"].tolist() == [500], "1-based POS -> POS0, duplicates dropped"

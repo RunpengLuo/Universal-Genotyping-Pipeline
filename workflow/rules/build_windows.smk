@@ -3,23 +3,23 @@
 Last update: 2026-08-11
 
 Rules:
-- build_segment_bed: arm-stamped, blacklist-subtracted segments
+- build_segment_bed: arms cut at the SV extremities, blacklist-subtracted
 - [optional] repliseq_bigwig_to_bedgraph: fetch one ENCODE Repli-seq bigWig
 - [optional] repliseq_liftover: lift an hg19 Repli-seq bedGraph to the run build
 - [optional] build_window_bed: tile the segments, annotate GC, MAP, REPLI
 - window_bed_to_3bed: headerless 3-column BED for mosdepth --by
 Globals:
-- input_segment_bed: the configured segmentation, region_bed when unset
+- extremity_tsv: the configured SV breakpoints, empty when unset
 - segment_bed, window_bed: paths, built or configured
 - build_windows, do_repliseq, window_size: build switches and the tile size
 """
 
 
 rule build_segment_bed:
-    """Stamp each segment with its arm, subtract the blacklist."""
+    """Cut the arms at the SV extremities, subtract the blacklist."""
     input:
-        segments=input_segment_bed,
         region_bed=region_bed,
+        extremity_tsv=extremity_tsv,
         blacklist_bed=blacklist_bed,
     output:
         segment_bed=segment_bed,

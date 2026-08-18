@@ -107,7 +107,7 @@ if _has_config:
     bb_file = _wf["bb_file"]
 
     # === segment and window BEDs ===
-    input_segment_bed = _wf["input_segment_bed"]
+    extremity_tsv = _wf["extremity_tsv"]
     segment_bed = _wf["segment_bed"]
     window_bed = _wf["window_bed"]
     window_size = _wf["window_size"]

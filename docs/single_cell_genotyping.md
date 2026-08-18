@@ -80,12 +80,16 @@ reference_version: hg38
 reference: /path/to/reference.fasta
 genome_size: resources/data/hg38.chrom.sizes
 region_bed: resources/data/hg38.regions.bed
+extremity_tsv: null
 gtf_file: /path/to/gencode.v38.annotation.gtf.gz
 gene_blacklist_file: resources/data/ig_gene_list.txt
 ```
 
 > [!TIP]
-> User may specify path via `segment_bed` listing genomic segments segmented by upstream SV breakpoints, and `window_bed` will avoid to segment across different genomic segments.
+> User may specify path via `extremity_tsv`, a headered TSV of upstream SV breakpoints
+> (`#CHR` and `POS0`). Each breakpoint cuts the arm holding it, so no window and no bb
+> spans an SV junction. Setting it ignores any pre-built `window_bed`, since the grid is
+> re-tiled from the cut segments.
 
 3. specify the population SNP panel (`snp_panel`) for germline SNP genotyping. Unlike bulk mode, single-cell genotyping piles up a pseudobulk of all datasets of a modality with [cellsnp-lite](https://cellsnp-lite.readthedocs.io/en/latest/) over `snp_panel`. See [snp-panels](../resources/README.md#snp-panels) for details.
 

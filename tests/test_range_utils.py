@@ -423,3 +423,93 @@ def test_trim_range_rejects_degenerate_ranges():
     ref = pd.DataFrame({"#CHR": ["chr1"], "START": [0], "END": [10]})
     with pytest.raises(AssertionError):
         iv.trim_range_by_range(bad, ref)
+
+
+# --- split_range_at_pos: cut at SV extremities -----------------------------------
+
+
+def _p(rows):
+    """Cut positions from (chrom, pos0) tuples."""
+    return pd.DataFrame(rows, columns=["#CHR", "POS0"])
+
+
+@pytest.mark.parametrize(
+    "qry,pos,want",
+    [
+        # one interior cut -> two pieces, no base lost
+        ([("chr1", 0, 100)], [("chr1", 40)], [(0, 40), (40, 100)]),
+        # two cuts -> three pieces
+        (
+            [("chr1", 0, 100)],
+            [("chr1", 20), ("chr1", 70)],
+            [(0, 20), (20, 70), (70, 100)],
+        ),
+        # unsorted input positions cut the same way
+        (
+            [("chr1", 0, 100)],
+            [("chr1", 70), ("chr1", 20)],
+            [(0, 20), (20, 70), (70, 100)],
+        ),
+        # a repeated position cuts once
+        ([("chr1", 0, 100)], [("chr1", 40), ("chr1", 40)], [(0, 40), (40, 100)]),
+        # on START: no-op, the position is already a bound
+        ([("chr1", 0, 100)], [("chr1", 0)], [(0, 100)]),
+        # on END: no-op, END is outside the half-open range
+        ([("chr1", 0, 100)], [("chr1", 100)], [(0, 100)]),
+        # the last base is inside, so it cuts
+        ([("chr1", 0, 100)], [("chr1", 99)], [(0, 99), (99, 100)]),
+        # outside every range: no-op
+        ([("chr1", 0, 100)], [("chr1", 150)], [(0, 100)]),
+        # a contig the ranges never mention: no-op
+        ([("chr1", 0, 100)], [("chr9", 40)], [(0, 100)]),
+        # each range is cut independently
+        (
+            [("chr1", 0, 100), ("chr2", 0, 100)],
+            [("chr1", 40)],
+            [(0, 40), (40, 100), (0, 100)],
+        ),
+    ],
+)
+def test_split_range_cases(qry, pos, want):
+    """A cut lands on a bound, so pieces tile the input range exactly."""
+    out = iv.split_range_at_pos(_q(qry), _p(pos))
+    assert list(zip(out["START"], out["END"])) == want
+
+
+def test_split_range_carries_every_column_and_order():
+    """Any non-coordinate column rides along onto each piece, input order kept."""
+    q = pd.DataFrame(
+        {
+            "#CHR": ["chr1", "chr1"],
+            "START": [0, 100],
+            "END": [100, 200],
+            "region_id": ["1p", "1q"],
+        }
+    )
+    out = iv.split_range_at_pos(q, _p([("chr1", 40)]))
+    assert list(out.columns) == list(q.columns)
+    assert out["region_id"].tolist() == ["1p", "1p", "1q"]
+    assert list(zip(out["START"], out["END"])) == [(0, 40), (40, 100), (100, 200)]
+
+
+def test_split_range_empty_positions_is_identity():
+    """No cut positions means the ranges pass through."""
+    q = _q([("chr1", 0, 100), ("chr2", 0, 50)])
+    empty = pd.DataFrame({"#CHR": [], "POS0": []})
+    out = iv.split_range_at_pos(q, empty)
+    assert len(out) == 2 and out["END"].tolist() == [100, 50]
+
+
+def test_split_range_rejects_one_based_pos_col():
+    """`POS` is 1-based; the module takes `POS0` only."""
+    q = _q([("chr1", 0, 100)])
+    pos = pd.DataFrame({"#CHR": ["chr1"], "POS": [40]})
+    with pytest.raises(AssertionError):
+        iv.split_range_at_pos(q, pos, pos_col="POS")
+
+
+def test_split_range_rejects_degenerate_ranges():
+    """The module's 0-based half-open invariant applies here too."""
+    bad = _q([("chr1", 50, 50)])
+    with pytest.raises(AssertionError):
+        iv.split_range_at_pos(bad, _p([("chr1", 40)]))

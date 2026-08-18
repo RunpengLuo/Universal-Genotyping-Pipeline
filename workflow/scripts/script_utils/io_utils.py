@@ -6,7 +6,8 @@ Grouped by format, each block reading before writing:
 - Universal: read_chrom_sizes, symlink_files
 - GTF: read_GTF
 - VCF: read_VCF, write_VCF
-- BED: read_BED, read_segment_bed, read_window_bed, read_mosdepth_bed, read_bedgraph
+- BED: read_BED, read_segment_bed, read_window_bed, read_mosdepth_bed, read_bedgraph,
+  read_extremity_tsv
 - Pipeline: read_bcftools_pileup_counts, read_allele_mat, read_snp_mats, read_barcodes,
   read_barcodes_by_dataset, read_chunks_from_atac_fragments, read_10x_ranger_scRNA,
   read_10x_ranger_spatial, write_snp_info, write_bb_file, write_sample_ids
@@ -448,6 +449,39 @@ def read_bedgraph(bg_file: str, chroms=None):
     if chroms is not None:
         df = df[df["#CHR"].isin(chroms)]
     return df.reset_index(drop=True)
+
+
+def read_extremity_tsv(ext_file: str, chroms=None):
+    """Read an SV-extremity file: a headered TSV, one breakpoint per row.
+
+    Only the contig and the breakpoint position are read; any other column an upstream
+    caller writes (event id, support counts, VAF) is ignored. The position is taken from
+    ``POS0`` when the file has one, else derived from a 1-based ``POS``. Rows are
+    deduplicated, since two events sharing a breakpoint cut a segment once.
+
+    Args:
+        ext_file: Path to the (optionally gzipped) extremity TSV.
+        chroms: Keep only these contigs; ``None`` keeps every row.
+
+    Returns:
+        DataFrame with ``#CHR`` and ``POS0``, sorted, reindexed from 0.
+    """
+    df = pd.read_table(ext_file, sep="\t", dtype={"#CHR": str})
+    assert "#CHR" in df.columns, (
+        f"extremity file, no `#CHR` column: {ext_file}, got {df.columns.tolist()}"
+    )
+    assert "POS0" in df.columns or "POS" in df.columns, (
+        f"extremity file, no `POS0` or `POS` column: {ext_file}, "
+        f"got {df.columns.tolist()}"
+    )
+    pos = df["POS0"] if "POS0" in df.columns else df["POS"] - 1
+    df = pd.DataFrame(
+        {"#CHR": add_chr_prefix(df["#CHR"]), "POS0": pos.astype(np.int64)}
+    )
+    if chroms is not None:
+        df = df[df["#CHR"].isin(chroms)]
+    df = df.drop_duplicates()
+    return sort_df_chr(df, ch="#CHR", pos="POS0")
 
 
 # --------------------------------------------------------------------------

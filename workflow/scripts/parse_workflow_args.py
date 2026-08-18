@@ -336,15 +336,17 @@ def parse_workflow(config):
     assert gtf_file, "gtf_file is required"
     check_local_path(gtf_file, "gtf_file")
 
-    # === segment BED: the configured segmentation, arm-stamped and blacklisted ===
+    # === segment BED: the arms cut at the SV extremities, blacklist subtracted ===
     region_bed = config["region_bed"]
     assert region_bed, "region_bed is required (chromosome arms)"
     check_local_path(region_bed, "region_bed")
-    input_segment_bed = config["segment_bed"]
-    if not input_segment_bed:
-        input_segment_bed = region_bed
-        logging_snakemake("segment_bed unset, one segment per region_bed arm")
-    check_local_path(input_segment_bed, "segment_bed")
+    extremity_tsv = config["extremity_tsv"]
+    if extremity_tsv:
+        check_local_path(extremity_tsv, "extremity_tsv")
+        logging_snakemake(f"cut region_bed arms at SV extremities: {extremity_tsv}")
+    else:
+        extremity_tsv = []
+        logging_snakemake("extremity_tsv unset, one segment per region_bed arm")
     segment_bed = aux_dir + "/segment.bed"
 
     # === blacklist files ===
@@ -369,6 +371,12 @@ def parse_workflow(config):
     # === window BED ===
     window_size = int(config["params_build_windows"]["window_size"])
     window_bed = config["window_bed"]
+    if window_bed and extremity_tsv:
+        logging_snakemake(
+            f"NOTE: extremity_tsv is set, so window_bed={window_bed} is ignored; "
+            "windows are re-tiled from the cut segments"
+        )
+        window_bed = None
     if window_bed:
         check_local_path(window_bed, "window_bed")
         logging_snakemake(f"use pre-built window BED: {window_bed}")
@@ -653,7 +661,7 @@ def parse_workflow(config):
         "log_dir": log_dir,
         "aux_dir": aux_dir,
         "bench_dir": bench_dir,
-        "input_segment_bed": input_segment_bed,
+        "extremity_tsv": extremity_tsv,
         "snp_panel": snp_panel,
         "apply_clonal_loh_hmm": apply_clonal_loh_hmm,
         "reference": reference,

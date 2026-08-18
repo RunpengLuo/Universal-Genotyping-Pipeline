@@ -82,6 +82,7 @@ reference_version: hg38
 reference: /path/to/reference.fasta
 genome_size: resources/data/hg38.chrom.sizes
 region_bed: resources/data/hg38.regions.bed
+extremity_tsv: null
 window_bed: resources/data/windows.1kbp.hg38.bed.gz
 mappability_bed: resources/data/hg38.mappability.bed.gz
 blacklist_bed: resources/data/hg38-blacklist.v2.bed.gz
@@ -90,7 +91,10 @@ gtf_file: /path/to/gencode.v38.annotation.gtf.gz
 ```
 
 > [!TIP]
-> User may specify path via `segment_bed` listing genomic segments segmented by upstream SV breakpoints, and `window_bed` will avoid to segment across different genomic segments.
+> User may specify path via `extremity_tsv`, a headered TSV of upstream SV breakpoints
+> (`#CHR` and `POS0`). Each breakpoint cuts the arm holding it, so no window and no bb
+> spans an SV junction. Setting it ignores any pre-built `window_bed`, since the grid is
+> re-tiled from the cut segments.
 
 3. specify the population SNP panel (`snp_panel`) and list of normal datasets (`genotype_dataset_ids`, default is all normal samples if leave blank) for germline SNPs genotyping via [bcftools](https://github.com/samtools/bcftools). The panel is passed to `bcftools mpileup -T`, which reads CHROM/POS only: the panel's alleles are ignored, REF comes from `reference` and ALT from the reads. It must be a bgzipped, indexed VCF. See [snp-panels](../resources/README.md#snp-panels) for details.
 

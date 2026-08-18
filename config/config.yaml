@@ -43,7 +43,7 @@ reference: null
 gtf_file: null
 genome_size: null
 region_bed: null
-segment_bed: null
+extremity_tsv: null
 
 # Blacklist excluded regions/genes
 blacklist_bed: null

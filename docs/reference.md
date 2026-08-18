@@ -62,9 +62,9 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 | `reference` | Yes | Genome FASTA. |
 | `genome_size` | Yes | Two-column `chrom\tsize` genome size file. |
 | `gtf_file` | Yes | Gene annotation GTF (gzipped). |
-| `region_bed` | Yes | BED file listing whitelist chromosome arms. Column 4 (BED NAME), when present, is the `region_id`; a BED3 gets `CHR:START-END`. |
-| `segment_bed` | Optional | BED file listing genomic segments separated by novel adjacency. Column 4 (BED NAME), when present, is the `seg_id`; a BED3 gets `CHR:START-END`. Unset -> `region_bed`, one segment per arm. |
-| `window_bed` | Optional | Pre-built window BED with read depth covariates. [pre-built](`resources/data/windows.1kbp.{hg19,hg38,chm13v2}.bed.gz`). |
+| `region_bed` | Yes | BED file listing whitelist chromosome arms. |
+| `extremity_tsv` | Optional | TSV file listing extremity from upstream SV caller. |
+| `window_bed` | Optional | Pre-built window BED with read depth covariates. Ignored when `extremity_tsv` is set. |
 | `mappability_bed` | Optional | BED mappability track (4th column = score). |
 | `blacklist_bed` | Optional | ENCODE-style blacklist; pre-built at `resources/data/hg38-blacklist.v2.bed.gz`. |
 | `gene_blacklist_file` | Optional | Genes to exclude from AnnData (single-cell). |
@@ -83,8 +83,8 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 ### Parameters
 #### `params_build_windows`
 Used by the window-BED build (`build_windows.smk`), which runs in **every** mode.
-`build_segment_bed` first stamps each `segment_bed` segment with the arm it sits in and
-subtracts the blacklist into `aux/segment.bed` (region_id + seg_id). One window BED is
+`build_segment_bed` first cuts the `region_bed` arms at every `extremity_tsv` breakpoint
+and subtracts the blacklist into `aux/segment.bed` (region_id + seg_id). One window BED is
 then tiled off it, per segment row, so no window and no bin spans a segment bound:
 `aux/windows.bed.gz`, shared by every assay of the run.
 
@@ -283,9 +283,9 @@ Set in `config.yaml`, relative to `snakemake --directory`:
 
 | Level | id | Description |
 |---|---|---|
-| Region | `region_id` | Chromosome arm, from `region_bed`. Carried for RDR and QC. |
-| Segment | `seg_id` | From `segment_bed`, the hard bb bound. Blacklist pieces keep it. |
-| Window | `bin_id` | `window_size` tile, shared by every assay. Never written out. |
+| Region | `region_id` | Chromosome arm, from `region_bed` (`chr1p`). Carried for RDR and QC. |
+| Segment | `seg_id` | `{region_id}#{START}-{END}`. |
+| Window | `bin_id` | `window_size` tile, shared by every assay. Internal use. |
 | bb | `bb_id` | Merged windows; the feature axis of `bb.tsv.gz` and `bb.*.npz`. |
 
 ### Final bins
@@ -345,7 +345,7 @@ columns are cells.
 | `allele_dir/` | `snps.tsv.gz`, `snp.{T,A,B}allele.npz`, `sample_ids.tsv`, `barcodes.tsv.gz`. |
 | `bb_dir/{assay_type}.h5ad` | Gene x cell AnnData (scRNA / spatial). |
 | `aux_dir/clonal_loh_hmm.{segments,params}.tsv` | The fitted chain; header-only when the HMM did not run. |
-| `aux_dir/segment.bed` | Arm-stamped segments, blacklist subtracted. |
+| `aux_dir/segment.bed` | Arms cut at the SV extremities, blacklist subtracted. |
 | `aux_dir/windows.bed.gz` | The shared window BED. |
 | `aux_dir/repliseq/` | Repli-seq tracks, lifted from hg19 when the run is not hg19. |
 

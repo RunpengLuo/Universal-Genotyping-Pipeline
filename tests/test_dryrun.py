@@ -161,8 +161,8 @@ def test_windows_are_built_from_the_segments(workspace, sheet, sample_id, mode, 
     counts = job_counts(proc.stdout)
     assert "build_segment_bed" in counts
     assert "build_window_bed" in counts
-    # the configured segmentation feeds build_segment_bed, which feeds the tiling
-    assert f"{ref}/segment.bed" in proc.stdout
+    # the arms feed build_segment_bed, which feeds the tiling
+    assert f"{ref}/region.bed" in proc.stdout
     assert "/windows.bed.gz" in proc.stdout
 
 
@@ -174,17 +174,63 @@ def test_windows_are_built_from_the_segments(workspace, sheet, sample_id, mode, 
         ("copytyping_preprocess", ["scATAC"]),
     ],
 )
-def test_segment_bed_defaults_to_region_bed(workspace, mode, assays):
-    """An unset segment_bed falls back to region_bed: one segment per arm."""
+def test_segments_default_to_region_bed_arms(workspace, mode, assays):
+    """An unset extremity_tsv leaves the arms uncut: one segment per arm."""
     sheet = (
         workspace["bulk_json"] if mode == "bulk_genotyping" else workspace["sc_json"]
     )
     sample_id = "T1" if mode == "bulk_genotyping" else "S1"
-    proc = dryrun(workspace, sheet, sample_id, mode, assays, extra=["segment_bed="])
+    proc = dryrun(workspace, sheet, sample_id, mode, assays)
     assert proc.returncode == 0, proc.stderr[-2000:]
-    assert "segment_bed unset, one segment per region_bed arm" in proc.stdout
+    assert "extremity_tsv unset, one segment per region_bed arm" in proc.stdout
     assert job_counts(proc.stdout)["build_segment_bed"] == 1
     assert f"{workspace['ref']}/region.bed" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    "mode,assays",
+    [
+        ("bulk_genotyping", ["bulkWGS"]),
+        ("single_cell_genotyping", ["scRNA", "scATAC"]),
+        ("copytyping_preprocess", ["scATAC"]),
+    ],
+)
+def test_extremity_tsv_feeds_build_segment_bed(workspace, mode, assays):
+    """A configured extremity_tsv is an input of build_segment_bed, in every mode."""
+    ref = workspace["ref"]
+    sheet = (
+        workspace["bulk_json"] if mode == "bulk_genotyping" else workspace["sc_json"]
+    )
+    sample_id = "T1" if mode == "bulk_genotyping" else "S1"
+    proc = dryrun(
+        workspace,
+        sheet,
+        sample_id,
+        mode,
+        assays,
+        extra=[f"extremity_tsv={ref}/extremity.tsv"],
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "cut region_bed arms at SV extremities" in proc.stdout
+    assert job_counts(proc.stdout)["build_segment_bed"] == 1
+    assert f"{ref}/extremity.tsv" in proc.stdout
+
+
+def test_extremity_tsv_overrides_a_prebuilt_window_bed(workspace):
+    """A pre-built grid cannot honor the cuts, so it is ignored and the windows re-tiled."""
+    ref = workspace["ref"]
+    proc = dryrun(
+        workspace,
+        workspace["bulk_json"],
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=[f"extremity_tsv={ref}/extremity.tsv", f"window_bed={ref}/window.bed"],
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "is ignored" in proc.stdout
+    assert job_counts(proc.stdout).get("build_window_bed", 0) == 1, proc.stdout[-2000:]
+    assert "/windows.bed.gz" in proc.stdout
 
 
 @pytest.mark.parametrize(

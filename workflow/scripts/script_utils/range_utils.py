@@ -8,6 +8,7 @@ Functions:
 - assign_range_to_range: a range, by max_overlap, midpoint or contained
 - overlaps_any_range: boolean membership mask, no id carried
 - trim_range_by_range: interval difference, cutting one range set out
+- split_range_at_pos: cut ranges at positions, keeping every base
 - merge_ranges_to_clusters: cluster ordered items so no range splits
 References:
 - docs/DEVELOPER.md: the 0-based half-open invariant, asserted on every call
@@ -463,6 +464,83 @@ def trim_range_by_range(qry, ref):
     out = qry.iloc[src[keep]].reset_index(drop=True)
     out["START"] = piece_s[keep]
     out["END"] = piece_e[keep]
+    return out
+
+
+def split_range_at_pos(qry, pos, pos_col="POS0"):
+    """Cut every *qry* range at each *pos* position strictly inside it.
+
+    A position ``p`` with ``START < p < END`` splits the range into ``[START, p)`` and
+    ``[p, END)``: no piece holds ``p`` in its interior, ``p`` is the first base of the
+    right piece, and no base is lost. A position on a range bound, outside every range,
+    or on a contig *qry* never mentions is a no-op, so every piece is non-empty. Every
+    non-coordinate column of *qry* is carried onto each piece, so ids survive the split.
+    Output keeps the input row order.
+
+    Fully vectorized, the point counterpart of :func:`trim_range_by_range`: positions are
+    sorted and deduplicated per contig once, then two ``searchsorted`` calls give each
+    range the half-open window of positions inside it and the pieces are built with one
+    ``repeat``. Cost is O(#pieces) in numpy, with no per-query Python.
+
+    Args:
+        qry: Ranges to cut, with ``#CHR``, ``START``, ``END`` plus any other columns.
+        pos: Cut positions, with ``#CHR`` and *pos_col*. May repeat.
+        pos_col: 0-based position column of *pos*.
+
+    Returns:
+        A new frame with *qry*'s columns, reindexed from 0. One input range yields one
+        row per piece, so the row count grows by the number of interior cuts.
+    """
+    _check_pos_col(pos_col)
+    _check_ranges(qry, "qry")
+    if len(pos) == 0:
+        return qry.reset_index(drop=True)
+
+    # one global cut array; a contig's cuts are the slice at its offset, so the per-query
+    # window indices below stay valid as global indices
+    cuts, offset = [], {}
+    n = 0
+    for chrom, pos_c in pos.groupby("#CHR", sort=False):
+        if len(pos_c) == 0:
+            continue
+        p = np.unique(pos_c[pos_col].to_numpy(np.int64))
+        offset[chrom] = (n, len(p))
+        cuts.append(p)
+        n += len(p)
+    if not cuts:
+        return qry.reset_index(drop=True)
+    cuts = np.concatenate(cuts)
+
+    chroms = qry["#CHR"].to_numpy()
+    qs = qry["START"].to_numpy(np.int64)
+    qe = qry["END"].to_numpy(np.int64)
+    lo = np.zeros(len(qry), dtype=np.int64)
+    hi = np.zeros(len(qry), dtype=np.int64)
+    for chrom in pd.unique(chroms):
+        if chrom not in offset:
+            continue  # no cut on this contig -> lo == hi == 0, the range is kept whole
+        rows = np.flatnonzero(chroms == chrom)
+        off, n_cut = offset[chrom]
+        sl = cuts[off : off + n_cut]
+        # side excludes a cut on START or on END, so every piece keeps at least one base
+        lo[rows] = off + np.searchsorted(sl, qs[rows], side="right")
+        hi[rows] = off + np.searchsorted(sl, qe[rows], side="left")
+
+    # c interior cuts make c + 1 pieces
+    n_cuts = np.maximum(hi - lo, 0)
+    n_pieces = n_cuts + 1
+    src = np.repeat(np.arange(len(qry)), n_pieces)
+    k = np.arange(n_pieces.sum()) - np.repeat(np.cumsum(n_pieces) - n_pieces, n_pieces)
+
+    first, last = k == 0, k == n_cuts[src]
+    prev_cut = np.clip(lo[src] + k - 1, 0, len(cuts) - 1)
+    next_cut = np.clip(lo[src] + k, 0, len(cuts) - 1)
+    piece_s = np.where(first, qs[src], cuts[prev_cut])
+    piece_e = np.where(last, qe[src], cuts[next_cut])
+
+    out = qry.iloc[src].reset_index(drop=True)
+    out["START"] = piece_s
+    out["END"] = piece_e
     return out
 
 
