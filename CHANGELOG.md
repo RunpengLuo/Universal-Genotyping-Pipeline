@@ -20,7 +20,8 @@ One explicit segmentation and one shared bin grid in every mode, references with
 - `extremity_tsv` ignores a pre-built `window_bed` and re-tiles from the cut segments.
 - `resources/templates/extremity.tsv`: an example breakpoint file.
 - `dataset_ids` (default `[]`, all): restrict a run to a subset of the `sample_id`'s
-  datasets. A multiome pair shares one `dataset_id`, so naming it keeps both records.
+  datasets. A multiome pair shares one `dataset_id`, so naming it keeps both records;
+  a named `dataset_id` with no record on the run's `reference_version` is an error.
 - Blacklist pieces of a segment keep its `seg_id`, so holes never bound a bin.
 - `species` (required, `human` | `mouse`) sets the sex-chromosome numbering.
 - `REFVERS_ALIAS` folds spellings: `GRCh38` -> `hg38`, `T2T-CHM13v2.0` -> `chm13v2`.

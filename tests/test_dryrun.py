@@ -624,6 +624,44 @@ def test_dataset_ids_unknown_fails(workspace):
     assert "dataset_ids not found" in proc.stdout + proc.stderr
 
 
+def test_dataset_ids_on_another_build_fails(workspace):
+    """A selected dataset_id with no record on the run's build names the build."""
+    sheet = _sheet_with_refvers(workspace, "selbuild.json", ["chm13v2", "hg19"])
+    proc = dryrun(
+        workspace,
+        sheet,
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=(f"dataset_ids={json.dumps(['N1', 'D1'])}",),
+    )
+    assert proc.returncode != 0
+    out = proc.stdout + proc.stderr
+    assert "dataset_ids have no record on reference_version" in out
+    assert "D1 is on ['hg19']" in out
+
+
+def test_dataset_ids_keeps_the_matching_build_row(workspace):
+    """One dataset_id with a row per build keeps only the row on the run's build."""
+    sheet = os.path.join(workspace["root"], "dupbuild.json")
+    doc = json.loads(open(workspace["bulk_json"]).read())
+    other = dict(doc["samples"][1])
+    other["reference_version"] = "hg19"
+    doc["samples"].append(other)
+    with open(sheet, "w") as fh:
+        json.dump(doc, fh)
+    proc = dryrun(
+        workspace,
+        sheet,
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=(f"dataset_ids={json.dumps(['N1', 'D1'])}",),
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert job_counts(proc.stdout)["run_mosdepth"] == 2, proc.stdout[-2000:]
+
+
 def test_dataset_ids_excluding_an_rdr_base_fails(workspace):
     """Dropping the normal a tumor normalizes against is caught at parse time."""
     proc = dryrun(

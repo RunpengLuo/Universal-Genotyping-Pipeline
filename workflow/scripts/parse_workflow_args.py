@@ -128,7 +128,13 @@ def parse_records(
     config_assay_types: list,
     select_dataset_ids: list = None,
 ):
-    """Select and parse sample records based on sample_id, reference build, and assay types.
+    """Select and parse sample records based on sample_id, assay types, and reference build.
+
+    Filters run in the order sample_id -> assay_type -> select_dataset_ids ->
+    reference_version, so a requested dataset_id whose records all sit on another
+    build is reported as a build mismatch rather than as a missing dataset. A
+    dataset_id carrying rows for several builds keeps only the matching rows. With
+    no selection, records of another build are dropped silently.
 
     A multiome pair shares one dataset_id, so selecting that id keeps both of its
     records.
@@ -144,17 +150,16 @@ def parse_records(
         The selected datasets.
 
     Raises:
-        AssertionError: The selection is empty, a requested dataset_id does not exist,
-            or a record violates the spec or a replicate rule.
+        AssertionError: The selection is empty, a requested dataset_id does not exist
+            or has no record on reference_version, or a record violates the spec or a
+            replicate rule.
     """
     select = set(select_dataset_ids or [])
     parsed_records = []
     available_ids = set()
+    id2refvers = {}
     for rec in records:
         if rec["sample_id"] != sample_id:
-            continue
-        rec_refver = rec["reference_version"]
-        if canonical_refver(rec_refver) != reference_version:
             continue
         assay_type = rec["assay_type"]
         if assay_type not in config_assay_types:
@@ -162,6 +167,10 @@ def parse_records(
         dataset_id = rec["dataset_id"]
         available_ids.add(dataset_id)
         if select and dataset_id not in select:
+            continue
+        rec_refver = rec["reference_version"]
+        id2refvers.setdefault(dataset_id, set()).add(rec_refver)
+        if canonical_refver(rec_refver) != reference_version:
             continue
         sample_type = rec["sample_type"]
         assert rec["sample_type"] in SAMPLE_TYPES, (
@@ -186,6 +195,12 @@ def parse_records(
         assert not missing, (
             f"dataset_ids not found for sample_id={sample_id!r}: {missing}; "
             f"available: {sorted(available_ids)}"
+        )
+        wrong_build = sorted(select - {rec["dataset_id"] for rec in parsed_records})
+        assert not wrong_build, (
+            "dataset_ids have no record on "
+            f"reference_version={reference_version!r}: "
+            + "; ".join(f"{d} is on {sorted(id2refvers[d])}" for d in wrong_build)
         )
     assert parsed_records, "no datasets exist after selection"
 

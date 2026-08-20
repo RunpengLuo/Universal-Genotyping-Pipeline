@@ -45,7 +45,7 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 | `workflow_mode` | Yes | `bulk_genotyping` \| `single_cell_genotyping` \| `copytyping_preprocess`. |
 | `assay_types` | Yes | Assay types to run, e.g. `["bulkWGS"]`, `["scRNA","scATAC"]`. |
 | `sample_id` | Yes | Which `sample_id` of the sample file to process. |
-| `dataset_ids` | No | Restrict the run to these `dataset_id`s of that `sample_id`; `[]` (default) runs all of them. |
+| `dataset_ids` | No | Restrict the run to these `dataset_id`s of that `sample_id`; `[]` (default) runs all of them. Selection precedes the `reference_version` filter: a named `dataset_id` with no record on that build is an error. |
 | `chromosomes` | Yes | Chromosomes to run; default `[1..22]`. |
 | `species` | Yes | `human` (default) or `mouse`. |
 | `reference_version` | Yes | Reference version to select samples. See [Reference version](sample_sheet.md#reference-version). |
