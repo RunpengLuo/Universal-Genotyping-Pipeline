@@ -375,6 +375,7 @@ One multi-page PDF per rule, flat:
 
 | File | Contents |
 |---|---|
+| `post_genotype_snps.{bulk_or_nonbulk}.pdf` | SNP allele frequency, one page per grouping: genotype, LOH state (`apply_clonal_loh_hmm` only). |
 | `phase_and_concat.{bulk_or_assay}.pdf` | SNP allele frequency and depth. |
 | `rd_correction.bulk.pdf` | Depth before/after correction, GC/MAP/RT diagnostics. |
 | `combine_counts.{bulk_or_assay}.MSR{msr}.pdf` | Binning QC, one per `min_snp_reads`. |

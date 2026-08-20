@@ -217,6 +217,7 @@ def plot_allele_freqs(
     sample_id=None,
     snp_groups=None,
     group_colors=None,
+    title_suffix="",
 ):
     """Generate genome-wide allele-frequency scatter plots.
 
@@ -254,6 +255,9 @@ def plot_allele_freqs(
         Optional filename suffix.
     region_bed, blacklist_bed : str or None
         Optional BED files for background shading.
+    title_suffix : str
+        Appended to the page super-title; distinguishes pages that share a value
+        type and differ only in ``snp_groups``.
     """
     per_dataset_pseudobulk = apply_pseudobulk and cell_dataset_ids is not None
     # B allele is phased -> label as BAF; ref allele is unphased -> AF.
@@ -282,6 +286,7 @@ def plot_allele_freqs(
             region_bed=region_bed,
             blacklist_bed=blacklist_bed,
             pdf=pdf,
+            title_suffix=title_suffix,
         )
         return
 

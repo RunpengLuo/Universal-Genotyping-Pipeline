@@ -135,6 +135,7 @@ def plot_1d_sample(
     region_bed: str | None = None,
     blacklist_bed: str | None = None,
     pdf: PdfPages | None = None,
+    title_suffix: str = "",
 ):
     """Single-sample 1-D genome-wide scatter plot: all chromosomes on one page.
 
@@ -226,5 +227,6 @@ def plot_1d_sample(
 
     val_name = _val_full(val_type)
     title = f"{sample_id} - {val_name}" if sample_id else val_name
+    title += title_suffix
     _finish_page(fig, title, feature_label, out_file=out_file, dpi=dpi, pdf=pdf)
     return

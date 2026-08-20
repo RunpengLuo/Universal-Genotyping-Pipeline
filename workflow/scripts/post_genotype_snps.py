@@ -20,7 +20,8 @@ Inputs:
 Outputs:
 - snp_dir/chr{chrname}.vcf.gz: bi-allelic het or hom-alt SNPs
 - snp_dir/chr{chrname}.vcf.gz.tbi: tabix index of the above
-- qc_dir/post_genotype_snps.{bulk,nonbulk}.pdf: SNP allele-freq colored by genotypes
+- qc_dir/post_genotype_snps.{bulk,nonbulk}.pdf: SNP allele-freq, one page per grouping:
+  genotype, then LOH state (clonal-LOH HMM runs only)
 """
 
 import logging
@@ -58,6 +59,9 @@ REFINE_PLOT_MAX_SNPS = (
 )
 # blue vs red is het against hom, the call this step exists to make; grey is no-call
 GT_PLOT_COLORS = {"0/0": "red", "0/1": "blue", "1/1": "red", "./.": "gray"}
+# the same points regrouped onto a second QC page; grey stays the class with no call
+LOH_PLOT_COLORS = {"LOH": "red", "non-LOH": "blue", "unassigned": "gray"}
+LOH_COL = "LOH_STATE"
 # VCF fixed fields this step does not compute, and what to write when the input lacks them
 VCF_DEFAULT_FALLBACKS = {"ID": ".", "QUAL": ".", "FILTER": "PASS"}
 
@@ -203,6 +207,11 @@ if mode == "bulk":
         )
         gt = np.full(len(snps), "./.", dtype=GT_DTYPE)
         gt[fitted] = fit["gt"]
+
+        # NB: state 0 is the clonal-LOH state, so this matches hmm_segments row for row
+        loh_state = np.full(len(snps), "unassigned", dtype=object)
+        loh_state[fitted] = np.where(fit["state"] == 0, "LOH", "non-LOH")
+        snps[LOH_COL] = loh_state
 
         # what the caller said, so the rescue can be counted in both directions
         called = snps["GT"].astype(str).str.replace("|", "/", regex=False).to_numpy()
@@ -445,25 +454,36 @@ if len(genotyped) > REFINE_PLOT_MAX_SNPS:
 
 ref_counts = genotyped["REF_COUNT"].to_numpy()
 depths = ref_counts + genotyped["ALT_COUNT"].to_numpy()
+
+# NB: the pass-through branch carries the caller's GT, which may be phased
+genotyped["GT_PLOT"] = genotyped["GT"].astype(str).str.replace("|", "/", regex=False)
+# one page per grouping of the same points; the LOH page needs the chain to have run
+qc_pages = [("GT_PLOT", GT_PLOT_COLORS, "")]
+if LOH_COL in genotyped.columns:
+    qc_pages.append((LOH_COL, LOH_PLOT_COLORS, " - LOH state"))
+logging.info(f"QC pages: {', '.join(col for col, _, _ in qc_pages)}")
+
 with PdfPages(snakemake_handle.output["qc_pdf"]) as qc_pdf:
-    plot_allele_freqs(
-        genotyped,
-        [],
-        [],
-        [],
-        depths.reshape(-1, 1),
-        ref_counts.reshape(-1, 1),
-        genome_size,
-        params["qc_dir"],
-        apply_pseudobulk=True,
-        cell_dataset_ids=None,
-        allele="ref",
-        feature_label="SNP",
-        snp_groups=genotyped["GT"].to_numpy(),
-        group_colors=GT_PLOT_COLORS,
-        run_id=params["run_id"],
-        sample_id=params["sample_id"],
-        name_prefix="post_genotype_snps",
-        pdf=qc_pdf,
-    )
+    for group_col, group_colors, title_suffix in qc_pages:
+        plot_allele_freqs(
+            genotyped,
+            [],
+            [],
+            [],
+            depths.reshape(-1, 1),
+            ref_counts.reshape(-1, 1),
+            genome_size,
+            params["qc_dir"],
+            apply_pseudobulk=True,
+            cell_dataset_ids=None,
+            allele="ref",
+            feature_label="SNP",
+            snp_groups=genotyped[group_col].to_numpy(),
+            group_colors=group_colors,
+            run_id=params["run_id"],
+            sample_id=params["sample_id"],
+            name_prefix="post_genotype_snps",
+            pdf=qc_pdf,
+            title_suffix=title_suffix,
+        )
 logging.info("finished post_genotype_snps")
