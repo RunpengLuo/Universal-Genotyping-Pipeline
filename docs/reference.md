@@ -45,6 +45,7 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 | `workflow_mode` | Yes | `bulk_genotyping` \| `single_cell_genotyping` \| `copytyping_preprocess`. |
 | `assay_types` | Yes | Assay types to run, e.g. `["bulkWGS"]`, `["scRNA","scATAC"]`. |
 | `sample_id` | Yes | Which `sample_id` of the sample file to process. |
+| `dataset_ids` | No | Restrict the run to these `dataset_id`s of that `sample_id`; `[]` (default) runs all of them. |
 | `chromosomes` | Yes | Chromosomes to run; default `[1..22]`. |
 | `species` | Yes | `human` (default) or `mouse`. |
 | `reference_version` | Yes | Reference version to select samples. See [Reference version](sample_sheet.md#reference-version). |
@@ -341,7 +342,8 @@ columns are cells.
 | `phase_dir/genetic_map.tsv.gz` | Parsed genetic map (eagle/shapeit). |
 | `pileup_dir/{assay_type}_{dataset_id}/` | Bulk `bcftools.counts.tsv.gz`, concatenated from per-chromosome `bcftools.counts.chr{chrname}.tsv.gz` (temporary); single-cell `cellSNP.*`. |
 | `pileup_dir/{assay_type}/out_mosdepth/` | Per-dataset mosdepth (bulk). |
-| `pileup_dir/bulk/window.dp.npz` | Corrected depth, windows x every bulk dataset. |
+| `pileup_dir/bulk/window.raw.dp.npz` | Raw read depth, windows x every bulk dataset. |
+| `pileup_dir/bulk/window.dp.npz` | Corrected read depth, windows x every bulk dataset. |
 | `allele_dir/` | `snps.tsv.gz`, `snp.{T,A,B}allele.npz`, `sample_ids.tsv`, `barcodes.tsv.gz`. |
 | `bb_dir/{assay_type}.h5ad` | Gene x cell AnnData (scRNA / spatial). |
 | `aux_dir/clonal_loh_hmm.{segments,params}.tsv` | The fitted chain; header-only when the HMM did not run. |

@@ -13,9 +13,14 @@ One explicit segmentation and one shared bin grid in every mode, references with
 ### Added
 
 #### Config
-- `segment_bed`: a BED4 segmentation that no bin or bb may cross.
-- `segment_bed` unset falls back to `region_bed`, one segment per chromosome arm.
-- `build_segment_bed` stamps each segment with its arm and subtracts the blacklist.
+- `extremity_tsv`: a TSV of SV breakpoints (`#CHR`, `POS0`) that no bin or bb may cross.
+- `extremity_tsv` unset leaves the arms uncut, one segment per chromosome arm.
+- `build_segment_bed` cuts the `region_bed` arms at each breakpoint and subtracts the
+  blacklist; a breakpoint off-arm or in the blacklist is skipped.
+- `extremity_tsv` ignores a pre-built `window_bed` and re-tiles from the cut segments.
+- `resources/templates/extremity.tsv`: an example breakpoint file.
+- `dataset_ids` (default `[]`, all): restrict a run to a subset of the `sample_id`'s
+  datasets. A multiome pair shares one `dataset_id`, so naming it keeps both records.
 - Blacklist pieces of a segment keep its `seg_id`, so holes never bound a bin.
 - `species` (required, `human` | `mouse`) sets the sex-chromosome numbering.
 - `REFVERS_ALIAS` folds spellings: `GRCh38` -> `hg38`, `T2T-CHM13v2.0` -> `chm13v2`.
@@ -26,6 +31,8 @@ One explicit segmentation and one shared bin grid in every mode, references with
 - The prefix is converted only at tool boundaries; internal frames stay chr-prefixed.
 - Repli-seq correction on chm13v2, lifted from hg19 by the UCSC `hg19ToHs1` chain.
 - Bulk multi-SNP diagnostics at `bb_dir/multi_snp/bulk/`, with depth and RDR.
+- `rd_correct` also writes `pileup_dir/bulk/window.raw.dp.npz`, the uncorrected,
+  unmasked mosdepth depth on the same axes as `window.dp.npz`.
 
 #### Development
 - `docs/DEVELOPER.md`: the vocabulary, coordinate conventions and module map.
@@ -62,7 +69,7 @@ One explicit segmentation and one shared bin grid in every mode, references with
 - Single-cell bb boundaries follow 1 kb windows rather than SNP density.
 - A segment holding no het SNP now yields bbs with `#SNPS = 0`.
 - scATAC `Xcount` drops: fragments count through windows, never in a blacklist hole.
-- `seg_id` is the `segment_bed` label, no longer `{region_id}#{k}`.
+- `seg_id` is `{region_id}#{START}-{END}`, no longer `{region_id}#{k}`.
 - Single-cell binning clusters on `seg_id`, so its bbs stop at segment bounds.
 - Non-bulk SNP ranges are bounded at segment edges, no longer spanning blacklist holes.
 - Zero raw depth corrects to `0.0`; NaN now means only "correction undefined".
@@ -93,35 +100,47 @@ One explicit segmentation and one shared bin grid in every mode, references with
 - It replaces the `dataset_id`-only check in `parse_records`, which took non-ASCII
   letters and never saw `sample_id`.
 
+#### Genotyping
+- `apply_clonal_loh_hmm` (default `false`, bulk only, in `params_genotype_snps`)
+  re-genotypes a high-purity tumor's calls with a latent clonal-LOH chain, rescuing
+  germline hets that LOH collapsed onto one allele. Every genotyped dataset must be
+  `tumor`. Off, the calls symlink through unchanged.
+- On, the caller keeps every callable panel site (`--keep-alts`, no `--variants-only`, no
+  `GT="alt"`), so a `0/0` site survives and stays phaseable once re-called.
+- The chain is `script_utils/genotype_loh_hmm.py`; one `region_bed` arm is one chain.
+  Parameters and guidance: `docs/reference.md`.
+- It writes `aux_dir/clonal_loh_hmm.{segments,params}.tsv`, header-only when it did not run.
+- `params_annotate_snps` becomes `params_genotype_snps`.
+- `min_hom_dp` is gone. `min_dp` is one depth floor for both modes and now gates het calls
+  too, so a single-cell site below it is a no-call.
+- `annotate_snps_pseudobulk.py` becomes `post_genotype_snps.py`, one branch per mode.
+- `post_genotype_snps` carries `ID`, `QUAL` and `FILTER` through from its input VCF.
+- The genotyping QC plot colours het blue, hom red, no-call grey.
+- The bulk caller writes `snp_dir/raw/chr{chrname}.vcf.gz`; `snp_dir/chr{chrname}.vcf.gz`
+  is post-processing's output, so phasing reads the same path as before.
+- `bcftools call` is always constrained to the panel's REF/ALT (`--constrain alleles`), so
+  a somatic allele can never become the called ALT. The panel REF must match `reference`.
+- `genotype_snps_bulk` pipes `call` into the filtering `view` instead of staging an
+  unfiltered VCF, under `set -euo pipefail`.
+
 #### Genotyping (breaking)
 - Bulk genotyping reads `snp_panel` directly, via `bcftools mpileup -T`, which takes
   CHROM/POS only: REF comes from `reference`, ALT from the reads.
 - `snp_panel` is required in both genotyping modes and must be a bgzipped, indexed VCF.
-  `.bcf` is refused at parse time: `--targets-file` cannot read it and matches nothing
-  without erroring (samtools/bcftools#690).
+  `.bcf` is refused at parse time (samtools/bcftools#690).
 - `genotype_snps_bulk` and `pileup_snps_bulk_bcftools` pass `--regions` in every
-  `remote_mode`, not only `stream`; it scopes the per-chromosome genotyping job and lets
-  local runs index-jump the alignment instead of streaming it whole.
-- Every bcftools option in `workflow/rules/` is spelled long (`--min-MQ`, `--annotate`,
-  `--targets-file`, `--output-type` ...).
+  `remote_mode`, not only `stream`.
+- Every bcftools option in `workflow/rules/` is spelled long.
 
 #### Performance (same outputs)
-- Bulk pileup splits per chromosome (`pileup_snps_bulk_bcftools_chrom`) and is joined by
-  `merge_pileup_counts`, so a replicate fans out instead of walking its whole alignment
-  in one job. mpileup emits regions in `--regions` order, so the concatenation is
-  byte-identical to the single-job counts file.
-- `--threads` no longer sits on `bcftools mpileup`, which is single-threaded: bcftools
-  applies the count to the output handle only, and both pipelines write uncompressed BCF
-  into a pipe. The threads now go where compression happens (`bcftools call`, the
-  filtering `bcftools view`, `bgzip`).
-- `threads.genotype` 4 -> 2 and `threads.pileup` 8 -> 2, so the freed cores run more
-  chromosome jobs instead of idling inside one.
-- Genotyping counts its records with `bcftools query --format '\n'` rather than
-  `bcftools view --no-header`, which formatted every record just to be discarded.
-- `bcftools call --variants-only` in `genotype_snps_bulk`: the hom-ref rows it drops were
-  already excluded by the `--min-alleles 2` + `GT="alt"` filter, so the SNP VCF is
-  unchanged while the temporary unfiltered VCF loses most of its rows. Its log line now
-  reads `Variant sites called:`, since that count no longer covers every callable site.
+- Bulk pileup splits per chromosome and is joined by `merge_pileup_counts`; the
+  concatenation is byte-identical to the single-job counts file.
+- The clonal-LOH chain's recursions are numba kernels.
+- `--threads` moves off the single-threaded `bcftools mpileup` onto the compressing steps;
+  `threads.genotype` 4 -> 2 and `threads.pileup` 8 -> 2.
+- Genotyping counts its records with `bcftools query --format '\n'`.
+- `bcftools call --variants-only` when the HMM is off, which only shrinks the temporary
+  unfiltered VCF.
 
 #### Internals
 - One word per concept: `region` > `segment` > `bin` > `bb`, `feature` x `observation`.
@@ -133,6 +152,10 @@ One explicit segmentation and one shared bin grid in every mode, references with
 - Every mask in `combine_counts` logs as `label: n/total (%unit=0.xxx) (xxx.xxx Mbps)`.
 - The GTF is parsed once per run.
 - SNPs are assigned to fixed bins once, not once per sweep point.
+
+#### Resources
+- Bundled `region_bed` `region_id` is an arm label (`chr1p`), no longer `CHR:START-END`.
+- Pre-built window BEDs carry those labels and `seg_id` `{region_id}#{START}-{END}`.
 
 ### Fixed
 - **Output change**: a bedGraph midpoint in a window gap was credited to its predecessor.
@@ -159,7 +182,7 @@ One explicit segmentation and one shared bin grid in every mode, references with
 - `phase_and_concat_nonbulk` used `scanpy` without importing it.
 
 ### Removed
-- **Breaking**: SV-breakpoint BEDPE support; `segment_bed` states the segmentation
+- **Breaking**: SV-breakpoint BEDPE support; `extremity_tsv` lists the breakpoints
   instead.
 - **Breaking**: `rdr_outlier_quantile` and its clipping, which discarded focal
   amplifications.

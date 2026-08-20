@@ -126,23 +126,30 @@ def parse_records(
     sample_id: str,
     reference_version: str,
     config_assay_types: list,
+    select_dataset_ids: list = None,
 ):
     """Select and parse sample records based on sample_id, reference build, and assay types.
+
+    A multiome pair shares one dataset_id, so selecting that id keeps both of its
+    records.
 
     Args:
         records: Records from read_sample_sheet.
         sample_id: The sample_id being processed.
         reference_version: canonical reference version.
         config_assay_types: Assay types enabled for this run.
+        select_dataset_ids: Restrict to these dataset_ids; empty/None keeps all.
 
     Returns:
         The selected datasets.
 
     Raises:
-        AssertionError: The selection is empty, or a record violates the spec or a
-            replicate rule.
+        AssertionError: The selection is empty, a requested dataset_id does not exist,
+            or a record violates the spec or a replicate rule.
     """
+    select = set(select_dataset_ids or [])
     parsed_records = []
+    available_ids = set()
     for rec in records:
         if rec["sample_id"] != sample_id:
             continue
@@ -153,6 +160,9 @@ def parse_records(
         if assay_type not in config_assay_types:
             continue
         dataset_id = rec["dataset_id"]
+        available_ids.add(dataset_id)
+        if select and dataset_id not in select:
+            continue
         sample_type = rec["sample_type"]
         assert rec["sample_type"] in SAMPLE_TYPES, (
             f"{dataset_id}: sample_type must be one of {SAMPLE_TYPES}, "
@@ -171,6 +181,12 @@ def parse_records(
         rec["modality"] = ASSAY_TYPE2MODALITY[assay_type]
         parsed_records.append(rec)
 
+    if select:
+        missing = sorted(select - available_ids)
+        assert not missing, (
+            f"dataset_ids not found for sample_id={sample_id!r}: {missing}; "
+            f"available: {sorted(available_ids)}"
+        )
     assert parsed_records, "no datasets exist after selection"
 
     parsed_records.sort(
@@ -204,7 +220,8 @@ def parse_records(
                 f"{dataset_id}: rdr_base_dataset_id is itself"
             )
             assert rdr_base_id in dataset_ids, (
-                f"{dataset_id}: rdr_base_dataset_id {rdr_base_id!r} not in the sample sheet"
+                f"{dataset_id}: rdr_base_dataset_id {rdr_base_id!r} is not among the "
+                "selected datasets; add it to dataset_ids or drop the key"
             )
     return parsed_records
 
@@ -276,10 +293,18 @@ def parse_workflow(config):
     assert reference, "reference is required (genome FASTA)"
     check_local_path(reference, "reference")
 
-    records = parse_records(records, sample_id, reference_version, config_assay_types)
+    select_dataset_ids = config["dataset_ids"]
+    assert len(set(select_dataset_ids)) == len(select_dataset_ids), (
+        f"dataset_ids has duplicate dataset_ids: {select_dataset_ids}"
+    )
+    records = parse_records(
+        records, sample_id, reference_version, config_assay_types, select_dataset_ids
+    )
     dataset_ids = {r["dataset_id"]: r for r in records}
     assay_types = list(dict.fromkeys(rec["assay_type"] for rec in records))
 
+    if select_dataset_ids:
+        logging_snakemake(f"dataset_ids restricts the run to: {select_dataset_ids}")
     logging_snakemake("The following datasets will be processed:")
     for rec in records:
         logging_snakemake(

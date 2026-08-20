@@ -21,6 +21,7 @@ assay_types: ["bulkWGS"]
 ##################################################
 # Input
 sample_id: PATIENT_ID
+dataset_ids: [] # run all if leave []
 sample_file: /path/to/samples.json
 chromosomes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
 

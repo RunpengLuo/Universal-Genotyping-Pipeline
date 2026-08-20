@@ -294,6 +294,7 @@ def test_mixed_wgs_wes(workspace):
     assert "wes_windows.bed.gz" not in proc.stdout
     assert counts.get("rd_correct", 0) == 1, proc.stdout[-2000:]
     assert "/bulk/window.dp.npz" in proc.stdout
+    assert "/bulk/window.raw.dp.npz" in proc.stdout
     assert "window.tsv.gz" not in proc.stdout
     # one joint binning into a single bb/bulk dir (no per-stream subdir)
     assert "combine_counts" in counts
@@ -577,6 +578,64 @@ def test_unknown_sample_id_fails(workspace):
     )
     assert proc.returncode != 0
     assert "no datasets exist after selection" in proc.stdout + proc.stderr
+
+
+def test_dataset_ids_selects_a_subset(workspace):
+    """dataset_ids drops the sample_id's other datasets from the DAG."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_mixed_json"],
+        "MX",
+        "bulk_genotyping",
+        ["bulkWGS", "bulkWES"],
+        extra=(f"dataset_ids={json.dumps(['N1', 'D1'])}",),
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    counts = job_counts(proc.stdout)
+    assert counts["run_mosdepth"] == 2, proc.stdout[-2000:]
+    assert counts["merge_pileup_counts"] == 2
+    assert "bulkWES_E1" not in proc.stdout
+
+
+def test_dataset_ids_empty_runs_every_dataset(workspace):
+    """The default [] keeps all three datasets."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_mixed_json"],
+        "MX",
+        "bulk_genotyping",
+        ["bulkWGS", "bulkWES"],
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert job_counts(proc.stdout)["run_mosdepth"] == 3
+
+
+def test_dataset_ids_unknown_fails(workspace):
+    """A dataset_id absent from the selection is an error, not a silent drop."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_mixed_json"],
+        "MX",
+        "bulk_genotyping",
+        ["bulkWGS", "bulkWES"],
+        extra=(f"dataset_ids={json.dumps(['N1', 'nope'])}",),
+    )
+    assert proc.returncode != 0
+    assert "dataset_ids not found" in proc.stdout + proc.stderr
+
+
+def test_dataset_ids_excluding_an_rdr_base_fails(workspace):
+    """Dropping the normal a tumor normalizes against is caught at parse time."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_mixed_json"],
+        "MX",
+        "bulk_genotyping",
+        ["bulkWGS", "bulkWES"],
+        extra=(f"dataset_ids={json.dumps(['D1'])}",),
+    )
+    assert proc.returncode != 0
+    assert "is not among the selected datasets" in proc.stdout + proc.stderr
 
 
 @pytest.mark.parametrize("mode", ["bulk_genotyping", "single_cell_genotyping"])

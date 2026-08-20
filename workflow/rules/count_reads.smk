@@ -7,6 +7,7 @@ Rules:
 - [optional] run_mosdepth_chrom, merge_mosdepth: the remote_mode stream variants
 - rd_correct: GC, mappability and replication-timing correction, once for all bulk
 Outputs:
+- pileup_dir/bulk/window.raw.dp.npz: raw depth, windows x all bulk datasets
 - pileup_dir/bulk/window.dp.npz: corrected depth, windows x all bulk datasets
 - pileup_dir/bulk/depth_statistics.tsv: per-dataset depth summary
 """
@@ -137,6 +138,7 @@ rule rd_correct:
         region_bed=segment_bed,
         blacklist_bed=blacklist_bed,
     output:
+        dp_raw=pileup_dir + "/bulk/window.raw.dp.npz",
         dp_corrected=pileup_dir + "/bulk/window.dp.npz",
         depth_stats=report(
             pileup_dir + "/bulk/depth_statistics.tsv",

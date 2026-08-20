@@ -7,10 +7,16 @@ Inputs:
 - aux_dir/windows.bed.gz: the shared fixed bins with GC, MAP, REPLI, region_id
 - genome_size, region_bed, blacklist_bed: QC plot axis and shading
 Outputs:
+- pileup_dir/bulk/window.raw.dp.npz: raw mosdepth depth, windows x all bulk datasets,
+  unmasked and uncorrected
 - pileup_dir/bulk/window.dp.npz: corrected depth, windows x all bulk datasets,
   0.0 where depth is 0 and NaN below min_mappability or where the fit is undefined
 - pileup_dir/bulk/depth_statistics.tsv: per-dataset depth summary
 - qc_dir/rd_correction.bulk.pdf: depth scatter before/after plus covariate KDE
+
+Both matrices are float32, row-aligned to the window BED filtered to `chroms`, and
+column-ordered as `params.dataset_ids`, which is the `SAMPLE` order of
+depth_statistics.tsv. Neither npz stores column labels.
 """
 
 import logging
@@ -66,6 +72,7 @@ rt_correct = bool(snakemake_handle.params["rt_correct"])
 
 # outputs
 out_depth_stats = snakemake_handle.output["depth_stats"]
+out_dp_raw = snakemake_handle.output["dp_raw"]
 out_dp_corrected = snakemake_handle.output["dp_corrected"]
 out_qc_pdf = snakemake_handle.output["qc_pdf"]
 
@@ -95,6 +102,9 @@ for i, (dataset_id, mos_file) in enumerate(zip(dataset_ids, mosdepth_files)):
         f"{dataset_id}: {n_missing}/{n_bins} fixed bins absent from {mos_file}"
     )
     dp_raw[:, i] = depth["DEPTH"].to_numpy(dtype=np.float32)
+
+np.savez_compressed(out_dp_raw, mat=dp_raw)
+logging.info(f"wrote raw depth to {out_dp_raw}")
 
 depth_stats = compute_depth_statistics(dp_raw, bin_df, sample_ids)
 depth_stats.to_csv(out_depth_stats, sep="\t", index=False)
@@ -200,5 +210,6 @@ for i, dataset_id in enumerate(dataset_ids):
     )
 
 np.savez_compressed(out_dp_corrected, mat=dp_corrected)
+logging.info(f"wrote corrected depth to {out_dp_corrected}")
 
 logging.info("finished rd_correct.")
