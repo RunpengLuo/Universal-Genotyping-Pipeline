@@ -5,7 +5,7 @@ Last update: 2026-08-11
 Rules:
 - [bulk] combine_counts: adaptive binning, depth aggregation and RDR
 - [single-cell] combine_counts_nonbulk: adaptive binning over every assay
-- [copytyping] combine_counts_fixed_bins: counts onto pre-computed bbs
+- [copytyping] combine_counts_fixed_bins{,_rna}: counts onto pre-computed bbs
 Outputs:
 - bb_dir/MSR{msr}/bulk/: the bulk bbs, one subdir per min_snp_reads
 - bb_dir/MSR{msr}/{assay}/: the single-cell bbs, sliced per assay
@@ -160,7 +160,9 @@ elif workflow_mode == "single_cell_genotyping":
             unit_a_mtx=[bb_dir + f"/unit/{at}/snp.Aallele.npz" for at in assay_types],
             unit_b_mtx=[bb_dir + f"/unit/{at}/snp.Ballele.npz" for at in assay_types],
             unit_barcodes=[bb_dir + f"/unit/{at}/barcodes.tsv.gz" for at in assay_types],
-            unit_sample_file=[bb_dir + f"/unit/{at}/sample_ids.tsv" for at in assay_types],
+            unit_sample_file=[
+                bb_dir + f"/unit/{at}/sample_ids.tsv" for at in assay_types
+            ],
             unit_window_file=[
                 bb_dir + f"/unit/{at}/window.tsv.gz"
                 for at in assay_types
@@ -257,6 +259,7 @@ elif workflow_mode == "copytyping_preprocess":
                 else []
             ),
             genome_size=genome_size,
+            window_bed=window_bed,
             bb_file=bb_file,
         output:
             bb_file=bb_dir + "/{assay_type}/bb.tsv.gz",
@@ -266,6 +269,14 @@ elif workflow_mode == "copytyping_preprocess":
             b_mtx_bb=bb_dir + "/{assay_type}/bb.Ballele.npz",
             barcodes_out=bb_dir + "/{assay_type}/barcodes.tsv.gz",
             sample_file=bb_dir + "/{assay_type}/sample_ids.tsv",
+            unit_snp_file=bb_dir + "/unit/{assay_type}/snp.tsv.gz",
+            unit_tot_mtx=bb_dir + "/unit/{assay_type}/snp.Tallele.npz",
+            unit_a_mtx=bb_dir + "/unit/{assay_type}/snp.Aallele.npz",
+            unit_b_mtx=bb_dir + "/unit/{assay_type}/snp.Ballele.npz",
+            unit_barcodes=bb_dir + "/unit/{assay_type}/barcodes.tsv.gz",
+            unit_sample_file=bb_dir + "/unit/{assay_type}/sample_ids.tsv",
+            unit_window_file=bb_dir + "/unit/{assay_type}/window.tsv.gz",
+            unit_window_x=bb_dir + "/unit/{assay_type}/window.Xcount.npz",
             qc_pdf=report(
                 qc_dir + "/combine_counts_fixed_bins.{assay_type}.pdf",
                 category="QC plots",
@@ -279,7 +290,7 @@ elif workflow_mode == "copytyping_preprocess":
             bench_dir
             + f"/combine_counts_fixed_bins/combine_counts_fixed_bins.{{assay_type}}.{_run_id}.tsv"
         wildcard_constraints:
-            assay_type="(scRNA|scATAC|VISIUM|VISIUM3prime)",
+            assay_type="scATAC",
         conda:
             "../envs/base.yaml"
         threads: 1
@@ -287,6 +298,34 @@ elif workflow_mode == "copytyping_preprocess":
             qc_dir=qc_dir,
             sample_id=sample_id,
             assay_type=lambda wc: wc.assay_type,
+            chroms=chr_chromosomes,
             run_id=_run_id,
         script:
             """../scripts/combine_counts_fixed_bins.py"""
+
+    # NB: same script; a gene is indivisible, so RNA's unit is the gene, not the window
+    use rule combine_counts_fixed_bins as combine_counts_fixed_bins_rna with:
+        output:
+            bb_file=bb_dir + "/{assay_type}/bb.tsv.gz",
+            x_count=bb_dir + "/{assay_type}/bb.Xcount.npz",
+            tot_mtx_bb=bb_dir + "/{assay_type}/bb.Tallele.npz",
+            a_mtx_bb=bb_dir + "/{assay_type}/bb.Aallele.npz",
+            b_mtx_bb=bb_dir + "/{assay_type}/bb.Ballele.npz",
+            barcodes_out=bb_dir + "/{assay_type}/barcodes.tsv.gz",
+            sample_file=bb_dir + "/{assay_type}/sample_ids.tsv",
+            unit_snp_file=bb_dir + "/unit/{assay_type}/snp.tsv.gz",
+            unit_tot_mtx=bb_dir + "/unit/{assay_type}/snp.Tallele.npz",
+            unit_a_mtx=bb_dir + "/unit/{assay_type}/snp.Aallele.npz",
+            unit_b_mtx=bb_dir + "/unit/{assay_type}/snp.Ballele.npz",
+            unit_barcodes=bb_dir + "/unit/{assay_type}/barcodes.tsv.gz",
+            unit_sample_file=bb_dir + "/unit/{assay_type}/sample_ids.tsv",
+            unit_gene_file=bb_dir + "/unit/{assay_type}/gene.tsv.gz",
+            unit_gene_x=bb_dir + "/unit/{assay_type}/gene.Xcount.npz",
+            qc_pdf=report(
+                qc_dir + "/combine_counts_fixed_bins.{assay_type}.pdf",
+                category="QC plots",
+                subcategory="fixed-bin aggregation",
+                labels={"assay": "{assay_type}"},
+            ),
+        wildcard_constraints:
+            assay_type="(scRNA|VISIUM|VISIUM3prime)",

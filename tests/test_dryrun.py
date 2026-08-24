@@ -891,14 +891,37 @@ def test_single_cell_skips_repliseq(workspace):
     assert "repliseq_liftover" not in counts
 
 
-def test_copytyping_does_not_build_windows(workspace):
-    """copytyping_preprocess bins onto its own bb_file, so no window grid is needed."""
+def test_copytyping_builds_the_window_grid(workspace):
+    """copytyping_preprocess bins onto its own bb_file, but the unit level needs windows."""
     proc = dryrun(
-        workspace, workspace["sc_json"], "S1", "copytyping_preprocess", ["scATAC"]
+        workspace,
+        workspace["sc_json"],
+        "S1",
+        "copytyping_preprocess",
+        ["scRNA", "scATAC"],
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     counts = job_counts(proc.stdout)
-    assert "build_window_bed" not in counts
+    assert counts.get("build_window_bed", 0) == 1, proc.stdout[-2000:]
+    # the two rules cover disjoint assays, so both run in one DAG without ambiguity
+    assert counts.get("combine_counts_fixed_bins", 0) == 1, proc.stdout[-2000:]
+    assert counts.get("combine_counts_fixed_bins_rna", 0) == 1, proc.stdout[-2000:]
+    assert "/unit/scATAC/window.Xcount.npz" in proc.stdout, proc.stdout[-2000:]
+    assert "/unit/scATAC/snp.tsv.gz" in proc.stdout, proc.stdout[-2000:]
+    assert "/unit/scRNA/gene.Xcount.npz" in proc.stdout, proc.stdout[-2000:]
+
+
+def test_copytyping_rna_units_are_genes(workspace):
+    """An RNA assay's unit is the gene, so it takes the _rna rule and writes no windows."""
+    proc = dryrun(
+        workspace, workspace["sc_json"], "S1", "copytyping_preprocess", ["scRNA"]
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    counts = job_counts(proc.stdout)
+    assert "combine_counts_fixed_bins_rna" in counts, proc.stdout[-2000:]
+    assert "combine_counts_fixed_bins" not in counts, proc.stdout[-2000:]
+    assert "/unit/scRNA/gene.Xcount.npz" in proc.stdout, proc.stdout[-2000:]
+    assert "/unit/scRNA/window.tsv.gz" not in proc.stdout
 
 
 def test_single_cell_binning_reads_the_window_grid(workspace):

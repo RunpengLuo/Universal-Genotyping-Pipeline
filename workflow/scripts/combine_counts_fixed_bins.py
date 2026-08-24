@@ -10,8 +10,15 @@ Inputs:
 - allele_dir/sample_ids.tsv: dataset roster, sliced to this assay
 - bb_dir/{assay}.h5ad: RNA UMI source for Xcount
 - atac_fragments.tsv.gz: scATAC fragment source for Xcount
+- aux_dir/windows.bed.gz: the window grid; scATAC fragments are counted through it
 - genome_size: chrom sizes TSV
 Outputs:
+- bb_dir/unit/{assay}/snp.tsv.gz: the SNPs that landed in a window, matrix rows
+- bb_dir/unit/{assay}/snp.{T,A,B}allele.npz: this assay's slice of their allele counts
+- bb_dir/unit/{assay}/barcodes.tsv.gz: this assay's cells, matrix column order
+- bb_dir/unit/{assay}/sample_ids.tsv: this assay's datasets
+- bb_dir/unit/scATAC/window.{tsv.gz,Xcount.npz}: fragments counted per window per cell
+- bb_dir/unit/{rna_assay}/gene.{tsv.gz,Xcount.npz}: UMIs per gene per cell, un-binned
 - bb_dir/{assay}/bb.tsv.gz: the given bbs, re-stamped for this assay
 - bb_dir/{assay}/bb.{Xcount,Tallele,Aallele,Ballele}.npz: per-bb count matrices
 - bb_dir/{assay}/barcodes.tsv.gz: this assay's cells, matrix column order
@@ -24,7 +31,7 @@ import logging
 
 snakemake_handle = snakemake
 
-from utils import set_omp_threads, setup_logging, sort_df_chr
+from utils import log_ratios, set_omp_threads, setup_logging, sort_df_chr
 
 set_omp_threads(snakemake_handle)
 setup_logging(snakemake_handle.log[0])
@@ -37,14 +44,16 @@ from const import ASSAY_TYPE2MODALITY
 from io_utils import (
     read_barcodes_by_dataset,
     read_snp_mats,
+    read_window_bed,
     write_bb_file,
 )
 from combine_counts_utils import observation_cluster_ids
 from segmentation_utils import sum_features_to_bbs
-from range_utils import assign_pos_to_range
+from range_utils import assign_pos_to_range, assign_range_to_range
 from feature_utils import (
     assign_features_to_ranges,
     merge_feature_ids,
+    read_gene_counts,
     sum_atac_fragments_to_bins,
 )
 from matplotlib.backends.backend_pdf import PdfPages
@@ -61,6 +70,7 @@ h5ad_file = snakemake_handle.input["h5ad_file"]
 frag_files = list(snakemake_handle.input["frag_files"])
 all_barcodes = snakemake_handle.input["all_barcodes"]
 genome_size = snakemake_handle.input["genome_size"]
+window_bed = snakemake_handle.input["window_bed"]
 sample_file = snakemake_handle.input["sample_file"]
 bb_file = snakemake_handle.input["bb_file"]
 
@@ -68,6 +78,7 @@ bb_file = snakemake_handle.input["bb_file"]
 qc_dir = snakemake_handle.params["qc_dir"]
 sample_id = snakemake_handle.params["sample_id"]
 assay_type = snakemake_handle.params["assay_type"]
+chroms = list(snakemake_handle.params["chroms"])
 run_id = snakemake_handle.params["run_id"]
 
 # outputs
@@ -78,6 +89,12 @@ out_b_mtx_bb = snakemake_handle.output["b_mtx_bb"]
 out_bb_file = snakemake_handle.output["bb_file"]
 out_barcodes = snakemake_handle.output["barcodes_out"]
 out_sample_file = snakemake_handle.output["sample_file"]
+out_unit_snp_file = snakemake_handle.output["unit_snp_file"]
+out_unit_tot_mtx = snakemake_handle.output["unit_tot_mtx"]
+out_unit_a_mtx = snakemake_handle.output["unit_a_mtx"]
+out_unit_b_mtx = snakemake_handle.output["unit_b_mtx"]
+out_unit_barcodes = snakemake_handle.output["unit_barcodes"]
+out_unit_sample_file = snakemake_handle.output["unit_sample_file"]
 out_qc_pdf = snakemake_handle.output["qc_pdf"]
 
 
@@ -98,6 +115,51 @@ cell_dataset_ids = observation_cluster_ids(cells, sample_df)
 snps, tot_mtx, a_mtx, b_mtx = read_snp_mats(snp_info, tot_mtx_snp, a_mtx_snp, b_mtx_snp)
 tot_mtx, a_mtx, b_mtx = (m[:, assay_cols] for m in (tot_mtx, a_mtx, b_mtx))
 
+##################################################
+# unit level: the SNP grid and this assay's native count unit, before the given bbs
+bin_df = read_window_bed(window_bed, chroms=chroms)
+snps_binned, off_idx = assign_pos_to_range(snps, bin_df, ref_id="bin_id", dropna=True)
+snp_spans = (snps["END"] - snps["START"]).to_numpy()
+log_ratios(
+    "SNPs outside every window", len(off_idx), len(snps), snp_spans[off_idx], "snp"
+)
+keep_snps = np.ones(len(snps), dtype=bool)
+keep_snps[off_idx] = False
+snps_binned.drop(columns=["bin_id"]).to_csv(out_unit_snp_file, sep="\t", index=False)
+save_npz(out_unit_tot_mtx, tot_mtx[keep_snps].astype(COUNT_DTYPE))
+save_npz(out_unit_a_mtx, a_mtx[keep_snps].astype(COUNT_DTYPE))
+save_npz(out_unit_b_mtx, b_mtx[keep_snps].astype(COUNT_DTYPE))
+cells["BARCODE"].to_csv(out_unit_barcodes, sep="\t", header=False, index=False)
+sample_df.to_csv(out_unit_sample_file, sep="\t", index=False)
+logging.info(
+    f"unit level: {len(snps_binned)} SNPs x {len(cells)} cells to {out_unit_snp_file}"
+)
+
+# the windows carry no blacklisted span, so this drops the blacklisted SNPs the given
+# bb hulls would otherwise swallow
+snps = snps_binned.drop(columns=["bin_id"])
+tot_mtx, a_mtx, b_mtx = tot_mtx[keep_snps], a_mtx[keep_snps], b_mtx[keep_snps]
+
+if is_rna_assay:
+    genes, gene_x = read_gene_counts(h5ad_file, cells["BARCODE"].tolist())
+    genes.to_csv(snakemake_handle.output["unit_gene_file"], sep="\t", index=False)
+    save_npz(snakemake_handle.output["unit_gene_x"], gene_x)
+    logging.info(f"unit Xcount (genes): shape={gene_x.shape}, nnz={gene_x.nnz}")
+else:
+    bin_df.drop(columns=["bin_id"]).to_csv(
+        snakemake_handle.output["unit_window_file"], sep="\t", index=False
+    )
+    window_x = sum_atac_fragments_to_bins(
+        frag_files,
+        dataset_ids,
+        cells,
+        bin_df[["#CHR", "START", "END", "bin_id"]].rename(columns={"bin_id": "bb_id"}),
+        len(bin_df),
+    )
+    save_npz(snakemake_handle.output["unit_window_x"], window_x)
+    logging.info(f"unit Xcount (fragments): shape={window_x.shape}, nnz={window_x.nnz}")
+
+##################################################
 bb_df = pd.read_table(bb_file, sep="\t")
 bb_df = sort_df_chr(bb_df, pos="START")
 bb_df["bb_id"] = np.arange(len(bb_df))
@@ -191,8 +253,16 @@ if is_rna_assay:
     x_count = sum_features_to_bbs(adata.X.T, adata.var["bb_id"].to_numpy(), num_bbs)
     logging.info(f"gene-level matrix: shape={adata.X.shape}")
 else:
-    # scATAC: per-cell Xcount from raw 10x fragments (no tile h5ad)
-    bb_grid = bb_df[["#CHR", "START", "END", "bb_id"]].copy()
+    # scATAC: per-cell Xcount from raw 10x fragments, counted through the windows
+    # stamped with their owning bb. A fragment in a blacklist hole then hits no window
+    # and is dropped, where the bb hull would swallow it.
+    bb_grid, off_win = assign_range_to_range(
+        bin_df[["#CHR", "START", "END"]], bb_df, "bb_id", rule="midpoint", dropna=True
+    )
+    win_spans = (bin_df["END"] - bin_df["START"]).to_numpy()
+    log_ratios(
+        "windows outside every bb", len(off_win), len(bin_df), win_spans[off_win], "bin"
+    )
     x_count = sum_atac_fragments_to_bins(
         frag_files,
         dataset_ids,
