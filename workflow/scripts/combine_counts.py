@@ -12,6 +12,11 @@ Inputs:
 - phase_dir/genetic_map.tsv.gz: optional, for cM-based switch probabilities
 - blacklist_bed, genome_size: QC plot shading and axis
 Outputs:
+- bb_dir/unit/bulk/snp.tsv.gz: the SNPs that landed in a window, matrix rows
+- bb_dir/unit/bulk/snp.{T,A,B}allele.npz: their allele counts
+- bb_dir/unit/bulk/window.tsv.gz: the windows on the run's chromosomes, matrix rows
+- bb_dir/unit/bulk/window.depth.npz: bias-corrected depth, windows x datasets
+- bb_dir/unit/bulk/sample_ids.tsv: one row per matrix column
 - bb_dir/MSR{msr}/bulk/bb.tsv.gz: bb definitions, one row each
 - bb_dir/MSR{msr}/bulk/bb.{T,A,B}allele.npz: per-bb phased allele counts
 - bb_dir/MSR{msr}/bulk/bb.depth.npz: per-bb mean depth per dataset
@@ -98,6 +103,13 @@ out_b_mtx_bb = list(snakemake_handle.output["b_mtx_bb"])
 out_dp_mtx_bb = list(snakemake_handle.output["dp_mtx_bb"])
 out_rdr_mtx_bb = list(snakemake_handle.output["rdr_mtx_bb"])
 out_sample_file = list(snakemake_handle.output["sample_file"])
+out_unit_snp_file = snakemake_handle.output["unit_snp_file"]
+out_unit_tot_mtx = snakemake_handle.output["unit_tot_mtx"]
+out_unit_a_mtx = snakemake_handle.output["unit_a_mtx"]
+out_unit_b_mtx = snakemake_handle.output["unit_b_mtx"]
+out_unit_window_file = snakemake_handle.output["unit_window_file"]
+out_unit_dp_mtx = snakemake_handle.output["unit_dp_mtx"]
+out_unit_sample_file = snakemake_handle.output["unit_sample_file"]
 out_multi_bb_file = snakemake_handle.output["multi_bb_file"]
 out_multi_tot_mtx = snakemake_handle.output["multi_tot_mtx"]
 out_multi_a_mtx = snakemake_handle.output["multi_a_mtx"]
@@ -175,6 +187,20 @@ keep_snps = np.ones(len(snps), dtype=bool)
 keep_snps[off_idx] = False
 tot_mtx, a_mtx, b_mtx = tot_mtx[keep_snps], a_mtx[keep_snps], b_mtx[keep_snps]
 tot_tumor = np.ascontiguousarray(tot_tumor[keep_snps])
+
+##################################################
+# unit level: the two grids the binning consumes, before any merge
+snps_binned.drop(columns=["bin_id"]).to_csv(out_unit_snp_file, sep="\t", index=False)
+np.savez_compressed(out_unit_tot_mtx, mat=tot_mtx)
+np.savez_compressed(out_unit_a_mtx, mat=a_mtx)
+np.savez_compressed(out_unit_b_mtx, mat=b_mtx)
+bin_df.drop(columns=["bin_id"]).to_csv(out_unit_window_file, sep="\t", index=False)
+np.savez_compressed(out_unit_dp_mtx, mat=dp_corrected)
+sample_df.to_csv(out_unit_sample_file, sep="\t", index=False)
+logging.info(
+    f"unit level: {len(snps_binned)} SNPs to {out_unit_snp_file}, "
+    f"{len(bin_df)} windows to {out_unit_window_file}"
+)
 
 ##################################################
 # adaptive segmentation bounderies

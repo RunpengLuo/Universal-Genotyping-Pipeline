@@ -44,6 +44,8 @@ One explicit segmentation and one shared bin grid in every mode, references with
 ### Changed
 
 #### Output layout (breaking)
+- `bb_dir/unit/{bulk,assay_type}/`: the un-binned SNP, window and gene levels the
+  binning consumes, written once per run and independent of `min_snp_reads`.
 - `allele_dir` is flat and identical in every mode; its subdirs are gone.
 - Single-cell allele matrices are one union over every assay, not one per assay.
 - The single-cell column key is `{barcode}_{dataset_id}_{assay_type}`; h5ad `obs_names`

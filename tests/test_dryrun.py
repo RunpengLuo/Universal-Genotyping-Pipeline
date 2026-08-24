@@ -295,7 +295,8 @@ def test_mixed_wgs_wes(workspace):
     assert counts.get("rd_correct", 0) == 1, proc.stdout[-2000:]
     assert "/bulk/window.dp.npz" in proc.stdout
     assert "/bulk/window.raw.dp.npz" in proc.stdout
-    assert "window.tsv.gz" not in proc.stdout
+    assert "bulkWGS/window.tsv.gz" not in proc.stdout
+    assert "bulkWES/window.tsv.gz" not in proc.stdout
     # one joint binning into a single bb/bulk dir (no per-stream subdir)
     assert "combine_counts" in counts
     assert "/bulk/bb.tsv.gz" in proc.stdout
@@ -912,3 +913,33 @@ def test_single_cell_binning_reads_the_window_grid(workspace):
     assert proc.returncode == 0, proc.stderr[-2000:]
     assert "combine_counts_nonbulk" in job_counts(proc.stdout)
     assert "/windows.bed.gz" in proc.stdout
+
+
+def test_unit_level_outputs(workspace):
+    """Every mode that bins writes the un-binned unit level next to the bbs."""
+    bulk = dryrun(
+        workspace, workspace["bulk_json"], "T1", "bulk_genotyping", ["bulkWGS"]
+    )
+    assert bulk.returncode == 0, bulk.stderr[-2000:]
+    for suffix in (
+        "snp.tsv.gz",
+        "snp.Tallele.npz",
+        "window.tsv.gz",
+        "window.depth.npz",
+        "sample_ids.tsv",
+    ):
+        assert f"/unit/bulk/{suffix}" in bulk.stdout, bulk.stdout[-2000:]
+
+    sc = dryrun(
+        workspace,
+        workspace["sc_json"],
+        "S1",
+        "single_cell_genotyping",
+        ["scRNA", "scATAC"],
+    )
+    assert sc.returncode == 0, sc.stderr[-2000:]
+    assert "/unit/scATAC/window.Xcount.npz" in sc.stdout, sc.stdout[-2000:]
+    assert "/unit/scRNA/gene.Xcount.npz" in sc.stdout, sc.stdout[-2000:]
+    # a gene is indivisible, so RNA has no window level and ATAC no gene level
+    assert "/unit/scRNA/window.tsv.gz" not in sc.stdout
+    assert "/unit/scATAC/gene.tsv.gz" not in sc.stdout

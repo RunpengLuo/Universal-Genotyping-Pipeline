@@ -10,6 +10,7 @@
 - [Outputs](#outputs)
   - [Genomic unit levels](#genomic-unit-levels)
   - [Final bins](#final-bins)
+  - [Unit level](#unit-level)
   - [Intermediates](#intermediates)
   - [TSV columns](#tsv-columns)
   - [QC](#qc-qc_dir)
@@ -331,6 +332,33 @@ columns are cells.
 | `sample_ids.tsv` | One row per dataset, not column-aligned. |
 | `barcodes.tsv.gz` | The matrix column axis; each barcode is suffixed `_{dataset_id}_{assay_type}`. |
 
+### Unit level
+
+`bb_dir/unit/` holds the grids the binning consumes, un-binned and independent of
+`min_snp_reads`. Row axes are TSVs and matrices `.npz`, laid out as in `MSR{msr}/`.
+`copytyping_preprocess` builds no window grid and writes no `unit/`.
+
+**`bulk_genotyping`** - `bb_dir/unit/bulk/`; columns are samples.
+
+| File | Contents |
+|---|---|
+| `snp.tsv.gz` | The SNPs that landed in a window, the allele matrix row axis. |
+| `snp.{Tallele,Aallele,Ballele}.npz` | Allele counts, in matrix-column order. |
+| `window.tsv.gz` | The windows on the run's chromosomes, the depth matrix row axis. |
+| `window.depth.npz` | Bias-corrected depth, windows x datasets. |
+| `sample_ids.tsv` | One row per matrix column. |
+
+**`single_cell_genotyping`** - `bb_dir/unit/{assay_type}/`; columns are cells.
+
+| File | Contents |
+|---|---|
+| `snp.tsv.gz` | The shared SNP grid, duplicated into each subdir. |
+| `snp.{Tallele,Aallele,Ballele}.npz` | That assay's column slice of the allele counts. |
+| `barcodes.tsv.gz` | The matrix column axis. |
+| `sample_ids.tsv` | One row per dataset, not column-aligned. |
+| `window.{tsv.gz,Xcount.npz}` | scATAC only: fragments counted per window per cell. |
+| `gene.{tsv.gz,Xcount.npz}` | RNA assays only: UMIs per gene per cell. A gene is never split, so the gene is the RNA unit and no window matrix is written. |
+
 ### Intermediates
 
 | Path | Contents |
@@ -357,6 +385,9 @@ columns are cells.
 |---|---|
 | `snps.tsv.gz` | `#CHR POS POS0 START END GT PHASE region_id seg_id feature_id feature_type`; bulk adds `PS`. |
 | `bb.tsv.gz` | `#CHR START END #SNPS region_id switchprobs feature_id`. |
+| `snp.tsv.gz` | The `snps.tsv.gz` columns, restricted to the SNPs inside a window. |
+| `window.tsv.gz` | `#CHR START END region_id seg_id`. |
+| `gene.tsv.gz` | `#CHR START END feature_id region_id`. |
 | `sample_ids.tsv` | `SAMPLE sample_id dataset_id sample_type assay_type`; bulk adds `rdr_base_dataset_id`. |
 | `germline_snp_statistics.tsv` | Per chromosome: het_phased, het_unphased, hom_alt, hom_ref. |
 | `depth_statistics.tsv` | Per-dataset depth summary, every bulk dataset in one table. |

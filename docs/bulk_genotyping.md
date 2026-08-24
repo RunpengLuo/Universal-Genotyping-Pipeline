@@ -151,6 +151,11 @@ Refer to [Final bins](reference.md#final-bins) for the full specification of eac
 <out_dir>/
   ...
   bb/
+    unit/
+      bulk/                            # the un-binned grids, MSR-independent
+        snp.{tsv.gz,Tallele.npz,Aallele.npz,Ballele.npz}   # per-SNP allele counts
+        window.{tsv.gz,depth.npz}      # per-window bias-corrected depth
+        sample_ids.tsv                 # one row per sample, in matrix-column order
     MSR{msr}/                          # one subdir per min_snp_reads value
       bulk/                            # one joint bb set over all bulk assays (WGS/WGS-lr/WES)
         bb.tsv.gz                      # bb annotations (shared by every matrix below)

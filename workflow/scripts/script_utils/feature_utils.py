@@ -6,6 +6,7 @@ Functions:
 - annotate_feature_type: stamp SNPs with overlapping genes and exon/intron/intergenic
 - merge_feature_ids, explode_feature_ids: collapse or expand the joined feature_id
 - assign_features_to_ranges: each gene to the range it overlaps most
+- read_gene_counts: RNA h5ad UMIs as a (gene, cell) matrix, un-binned
 - sum_umis_to_bins: RNA h5ad UMIs into a (bb, cell) matrix
 - sum_atac_fragments_to_bins: deduped 10x fragments into a (bb, cell) matrix
 """
@@ -120,6 +121,44 @@ def assign_features_to_ranges(
     adata.var[range_id] = adata.var[range_id].astype(ranges[range_id].dtype)
     logging.info(f"#{assay_type} feature (remain)={adata.n_vars}")
     return adata
+
+
+def read_gene_counts(h5ad_file, barcodes):
+    """Read an RNA h5ad as a gene x cell count matrix, the un-binned RNA unit.
+
+    A gene is indivisible, so it is the RNA counterpart of the window: the finest grid
+    ``sum_umis_to_bins`` can aggregate from. Observations are reordered to ``barcodes``
+    so the columns match that assay's ``snp.*allele.npz`` matrices.
+
+    Parameters
+    ----------
+    h5ad_file : str
+        AnnData (cells x genes) with ``var`` carrying ``#CHR``, ``START``, ``END``.
+    barcodes : sequence of str
+        Cell barcodes (``"{raw}_{dataset_id}_{assay_type}"``) in matrix-observation order.
+
+    Returns
+    -------
+    genes : pd.DataFrame
+        ``#CHR``, ``START``, ``END``, ``feature_id`` and ``region_id`` when present, in
+        the h5ad's var order.
+    x_count : scipy.sparse.csr_matrix
+        Shape ``(n_genes, n_cells)``, dtype int32, row-aligned to *genes*.
+    """
+    import anndata
+
+    adata = anndata.read_h5ad(h5ad_file)
+    barcodes = np.asarray(barcodes, dtype=str)
+    missing = barcodes[~np.isin(barcodes, adata.obs_names)]
+    assert len(missing) == 0, (
+        f"h5ad, {len(missing)} barcode(s) missing, e.g. {missing[:5]}"
+    )
+    adata = adata[barcodes, :].copy()
+    genes = adata.var.reset_index(names="feature_id")
+    cols = ["#CHR", "START", "END", "feature_id"]
+    cols += [c for c in ("region_id",) if c in genes.columns]
+    x_count = csr_matrix(adata.X.T).astype(np.int32)
+    return genes[cols], x_count
 
 
 def sum_umis_to_bins(h5ad_file, barcodes, bb_df, num_bbs, assay_type):

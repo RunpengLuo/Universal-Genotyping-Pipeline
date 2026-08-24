@@ -13,6 +13,12 @@ Inputs:
 - phase_dir/genetic_map.tsv.gz: optional, for cM-based switch probabilities
 - genome_size: chrom sizes TSV
 Outputs:
+- bb_dir/unit/{assay}/snp.tsv.gz: the SNPs that landed in a window, matrix rows
+- bb_dir/unit/{assay}/snp.{T,A,B}allele.npz: this assay's slice of their allele counts
+- bb_dir/unit/{assay}/barcodes.tsv.gz: this assay's cells, matrix column order
+- bb_dir/unit/{assay}/sample_ids.tsv: this assay's datasets
+- bb_dir/unit/scATAC/window.{tsv.gz,Xcount.npz}: fragments counted per window per cell
+- bb_dir/unit/{rna_assay}/gene.{tsv.gz,Xcount.npz}: UMIs per gene per cell, un-binned
 - bb_dir/MSR{msr}/{assay}/bb.tsv.gz: shared bb definitions, duplicated per assay
 - bb_dir/MSR{msr}/{assay}/bb.{T,A,B}allele.npz: this assay's per-bb allele counts
 - bb_dir/MSR{msr}/{assay}/bb.Xcount.npz: this assay's per-bb native counts
@@ -58,6 +64,7 @@ from segmentation_utils import (
 from feature_utils import (
     explode_feature_ids,
     merge_feature_ids,
+    read_gene_counts,
     sum_atac_fragments_to_bins,
     sum_umis_to_bins,
 )
@@ -100,6 +107,16 @@ out_sample_file = list(snakemake_handle.output["sample_file"])
 out_tot_mtx_bb = list(snakemake_handle.output["tot_mtx_bb"])
 out_a_mtx_bb = list(snakemake_handle.output["a_mtx_bb"])
 out_b_mtx_bb = list(snakemake_handle.output["b_mtx_bb"])
+out_unit_snp_file = list(snakemake_handle.output["unit_snp_file"])
+out_unit_tot_mtx = list(snakemake_handle.output["unit_tot_mtx"])
+out_unit_a_mtx = list(snakemake_handle.output["unit_a_mtx"])
+out_unit_b_mtx = list(snakemake_handle.output["unit_b_mtx"])
+out_unit_barcodes = list(snakemake_handle.output["unit_barcodes"])
+out_unit_sample_file = list(snakemake_handle.output["unit_sample_file"])
+out_unit_window_file = list(snakemake_handle.output["unit_window_file"])
+out_unit_window_x = list(snakemake_handle.output["unit_window_x"])
+out_unit_gene_file = list(snakemake_handle.output["unit_gene_file"])
+out_unit_gene_x = list(snakemake_handle.output["unit_gene_x"])
 out_multi_snp_file = list(snakemake_handle.output["multi_snp_file"])
 out_tot_mtx_multi = list(snakemake_handle.output["tot_mtx_multi"])
 out_a_mtx_multi = list(snakemake_handle.output["a_mtx_multi"])
@@ -187,6 +204,61 @@ tot_mtx_snp, a_mtx_snp, b_mtx_snp = (
     b_mtx_snp[keep_snps],
 )
 tot_tumor = np.ascontiguousarray(tot_tumor[keep_snps])
+
+##################################################
+# unit level: the shared SNP grid plus each assay's native count unit, before any merge.
+# scATAC counts fragments through the windows; RNA keeps whole genes, the finest grid a
+# gene can be assigned to.
+atac_assays = [at for at in assay_types if at == "scATAC"]
+rna_assays = [at for at in assay_types if ASSAY_TYPE2MODALITY[at] == "RNA"]
+unit_snps = snps_binned.drop(columns=["bin_id"])
+unit_windows = bin_df.drop(columns=["bin_id"])
+window_ranges = bin_df[["#CHR", "START", "END", "bin_id"]].rename(
+    columns={"bin_id": "bb_id"}
+)
+for k, assay in enumerate(assay_types):
+    cols = assay_cols[assay]
+    at_sids = joint_sids[roster_rows[assay]]
+    at_cells = cells[cols]
+    unit_snps.to_csv(out_unit_snp_file[k], sep="\t", index=False)
+    save_npz(out_unit_tot_mtx[k], tot_mtx_snp[:, cols])
+    save_npz(out_unit_a_mtx[k], a_mtx_snp[:, cols])
+    save_npz(out_unit_b_mtx[k], b_mtx_snp[:, cols])
+    at_cells["BARCODE"].to_csv(
+        out_unit_barcodes[k], sep="\t", header=False, index=False
+    )
+    at_sids.to_csv(out_unit_sample_file[k], sep="\t", index=False)
+    logging.info(
+        f"{assay}: unit level, {len(unit_snps)} SNPs x {len(at_cells)} cells to "
+        f"{out_unit_snp_file[k]}"
+    )
+    if assay == "scATAC":
+        j = atac_assays.index(assay)
+        assert len(frag_files) == len(at_sids), (
+            f"frag_files, {len(frag_files)} files for {len(at_sids)} scATAC datasets"
+        )
+        unit_windows.to_csv(out_unit_window_file[j], sep="\t", index=False)
+        window_x = sum_atac_fragments_to_bins(
+            frag_files,
+            at_sids["dataset_id"].tolist(),
+            at_cells,
+            window_ranges,
+            len(bin_df),
+        )
+        save_npz(out_unit_window_x[j], window_x)
+        logging.info(
+            f"{assay}: unit Xcount (fragments): shape={window_x.shape}, nnz={window_x.nnz}"
+        )
+    elif assay in h5ad_by_assay:
+        j = rna_assays.index(assay)
+        genes, gene_x = read_gene_counts(
+            h5ad_by_assay[assay], at_cells["BARCODE"].tolist()
+        )
+        genes.to_csv(out_unit_gene_file[j], sep="\t", index=False)
+        save_npz(out_unit_gene_x[j], gene_x)
+        logging.info(
+            f"{assay}: unit Xcount (genes): shape={gene_x.shape}, nnz={gene_x.nnz}"
+        )
 
 ##################################################
 # adaptive segmentation bounderies

@@ -10,6 +10,7 @@ Outputs:
 - bb_dir/MSR{msr}/bulk/: the bulk bbs, one subdir per min_snp_reads
 - bb_dir/MSR{msr}/{assay}/: the single-cell bbs, sliced per assay
 - bb_dir/{assay}/: the copytyping bbs, no binning so no MSR level
+- bb_dir/unit/{bulk,assay}/: the un-binned SNP, window and gene levels binning consumes
 """
 
 if workflow_mode == "bulk_genotyping":
@@ -53,6 +54,13 @@ if workflow_mode == "bulk_genotyping":
                 bb_dir + f"/MSR{{msr}}/bulk/sample_ids.tsv",
                 msr=msr_list,
             ),
+            unit_snp_file=bb_dir + "/unit/bulk/snp.tsv.gz",
+            unit_tot_mtx=bb_dir + "/unit/bulk/snp.Tallele.npz",
+            unit_a_mtx=bb_dir + "/unit/bulk/snp.Aallele.npz",
+            unit_b_mtx=bb_dir + "/unit/bulk/snp.Ballele.npz",
+            unit_window_file=bb_dir + "/unit/bulk/window.tsv.gz",
+            unit_dp_mtx=bb_dir + "/unit/bulk/window.depth.npz",
+            unit_sample_file=bb_dir + "/unit/bulk/sample_ids.tsv",
             multi_bb_file=bb_dir + "/multi_snp/bulk/bb.tsv.gz",
             multi_tot_mtx=bb_dir + "/multi_snp/bulk/bb.Tallele.npz",
             multi_a_mtx=bb_dir + "/multi_snp/bulk/bb.Aallele.npz",
@@ -146,6 +154,32 @@ elif workflow_mode == "single_cell_genotyping":
                 bb_dir + f"/MSR{msr}/{at}/bb.Ballele.npz"
                 for at in assay_types
                 for msr in msr_list
+            ],
+            unit_snp_file=[bb_dir + f"/unit/{at}/snp.tsv.gz" for at in assay_types],
+            unit_tot_mtx=[bb_dir + f"/unit/{at}/snp.Tallele.npz" for at in assay_types],
+            unit_a_mtx=[bb_dir + f"/unit/{at}/snp.Aallele.npz" for at in assay_types],
+            unit_b_mtx=[bb_dir + f"/unit/{at}/snp.Ballele.npz" for at in assay_types],
+            unit_barcodes=[bb_dir + f"/unit/{at}/barcodes.tsv.gz" for at in assay_types],
+            unit_sample_file=[bb_dir + f"/unit/{at}/sample_ids.tsv" for at in assay_types],
+            unit_window_file=[
+                bb_dir + f"/unit/{at}/window.tsv.gz"
+                for at in assay_types
+                if at == "scATAC"
+            ],
+            unit_window_x=[
+                bb_dir + f"/unit/{at}/window.Xcount.npz"
+                for at in assay_types
+                if at == "scATAC"
+            ],
+            unit_gene_file=[
+                bb_dir + f"/unit/{at}/gene.tsv.gz"
+                for at in assay_types
+                if ASSAY_TYPE2MODALITY[at] == "RNA"
+            ],
+            unit_gene_x=[
+                bb_dir + f"/unit/{at}/gene.Xcount.npz"
+                for at in assay_types
+                if ASSAY_TYPE2MODALITY[at] == "RNA"
             ],
             multi_snp_file=[bb_dir + f"/multi_snp/{at}/bb.tsv.gz" for at in assay_types],
             tot_mtx_multi=[
