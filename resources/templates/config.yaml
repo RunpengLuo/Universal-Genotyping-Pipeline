@@ -69,7 +69,7 @@ gmap_path: "/path/to/Eagle_v2.4.1/tables/genetic_map_hg38_withX.txt.gz"
 ##################################################
 # Segmentation (adaptive binning + RDR/BAF)
 params_combine_counts:
-  min_snp_reads: [500, 1000]
+  min_snp_reads: [100, 500, 1000, 2000, 3000, 5000, 7500, 10000]
 
 ##################################################
 threads:
