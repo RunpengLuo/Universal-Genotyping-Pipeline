@@ -46,6 +46,9 @@ rule pileup_snps_bulk_bcftools_chrom:
         extra_params=config["params_bcftools"]["extra_params"],
         bam_arg=lambda wc: bam_stream_arg(get_data[(wc.assay_type, wc.dataset_id)]),
         chrom=lambda wc: input_chrom(wc.chrname),
+        ignore_rg=lambda wc: (
+            "--ignore-RG" if wc.assay_type in PSEUDOBULK_ASSAYS else ""
+        ),
     shell:
         r"""
         set -euo pipefail
@@ -59,6 +62,7 @@ rule pileup_snps_bulk_bcftools_chrom:
               --min-MQ {params.min_mapq} \
               --min-BQ {params.min_baseq} \
               --max-depth {params.max_depth} \
+              {params.ignore_rg} \
               {params.extra_params} \
               --regions {params.chrom} \
               --targets-file "{input.snp_vcf}" \

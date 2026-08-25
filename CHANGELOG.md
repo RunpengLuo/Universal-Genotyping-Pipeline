@@ -15,7 +15,8 @@ One explicit segmentation and one shared bin grid in every mode, references with
 #### Config
 - `scDNA` assay type, `bulk_genotyping` only: a single-cell DNA library processed
   pooled through the bulk path, with a parse-time `WARNING` that no per-cell
-  resolution survives.
+  resolution survives. Both bcftools rules pass `--ignore-RG` for it, so its
+  per-barcode `@RG` `SM` tags collapse into one sample.
 - `extremity_tsv`: a TSV of SV breakpoints (`#CHR`, `POS0`) that no bin or bb may cross.
 - `extremity_tsv` unset leaves the arms uncut, one segment per chromosome arm.
 - `build_segment_bed` cuts the `region_bed` arms at each breakpoint and subtracts the

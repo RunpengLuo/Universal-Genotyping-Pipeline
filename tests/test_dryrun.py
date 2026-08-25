@@ -913,6 +913,37 @@ def test_scdna_runs_as_bulk(workspace):
     # the pooling is warned about at parse time; a dry run has no run-log file
     # handler, so logging_snakemake falls back to stdout
     assert "WARNING: single-cell dataset(s) C1 (scDNA)" in proc.stdout + proc.stderr
+    # the scDNA pileup collapses the per-barcode @RG SM tags; the bulkWGS one does not
+    assert "--ignore-RG" in proc.stdout, proc.stdout[-2000:]
+
+
+def test_scdna_genotyping_ignores_read_groups(workspace):
+    """Genotyping off the scDNA BAM pools its per-barcode @RG SM tags into one sample."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_scdna_json"],
+        "SD",
+        "bulk_genotyping",
+        ["bulkWGS", "scDNA"],
+        extra=(f"genotype_dataset_ids={json.dumps(['C1'])}",),
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "--ignore-RG" in proc.stdout, proc.stdout[-2000:]
+    assert "per-barcode @RG SM tags collapse" in proc.stdout + proc.stderr
+
+
+def test_scdna_genotyping_cannot_pool_with_another_dataset(workspace):
+    """--ignore-RG is per input file, so a per-cell library must be genotyped alone."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_scdna_json"],
+        "SD",
+        "bulk_genotyping",
+        ["bulkWGS", "scDNA"],
+        extra=(f"genotype_dataset_ids={json.dumps(['N1', 'C1'])}",),
+    )
+    assert proc.returncode != 0
+    assert "genotype exactly one dataset" in proc.stdout + proc.stderr
 
 
 def test_scdna_rejected_outside_bulk(workspace):

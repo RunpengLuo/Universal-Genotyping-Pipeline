@@ -471,6 +471,7 @@ def parse_workflow(config):
         config["params_genotype_snps"]["apply_clonal_loh_hmm"]
     ) and (workflow_mode == "bulk_genotyping")
     genotype_files = None
+    genotype_ignore_rg = False
     if run_genotyping:
         assert snp_panel, f"snp_panel is required for {workflow_mode}"
         check_local_path(snp_panel, "snp_panel")
@@ -525,6 +526,21 @@ def parse_workflow(config):
         if workflow_mode == "bulk_genotyping":
             logging_snakemake(f"apply_clonal_loh_hmm={apply_clonal_loh_hmm}")
         genotype_files = [rec["files"] for rec in genotype_records]
+        # a per-cell library carries one @RG SM per barcode, which mpileup would call as
+        # one sample each; --ignore-RG pools them, but then one sample per input FILE
+        genotype_ignore_rg = any(
+            rec["assay_type"] in PSEUDOBULK_ASSAYS for rec in genotype_records
+        )
+        if genotype_ignore_rg:
+            assert len(genotype_records) == 1, (
+                f"genotype_dataset_ids pools {genotype_dataset_ids}, including a "
+                f"per-cell library {sorted(PSEUDOBULK_ASSAYS)}; bcftools --ignore-RG "
+                "yields one sample per input file, so genotype exactly one dataset"
+            )
+            logging_snakemake(
+                f"genotyping {genotype_dataset_ids[0]} with bcftools --ignore-RG: its "
+                "per-barcode @RG SM tags collapse into one pooled sample"
+            )
 
     # === phasing check ===
     run_phasing = True
@@ -698,6 +714,7 @@ def parse_workflow(config):
         "assay2sample_types": assay2sample_types,
         "assay2base_dataset_ids": assay2base_dataset_ids,
         "genotype_files": genotype_files,
+        "genotype_ignore_rg": genotype_ignore_rg,
         "phase_files": phase_files,
         "get_genetic_map": get_genetic_map,
         "get_phasing_panel": get_phasing_panel,

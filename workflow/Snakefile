@@ -31,6 +31,7 @@ from const import (
     BULK_ASSAYS,
     BULK_LR_ASSAYS,
     NONBULK_ASSAYS,
+    PSEUDOBULK_ASSAYS,
     SPATIAL_ASSAYS,
     ALLOWED_ASSAY_TYPES,
     ASSAY_TYPE2MODALITY,
@@ -117,6 +118,7 @@ if _has_config:
     # === genotyping and phasing ===
     run_genotyping = _wf["run_genotyping"]
     genotype_files = _wf["genotype_files"]
+    genotype_ignore_rg = _wf["genotype_ignore_rg"]
     run_phasing = _wf["run_phasing"]
     phaser = _wf["phaser"]
     phase_files = _wf["phase_files"]

@@ -56,6 +56,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
                 f"<(bcftools query --regions {input_chrom(wc.chrname)} "
                 f"--format '%CHROM\\t%POS\\t%REF,%ALT\\n' {input.snp_panel})"
             ),
+            ignore_rg="--ignore-RG" if genotype_ignore_rg else "",
             call_arg="--keep-alts" if apply_clonal_loh_hmm else "--variants-only",
             gt_arg="" if apply_clonal_loh_hmm else '&& GT="alt"',
         shell:
@@ -71,6 +72,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
                   --min-MQ {params.min_mapq} \
                   --min-BQ {params.min_baseq} \
                   --max-depth {params.max_depth} \
+                  {params.ignore_rg} \
                   {params.extra_params} \
                   --regions {params.chrom} \
                   --targets-file "{input.snp_panel}" \
@@ -87,7 +89,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
 
             NSAMPLE=$(bcftools query --list-samples {output.snp_vcf} | wc -l | tr -d ' ')
             if [ "$NSAMPLE" -ne 1 ]; then
-                echo "ERROR: genotyping produced $NSAMPLE samples; expected 1. Pooled alignments must share one @RG SM tag (config genotype_dataset_ids)." >> {log}
+                echo "ERROR: genotyping produced $NSAMPLE samples; expected 1. Pooled alignments must share one @RG SM tag, or name a single per-cell dataset (config genotype_dataset_ids)." >> {log}
                 exit 1
             fi
 

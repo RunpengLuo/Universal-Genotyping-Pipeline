@@ -76,6 +76,12 @@ dataset can carry `rdr_base_dataset_id` and be genotyped, phased and binned like
 other bulk dataset, and `bulkWGS` is still preferred as the genotyping source when both
 are present.
 
+A per-cell library carries one `@RG` `SM` tag per barcode, which `bcftools mpileup`
+would call as one sample each, so both bcftools rules take `--ignore-RG` for a `scDNA`
+dataset: one BAM becomes one sample and the barcodes' reads are summed. Because that
+flag is per input FILE, a `scDNA` dataset must be genotyped alone; naming it alongside
+another dataset in `genotype_dataset_ids` is a parse-time error.
+
 Parsing emits a `WARNING` naming each pooled dataset, so a run that produces no
 per-cell output says so up front. `single_cell_genotyping` and `copytyping_preprocess`
 reject `scDNA`: their per-cell counting has no source for it.
