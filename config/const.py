@@ -4,7 +4,8 @@ Last update: 2026-08-12
 
 Constants:
 - WORKFLOW_MODES, REMOTE_MODES: run modes and remote input handling
-- ALLOWED_ASSAY_TYPES, MULTIOME_ASSAYS, ASSAY_TYPE2MODALITY: assay vocabulary
+- ALLOWED_ASSAY_TYPES, MULTIOME_ASSAYS, PSEUDOBULK_ASSAYS, ASSAY_TYPE2MODALITY:
+  assay vocabulary
 - SAMPLE_FILE_EXTS, SAMPLE_TYPES, RECORD_ID_KEYS, RECORD_ID_PATTERN,
   REQUIRED_RECORD_KEYS, REQUIRED_FILES: sample-file schema
 - SNP_PANEL_EXTS: snp_panel extensions bcftools --targets-file can parse. It picks the
@@ -69,6 +70,7 @@ REQUIRED_FILES = {
     "bulkWGS": ALIGNMENT_FILES,
     "bulkWGS-lr": ALIGNMENT_FILES,
     "bulkWES": ALIGNMENT_FILES,
+    "scDNA": ALIGNMENT_FILES,
     "scRNA": ALIGNMENT_FILES | {"barcodes", "matrix_h5"},
     "scATAC": ALIGNMENT_FILES | {"barcodes", "fragments"},
     "VISIUM": ALIGNMENT_FILES
@@ -114,7 +116,9 @@ def get_genetic_map_path(gmap_path):
 
 ##################################################
 # Supported sequencing assays
-BULK_ASSAYS = {"bulkWGS", "bulkWGS-lr", "bulkWES"}
+# single-cell libraries the pipeline processes pooled, through the bulk path only
+PSEUDOBULK_ASSAYS = {"scDNA"}
+BULK_ASSAYS = {"bulkWGS", "bulkWGS-lr", "bulkWES"} | PSEUDOBULK_ASSAYS
 BULK_LR_ASSAYS = {"bulkWGS-lr"}
 NONBULK_ASSAYS = {"scATAC", "scRNA", "VISIUM", "VISIUM3prime"}
 SPATIAL_ASSAYS = {"VISIUM", "VISIUM3prime"}
@@ -123,12 +127,13 @@ ALLOWED_ASSAY_TYPES = list(BULK_ASSAYS) + list(NONBULK_ASSAYS)
 MULTIOME_ASSAYS = {"scRNA", "scATAC"}
 
 # bulk-genotyping assay preference
-GT_ASSAY_ORD = {"bulkWGS": 0, "bulkWGS-lr": 1, "bulkWES": 2}
+GT_ASSAY_ORD = {"bulkWGS": 0, "bulkWGS-lr": 1, "bulkWES": 2, "scDNA": 3}
 
 ASSAY_TYPE2MODALITY = {
     "bulkWGS": "DNA",
     "bulkWGS-lr": "DNA",
     "bulkWES": "DNA",
+    "scDNA": "DNA",
     "scATAC": "DNA",
     "scRNA": "RNA",
     "VISIUM": "RNA",

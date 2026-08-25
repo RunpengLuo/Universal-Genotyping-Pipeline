@@ -30,6 +30,7 @@ from const import (
     LONGREAD_PHASER,
     MULTIOME_ASSAYS,
     NONBULK_ASSAYS,
+    PSEUDOBULK_ASSAYS,
     PANEL_PHASER,
     RECORD_ID_KEYS,
     RECORD_ID_PATTERN,
@@ -325,6 +326,14 @@ def parse_workflow(config):
         logging_snakemake(
             f"dataset: {rec['dataset_id']}\t{rec['reference_version']}\t"
             f"{rec['assay_type']}\t{rec['sample_type']}"
+        )
+
+    pooled = [r for r in records if r["assay_type"] in PSEUDOBULK_ASSAYS]
+    if pooled:
+        logging_snakemake(
+            "WARNING: single-cell dataset(s) "
+            + ", ".join(f"{r['dataset_id']} ({r['assay_type']})" for r in pooled)
+            + " are treated as pseudobulks ignoring cell barcodes."
         )
 
     # === chromosomes: the run's list, spelled both ways ===

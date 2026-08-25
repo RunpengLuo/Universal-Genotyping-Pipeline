@@ -891,6 +891,38 @@ def test_single_cell_skips_repliseq(workspace):
     assert "repliseq_liftover" not in counts
 
 
+def test_scdna_runs_as_bulk(workspace):
+    """scDNA takes the bulk path: mosdepth, bcftools pileup, one joint bb set."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_scdna_json"],
+        "SD",
+        "bulk_genotyping",
+        ["bulkWGS", "scDNA"],
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    counts = job_counts(proc.stdout)
+    assert counts.get("rd_correct", 0) == 1, proc.stdout[-2000:]
+    assert "scDNA/out_mosdepth/C1.regions.bed.gz" in proc.stdout, proc.stdout[-2000:]
+    assert "scDNA_C1/bcftools.counts.tsv.gz" in proc.stdout, proc.stdout[-2000:]
+    assert "combine_counts" in counts
+    # no single-cell rule is reachable: the reads are pooled, cell tags never read
+    assert "pileup_snps_nonbulk_mode1a" not in counts
+    assert "/bb.Xcount.npz" not in proc.stdout
+
+    # the pooling is warned about at parse time; a dry run has no run-log file
+    # handler, so logging_snakemake falls back to stdout
+    assert "WARNING: single-cell dataset(s) C1 (scDNA)" in proc.stdout + proc.stderr
+
+
+def test_scdna_rejected_outside_bulk(workspace):
+    """scDNA is not a non-bulk assay, so the other two modes have nothing to run."""
+    for mode in ("single_cell_genotyping", "copytyping_preprocess"):
+        proc = dryrun(workspace, workspace["bulk_scdna_json"], "SD", mode, ["scDNA"])
+        assert proc.returncode != 0, mode
+        assert "none valid for workflow_mode" in proc.stdout + proc.stderr
+
+
 def test_copytyping_builds_the_window_grid(workspace):
     """copytyping_preprocess bins onto its own bb_file, but the unit level needs windows."""
     proc = dryrun(

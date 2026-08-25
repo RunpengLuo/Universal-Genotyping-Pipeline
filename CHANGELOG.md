@@ -13,6 +13,9 @@ One explicit segmentation and one shared bin grid in every mode, references with
 ### Added
 
 #### Config
+- `scDNA` assay type, `bulk_genotyping` only: a single-cell DNA library processed
+  pooled through the bulk path, with a parse-time `WARNING` that no per-cell
+  resolution survives.
 - `extremity_tsv`: a TSV of SV breakpoints (`#CHR`, `POS0`) that no bin or bb may cross.
 - `extremity_tsv` unset leaves the arms uncut, one segment per chromosome arm.
 - `build_segment_bed` cuts the `region_bed` arms at each breakpoint and subtracts the
@@ -46,6 +49,9 @@ One explicit segmentation and one shared bin grid in every mode, references with
 #### Output layout (breaking)
 - `bb_dir/unit/{bulk,assay_type}/`: the un-binned SNP, window and gene levels the
   binning consumes, written once per run and independent of `min_snp_reads`.
+- `copytyping_preprocess` now tiles a window grid and counts scATAC fragments and
+  SNPs through it, so blacklisted spans inside a bb are masked in every mode
+  (its `bb.Xcount.npz` and `bb.{T,A,B}allele.npz` values move).
 - `allele_dir` is flat and identical in every mode; its subdirs are gone.
 - Single-cell allele matrices are one union over every assay, not one per assay.
 - The single-cell column key is `{barcode}_{dataset_id}_{assay_type}`; h5ad `obs_names`

@@ -14,7 +14,7 @@ Sample file is a JSON-format configuration file contains dataset records over mu
       "dataset_id":            <str>,
       "rdr_base_dataset_id"?:  <str>,
       "passage_id"?:           <str>,
-      "assay_type":            "bulkWGS" | "bulkWGS-lr" | "bulkWES" |
+      "assay_type":            "bulkWGS" | "bulkWGS-lr" | "bulkWES" | "scDNA" |
                                "scRNA" | "scATAC" | "VISIUM" | "VISIUM3prime",
       "sample_type":           "normal" | "tumor",
       "reference_version":     <str>,
@@ -43,7 +43,7 @@ Sample file is a JSON-format configuration file contains dataset records over mu
 |-----|----------|-------------|
 | `sample_id` | Yes | Patient ID; `[A-Za-z0-9_-]+`. |
 | `dataset_id` | Yes | Dataset ID, unique with each patient; `[A-Za-z0-9_-]+`. |
-| `assay_type` | Yes | `bulkWGS` \| `bulkWGS-lr` \| `bulkWES` \| `scRNA` \| `scATAC` \| `VISIUM` \| `VISIUM3prime`. |
+| `assay_type` | Yes | `bulkWGS` \| `bulkWGS-lr` \| `bulkWES` \| `scDNA` \| `scRNA` \| `scATAC` \| `VISIUM` \| `VISIUM3prime`. `scDNA` runs only under `bulk_genotyping`; see [scDNA](#scdna). |
 | `sample_type` | Yes | `normal` \| `tumor`. |
 | `reference_version` | Yes | reference version, e.g. `GRCh38`; see [Reference version](#reference-version). |
 | `files` | Yes | Input files; see [Files](#files). |
@@ -67,6 +67,19 @@ Sample file is a JSON-format configuration file contains dataset records over mu
 | `image_lowres` | `VISIUM` | `outs/spatial/tissue_lowres_image.png` |
 
 ## Features
+### scDNA
+`scDNA` names a single-cell DNA library (10x CNV, DLP+, ACT). It is accepted **only**
+under `workflow_mode: bulk_genotyping`, where it is treated as an ordinary bulk DNA
+alignment: every barcode's reads are pooled into one observation, the cell tag is never
+read, and the record needs `alignment` + `alignment_index` and nothing else. A `scDNA`
+dataset can carry `rdr_base_dataset_id` and be genotyped, phased and binned like any
+other bulk dataset, and `bulkWGS` is still preferred as the genotyping source when both
+are present.
+
+Parsing emits a `WARNING` naming each pooled dataset, so a run that produces no
+per-cell output says so up front. `single_cell_genotyping` and `copytyping_preprocess`
+reject `scDNA`: their per-cell counting has no source for it.
+
 ### Support multiome dataset
 A 10x Epi Multiome dataset is two records sharing one (`sample_id`, `dataset_id`), with `assay_type` set to `scRNA` and `scATAC`, respectively.
 

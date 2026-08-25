@@ -100,6 +100,13 @@ Refer to [Final bins](reference.md#final-bins) for the full specification of eac
 <out_dir>/
   bb/
     {assay_type}.h5ad                          # gene x cell AnnData (scRNA/VISIUM)
+    unit/
+      {assay_type}/                            # the un-binned grids, independent of bb_file
+        snp.{tsv.gz,Tallele.npz,Aallele.npz,Ballele.npz}   # per-SNP allele counts, SNPs x cells
+        window.{tsv.gz,Xcount.npz}             # scATAC only: fragments per window per cell
+        gene.{tsv.gz,Xcount.npz}               # RNA assays only: UMIs per gene per cell
+        barcodes.tsv.gz                        # the matrix column axis
+        sample_ids.tsv                         # roster: one row per dataset x assay
     {assay_type}/                              # per assay, flat (no MSR{msr}/ layer)
       bb.tsv.gz                                # bb annotations (the given bb_file, re-stamped)
       bb.{Xcount,Tallele,Aallele,Ballele}.npz # per-bb native + phased allele counts, bbs x cells

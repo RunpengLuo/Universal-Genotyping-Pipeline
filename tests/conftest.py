@@ -47,6 +47,8 @@ RANGER_FILES = (
     "gex_possorted_bam.bam.bai",
     "atac_possorted_bam.bam",
     "atac_possorted_bam.bam.bai",
+    "scdna_possorted_bam.bam",
+    "scdna_possorted_bam.bam.bai",
     "possorted_genome_bam.bam",
     "possorted_genome_bam.bam.bai",
     "atac_fragments.tsv.gz",
@@ -166,6 +168,35 @@ def workspace(tmp_path_factory):
             },
         ],
     }
+    # scDNA runs only through the bulk path, pooled over every barcode
+    bulk_scdna_json = {
+        "version": 1,
+        "samples": [
+            {
+                "sample_id": "SD",
+                "dataset_id": "N1",
+                "assay_type": "bulkWGS",
+                "sample_type": "normal",
+                "reference_version": "chm13v2",
+                "files": {
+                    "alignment": str(ref / "normal.bam"),
+                    "alignment_index": str(ref / "normal.bam.bai"),
+                },
+            },
+            {
+                "sample_id": "SD",
+                "dataset_id": "C1",
+                "rdr_base_dataset_id": "N1",
+                "assay_type": "scDNA",
+                "sample_type": "tumor",
+                "reference_version": "chm13v2",
+                "files": {
+                    "alignment": str(outs / "scdna_possorted_bam.bam"),
+                    "alignment_index": str(outs / "scdna_possorted_bam.bam.bai"),
+                },
+            },
+        ],
+    }
     sc_json = {
         "version": 1,
         "samples": [
@@ -245,6 +276,7 @@ def workspace(tmp_path_factory):
     for name, doc in (
         ("bulk", bulk_json),
         ("bulk_mixed", bulk_mixed_json),
+        ("bulk_scdna", bulk_scdna_json),
         ("sc", sc_json),
     ):
         p = root / f"{name}.json"

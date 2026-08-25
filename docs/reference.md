@@ -44,7 +44,7 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 | Key | Required | Description |
 |-----|----------|-------------|
 | `workflow_mode` | Yes | `bulk_genotyping` \| `single_cell_genotyping` \| `copytyping_preprocess`. |
-| `assay_types` | Yes | Assay types to run, e.g. `["bulkWGS"]`, `["scRNA","scATAC"]`. |
+| `assay_types` | Yes | Assay types to run, e.g. `["bulkWGS"]`, `["scRNA","scATAC"]`. An assay not valid for `workflow_mode` is dropped; none valid is an error. |
 | `sample_id` | Yes | Which `sample_id` of the sample file to process. |
 | `dataset_ids` | No | Restrict the run to these `dataset_id`s of that `sample_id`; `[]` (default) runs all of them. Selection precedes the `reference_version` filter: a named `dataset_id` with no record on that build is an error. |
 | `chromosomes` | Yes | Chromosomes to run; default `[1..22]`. |
@@ -336,7 +336,6 @@ columns are cells.
 
 `bb_dir/unit/` holds the grids the binning consumes, un-binned and independent of
 `min_snp_reads`. Row axes are TSVs and matrices `.npz`, laid out as in `MSR{msr}/`.
-`copytyping_preprocess` builds no window grid and writes no `unit/`.
 
 **`bulk_genotyping`** - `bb_dir/unit/bulk/`; columns are samples.
 
@@ -348,16 +347,22 @@ columns are cells.
 | `window.depth.npz` | Bias-corrected depth, windows x datasets. |
 | `sample_ids.tsv` | One row per matrix column. |
 
-**`single_cell_genotyping`** - `bb_dir/unit/{assay_type}/`; columns are cells.
+**`single_cell_genotyping`** and **`copytyping_preprocess`** - `bb_dir/unit/{assay_type}/`; columns are cells.
 
 | File | Contents |
 |---|---|
-| `snp.tsv.gz` | The shared SNP grid, duplicated into each subdir. |
+| `snp.tsv.gz` | The SNPs that landed in a window, duplicated into each subdir. |
 | `snp.{Tallele,Aallele,Ballele}.npz` | That assay's column slice of the allele counts. |
 | `barcodes.tsv.gz` | The matrix column axis. |
 | `sample_ids.tsv` | One row per dataset, not column-aligned. |
 | `window.{tsv.gz,Xcount.npz}` | scATAC only: fragments counted per window per cell. |
 | `gene.{tsv.gz,Xcount.npz}` | RNA assays only: UMIs per gene per cell. A gene is never split, so the gene is the RNA unit and no window matrix is written. |
+
+`copytyping_preprocess` bins onto the given `bb_file`, but tiles a window grid all the
+same: in every mode the windows carry no blacklisted span, and scATAC fragments and
+SNPs are counted through them, so a blacklisted fragment or SNP inside a bb's span is
+dropped rather than swallowed by the hull. A gene is indivisible and is still assigned
+whole to the bb it overlaps most.
 
 ### Intermediates
 
