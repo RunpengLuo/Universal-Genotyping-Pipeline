@@ -134,6 +134,7 @@ rule rd_correct:
             for rid in assay2dataset_ids[at]
         ],
         window_bed=window_bed,
+        window_target=window_target,
         genome_size=genome_size,
         region_bed=segment_bed,
         blacklist_bed=blacklist_bed,

@@ -7,10 +7,13 @@ Rules:
 - [optional] repliseq_bigwig_to_bedgraph: fetch one ENCODE Repli-seq bigWig
 - [optional] repliseq_liftover: lift an hg19 Repli-seq bedGraph to the run build
 - [optional] build_window_bed: tile the segments, annotate GC, MAP, REPLI
+- [optional] annotate_window_targets: per-window capture-target fraction
 - window_bed_to_3bed: headerless 3-column BED for mosdepth --by
 Globals:
 - extremity_tsv: the configured SV breakpoints, empty when unset
 - segment_bed, window_bed: paths, built or configured
+- target_bed, window_target: the capture kit's targets and the per-window fraction,
+  both empty when target_bed is unset
 - build_windows, do_repliseq, window_size: build switches and the tile size
 """
 
@@ -120,6 +123,27 @@ if build_windows:
             window_size=window_size,
         script:
             "../scripts/build_window_bed.py"
+
+
+if target_bed:
+
+    rule annotate_window_targets:
+        """Per-window capture-target bp fraction, the on/off-target split."""
+        input:
+            window_bed=window_bed,
+            target_bed=target_bed,
+        output:
+            window_target=window_target,
+        log:
+            log_dir + f"/annotate_window_targets.{_run_id}.log",
+        benchmark:
+            bench_dir + f"/annotate_window_targets.{_run_id}.tsv"
+        conda:
+            "../envs/base.yaml"
+        params:
+            chroms=chr_chromosomes,
+        script:
+            "../scripts/annotate_window_targets.py"
 
 
 rule window_bed_to_3bed:

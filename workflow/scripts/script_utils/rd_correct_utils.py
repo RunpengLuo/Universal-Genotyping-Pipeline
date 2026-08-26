@@ -5,6 +5,7 @@ Last update: 2026-08-08
 Functions:
 - correct_readcount_lowess: HMMcopy-style LOWESS correction on GC, MAP, REPLI
 - correct_readcount_quadreg: median quadratic-regression correction, the default
+- correct_readcount_by_target_sites: run either corrector on- and off-target separately
 - compute_gc_rd_stats: GC-vs-depth correlation and spread, before and after
 - compute_depth_statistics: per-dataset depth summary written to depth_statistics.tsv
 """
@@ -334,6 +335,43 @@ def correct_readcount_quadreg(
     logging.info(f"    MEDIAN  {n_nan:>8d}/{n} ({n_nan / max(n, 1) * 100:5.1f}%) NaN")
 
     return corrected.astype(np.float32), rmse
+
+
+def correct_readcount_by_target_sites(correct_fn, reads, gc, target_sites, **kwargs):
+    """Fit and apply *correct_fn* on- and off-target separately.
+
+    A hybrid-capture library is bimodal in depth: the captured windows sit at tens to
+    hundreds of x, the off-target background near 0x. Pooled, a GC fit reads that split as
+    a GC effect - exons are GC-rich, so capture status and GC are strongly confounded - and
+    dividing by it rescales tumor and normal differently, because the two libraries have
+    different sets of non-zero windows to fit on. Fitting the two apart removes the
+    confounding; each keeps its own depth scale, since every corrector rescales to the
+    median of the bins it fit.
+
+    Args:
+        correct_fn: ``correct_readcount_lowess`` or ``correct_readcount_quadreg``.
+        reads: Raw per-window depth, 1-D.
+        gc: Per-window GC fraction, aligned to *reads*.
+        target_sites: Bool per window, True where the window overlaps a capture target.
+        **kwargs: Passed through; any array-valued entry the length of *reads* is sliced
+            to the windows being fit, everything else is passed whole.
+
+    Returns:
+        ``(corrected, rmse)``: the corrected depth over every window, and the
+        window-count-weighted mean of the two GC RMSEs.
+    """
+    out = np.full(len(reads), np.nan, dtype=np.float32)
+    rmses, weights = [], []
+    for label, keep in (("off-target", ~target_sites), ("on-target", target_sites)):
+        sub = {
+            k: (v[keep] if isinstance(v, np.ndarray) and v.shape == reads.shape else v)
+            for k, v in kwargs.items()
+        }
+        logging.info(f"    {label}: {int(keep.sum())} windows")
+        out[keep], rmse = correct_fn(reads[keep], gc[keep], **sub)
+        rmses.append(rmse)
+        weights.append(int(keep.sum()))
+    return out, float(np.average(rmses, weights=weights))
 
 
 def compute_gc_rd_stats(mat, gc_vals, labels, n_gc_bins=100):

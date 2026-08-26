@@ -437,6 +437,24 @@ def parse_workflow(config):
         )
         window_bed = aux_dir + "/windows.bed.gz"
 
+    # === capture targets ===
+    target_bed = config.get("target_bed")
+    window_target = []
+    if target_bed:
+        check_local_path(target_bed, "target_bed")
+        window_target = aux_dir + "/window.target.npz"
+        if "bulkWES" not in assay_types:
+            logging_snakemake(
+                f"NOTE: target_bed={target_bed} is set but no bulkWES dataset is in the "
+                "run; the target sites are annotated and then unused"
+            )
+        else:
+            logging_snakemake(
+                f"split bulkWES windows on/off capture target: {target_bed}"
+            )
+    else:
+        target_bed = []
+
     # === pre-built files ===
     het_snp_vcf = config["het_snp_vcf"]
     het_snp_vcf_phased = bool(config["het_snp_vcf_phased"])
@@ -743,4 +761,6 @@ def parse_workflow(config):
         "do_repliseq": do_repliseq,
         "window_bed": window_bed,
         "window_size": window_size,
+        "target_bed": target_bed,
+        "window_target": window_target,
     }

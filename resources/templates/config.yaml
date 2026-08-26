@@ -47,6 +47,9 @@ gene_blacklist_file: null
 # Build windows (bulk)
 window_bed: null
 mappability_bed: null
+# bulkWES only: the capture kit's target intervals, splitting the windows into
+# on- and off-target. resources/scripts/fetch_capture_targets.sh fetches one.
+target_bed: null
 
 ##################################################
 # Genotyping

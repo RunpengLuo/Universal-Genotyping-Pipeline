@@ -54,6 +54,8 @@ gene_blacklist_file: null
 # Build windows (bulk)
 window_bed: null
 mappability_bed: null
+# Hybrid-capture target intervals (bulkWES)
+target_bed: null
 params_build_windows:
   window_size: 1000
 

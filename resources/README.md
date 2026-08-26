@@ -11,6 +11,7 @@
 - [Sequencing bias correction](#sequencing-bias-correction)
   - [Mappability track](#mappability-track)
   - [Replication timing](#replication-timing)
+  - [Capture targets (WES)](#capture-targets-wes)
 
 ---
 
@@ -158,4 +159,43 @@ that builds its own window BED, with `params_count_reads.rt_correct: true` and a
 | ENCODE UW Repli-seq WaveSignal (16 bigWig) | Human | hg19 | [UCSC](https://hgdownload.soe.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeUwRepliSeq/) |
 | liftOver chain hg19 -> hg38 | Human | hg38 | [hg19ToHg38.over.chain.gz](https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz) |
 | liftOver chain hg19 -> chm13v2 (`hs1`) | Human | chm13v2 | [hg19ToHs1.over.chain.gz](https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHs1.over.chain.gz) |
+
+### Capture targets (WES)
+
+Optional; set `target_bed` to the hybrid-capture kit's target intervals (BED3+). A `bulkWES`
+dataset is then bias-corrected on- and off-target separately, and its RDR is estimated on
+each side and recombined by inverse variance. Off-target windows are kept
+throughout. See [bulk_genotyping.md](../docs/bulk_genotyping.md#whole-exome-wes).
+
+One kit is bundled; for the rest, build the file yourself (below).
+
+| Kit | Species | Reference | File |
+|-----|---------|-----------|------|
+| IDT xGen Exome Research Panel v1 | Human | hg38 | [targets.IDT_xGen_v1.hg38.bed.gz](data/targets.IDT_xGen_v1.hg38.bed.gz) |
+
+```yaml
+target_bed: resources/data/targets.IDT_xGen_v1.hg38.bed.gz
+```
+
+Any BED from the kit vendor works. `resources/scripts/fetch_capture_targets.sh` automates the
+UCSC [exomeProbesets](https://genome.ucsc.edu/cgi-bin/hgTrackUi?g=exomeProbesets) copies,
+which are already `chr`-prefixed and available per build, and normalizes them to a BED3 on
+chr1-22/X/Y, sorted with overlapping intervals unioned (the bundled file above is its output):
+
+```bash
+bash resources/scripts/fetch_capture_targets.sh <kit-stem> <hg19|hg38> <out-dir>
+```
+
+| Kit | hg38 file stem |
+|-----|----------------|
+| IDT xGen Exome Research Panel v1 | `xgen-exome-research-panel-targets-hg38` (bundled) |
+| IDT xGen Exome Research Panel v2 | `xgen-exome-research-panel-v2-targets-hg38` |
+| Twist Bioscience Exome | `Twist_Exome_Target_hg38` |
+| Roche KAPA HyperExome | `KAPA_HyperExome_hg38_primary_targets` |
+| Agilent SureSelect Human All Exon V6 | `S07604514_Covered` |
+| Roche SeqCap EZ MedExome | `SeqCap_EZ_MedExome_hg38_capture_targets` |
+
+> [!IMPORTANT]
+> The build must match the run's `reference_version`; the intervals are used unconverted.
+> Full listing: https://hgdownload.soe.ucsc.edu/gbdb/hg38/exomeProbesets/
 

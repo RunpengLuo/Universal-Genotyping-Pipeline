@@ -5,6 +5,8 @@ Last update: 2026-08-12
 Inputs:
 - pileup_dir/{assay}/out_mosdepth/{dataset_id}.regions.bed.gz: per-dataset per-bin depth
 - aux_dir/windows.bed.gz: the shared fixed bins with GC, MAP, REPLI, region_id
+- aux_dir/window.target.npz: optional per-window capture-target fraction; when present,
+  a bulkWES dataset is corrected on- and off-target separately
 - genome_size, region_bed, blacklist_bed: QC plot axis and shading
 Outputs:
 - pileup_dir/bulk/window.raw.dp.npz: raw mosdepth depth, windows x all bulk datasets,
@@ -38,6 +40,7 @@ from io_utils import read_mosdepth_bed, read_window_bed
 from rd_correct_utils import (
     compute_depth_statistics,
     compute_gc_rd_stats,
+    correct_readcount_by_target_sites,
     correct_readcount_lowess,
     correct_readcount_quadreg,
 )
@@ -52,6 +55,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 # inputs
 mosdepth_files = list(snakemake_handle.input["mosdepth_files"])
 window_bed = snakemake_handle.input["window_bed"]
+window_target = maybe_path(snakemake_handle.input["window_target"])
 genome_size = snakemake_handle.input["genome_size"]
 region_bed = snakemake_handle.input["region_bed"]
 blacklist_bed = maybe_path(snakemake_handle.input["blacklist_bed"])
@@ -136,6 +140,18 @@ if repli_vals is not None:
 else:
     logging.info("no REPLI column; skipping replication timing correction")
 
+target_sites = None
+if window_target is not None:
+    target_frac = np.load(window_target)["mat"]
+    assert len(target_frac) == n_bins, (
+        f"{window_target}: {len(target_frac)} rows for {n_bins} windows in {window_bed}"
+    )
+    target_sites = target_frac > 0
+    logging.info(
+        f"capture targets: {int(target_sites.sum())}/{n_bins} on-target windows; "
+        "bulkWES datasets are corrected on- and off-target separately"
+    )
+
 gc_rmse_list = None
 if gc_correct:
     dp_corrected = np.zeros_like(dp_raw, dtype=np.float32)
@@ -149,16 +165,26 @@ if gc_correct:
 
     logging.info(f"applying {correct_readcount.__name__} per sample")
     for i, dataset_id in enumerate(dataset_ids):
-        logging.info(f"correcting {dataset_id}")
-        dp_corrected[:, i], gc_rmse = correct_readcount(
-            dp_raw[:, i],
-            gc_vals,
+        by_target = target_sites is not None and dataset_assays[i] == "bulkWES"
+        logging.info(
+            f"correcting {dataset_id}"
+            + (" on- and off-target separately" if by_target else "")
+        )
+        kwargs = dict(
             mappability=map_vals,
             repliseq=repli_vals,
             doutlier=doutlier,
             min_mappability=min_mappability,
             **extra_kwargs,
         )
+        if by_target:
+            dp_corrected[:, i], gc_rmse = correct_readcount_by_target_sites(
+                correct_readcount, dp_raw[:, i], gc_vals, target_sites, **kwargs
+            )
+        else:
+            dp_corrected[:, i], gc_rmse = correct_readcount(
+                dp_raw[:, i], gc_vals, **kwargs
+            )
         gc_rmse_list.append(gc_rmse)
 else:
     logging.info("gc_correct=False; skipping bias correction")

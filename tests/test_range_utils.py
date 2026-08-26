@@ -513,3 +513,41 @@ def test_split_range_rejects_degenerate_ranges():
     bad = _q([("chr1", 50, 50)])
     with pytest.raises(AssertionError):
         iv.split_range_at_pos(bad, _p([("chr1", 40)]))
+
+
+def test_overlap_bp_partial_and_full():
+    """Overlapping bp per query range, counting the half-open intersection."""
+    qry = _q([("chr1", 0, 100), ("chr1", 100, 200), ("chr1", 500, 600)])
+    ref = _ref([("chr1", 50, 150, "t1")])
+    assert iv.range_overlap_bp(qry, ref).tolist() == [50, 50, 0]
+
+
+def test_overlap_bp_unions_overlapping_references():
+    """A base covered by two probes counts once, not twice."""
+    qry = _q([("chr1", 0, 100)])
+    ref = _ref([("chr1", 10, 60, "a"), ("chr1", 40, 80, "b")])
+    assert iv.range_overlap_bp(qry, ref).tolist() == [70]
+
+
+def test_overlap_bp_reference_inside_query():
+    """Several disjoint references inside one query sum."""
+    qry = _q([("chr1", 0, 1000)])
+    ref = _ref(
+        [("chr1", 10, 20, "a"), ("chr1", 100, 130, "b"), ("chr1", 900, 905, "c")]
+    )
+    assert iv.range_overlap_bp(qry, ref).tolist() == [45]
+
+
+def test_overlap_bp_other_chromosome_and_empty():
+    """A contig the reference never mentions, and an empty reference, are both zero."""
+    qry = _q([("chr1", 0, 100), ("chr9", 0, 100)])
+    ref = _ref([("chr1", 0, 100, "a")])
+    assert iv.range_overlap_bp(qry, ref).tolist() == [100, 0]
+    assert iv.range_overlap_bp(qry, _ref([])).tolist() == [0, 0]
+
+
+def test_overlap_bp_preserves_query_row_order():
+    """Output is positional in the query, whatever order the reference arrives in."""
+    qry = _q([("chr2", 0, 100), ("chr1", 0, 100)])
+    ref = _ref([("chr1", 0, 30, "a"), ("chr2", 0, 70, "b")])
+    assert iv.range_overlap_bp(qry, ref).tolist() == [70, 30]

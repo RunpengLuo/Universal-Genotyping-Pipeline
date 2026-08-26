@@ -7,6 +7,7 @@ Functions:
 - assign_pos_to_range_ovlp: every overlapping id, sep-joined, for nested references
 - assign_range_to_range: a range, by max_overlap, midpoint or contained
 - overlaps_any_range: boolean membership mask, no id carried
+- range_overlap_bp: overlapping bp per query range, references unioned first
 - trim_range_by_range: interval difference, cutting one range set out
 - split_range_at_pos: cut ranges at positions, keeping every base
 - merge_ranges_to_clusters: cluster ordered items so no range splits
@@ -373,6 +374,50 @@ def overlaps_any_range(qry, ref, pos_col="POS0"):
             found |= valid
         hit[qmask] = found
     return hit
+
+
+def range_overlap_bp(qry, ref):
+    """Base pairs of each query range covered by the reference range set.
+
+    The references are unioned first, so a base covered by several of them (overlapping
+    capture probes, say) counts once. Cost is one sort plus two ``searchsorted`` per
+    chromosome, which keeps a 1 kb genome-wide window grid tractable.
+
+    Args:
+        qry: Query ranges with ``#CHR``, ``START``, ``END``. Not modified.
+        ref: Reference ranges with ``#CHR``, ``START``, ``END``.
+
+    Returns:
+        int64 overlapping bp, one per row of *qry*, in *qry* row order.
+    """
+    out = np.zeros(len(qry), dtype=np.int64)
+    if len(ref) == 0 or len(qry) == 0:
+        return out
+    _check_ranges(qry, "qry")
+    _check_ranges(ref, "ref")
+    chroms = qry["#CHR"].to_numpy()
+    q_starts = qry["START"].to_numpy(dtype=np.int64)
+    q_ends = qry["END"].to_numpy(dtype=np.int64)
+    for chrom, ref_c in ref.groupby("#CHR", sort=False):
+        qmask = chroms == chrom
+        if not qmask.any():
+            continue
+        m_start, m_end = _merge_ranges(
+            ref_c["START"].to_numpy(dtype=np.int64),
+            ref_c["END"].to_numpy(dtype=np.int64),
+        )
+        # covered(x) = reference bp strictly left of x, from the prefix sum plus the
+        # partial cut through the block x lands in
+        cum = np.concatenate(([0], np.cumsum(m_end - m_start)))
+
+        def covered(x, m_start=m_start, m_end=m_end, cum=cum):
+            i = np.searchsorted(m_start, x, side="right") - 1
+            j = np.clip(i, 0, None)
+            partial = np.clip(x - m_start[j], 0, m_end[j] - m_start[j])
+            return np.where(i < 0, 0, cum[j] + partial)
+
+        out[qmask] = covered(q_ends[qmask]) - covered(q_starts[qmask])
+    return out
 
 
 def _merge_ranges(starts, ends):

@@ -114,6 +114,8 @@ if _has_config:
     window_size = _wf["window_size"]
     build_windows = _wf["build_windows"]
     do_repliseq = _wf["do_repliseq"]
+    target_bed = _wf["target_bed"]
+    window_target = _wf["window_target"]
 
     # === genotyping and phasing ===
     run_genotyping = _wf["run_genotyping"]
