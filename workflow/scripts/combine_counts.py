@@ -1,6 +1,6 @@
-"""Bulk: SNP-informed adaptive binning over all bulk assays, plus depth and RDR.
+"""Bulk: SNP-informed adaptive binning over all bulk assays, plus depth, RDR and reads.
 
-Last update: 2026-08-13
+Last update: 2026-08-27
 
 Inputs:
 - allele_dir/snps.tsv.gz: the shared SNP set, matrix rows
@@ -8,6 +8,7 @@ Inputs:
 - allele_dir/sample_ids.tsv: one row per matrix column
 - aux_dir/windows.bed.gz: the shared fixed bins, matrix rows of the depth
 - pileup_dir/bulk/window.dp.npz: bias-corrected depth, windows x bulk datasets
+- pileup_dir/{assay}/{dataset_id}.rdcount.bed.gz: per-window read starts, one per dataset
 - aux_dir/segment.bed: region_id and seg_id cluster keys
 - phase_dir/genetic_map.tsv.gz: optional, for cM-based switch probabilities
 - blacklist_bed, genome_size: QC plot shading and axis
@@ -16,14 +17,19 @@ Outputs:
 - bb_dir/unit/bulk/snp.{T,A,B}allele.npz: their allele counts
 - bb_dir/unit/bulk/window.tsv.gz: the windows on the run's chromosomes, matrix rows
 - bb_dir/unit/bulk/window.depth.npz: bias-corrected depth, windows x datasets
+- bb_dir/unit/bulk/window.rdcount.npz: read starts, windows x datasets
 - bb_dir/unit/bulk/sample_ids.tsv: one row per matrix column
 - bb_dir/MSR{msr}/bulk/bb.tsv.gz: bb definitions, one row each
 - bb_dir/MSR{msr}/bulk/bb.{T,A,B}allele.npz: per-bb phased allele counts
 - bb_dir/MSR{msr}/bulk/bb.depth.npz: per-bb mean depth per dataset
 - bb_dir/MSR{msr}/bulk/bb.rdr.npz: per-bb RDR per tumor
+- bb_dir/MSR{msr}/bulk/bb.rdcount.npz: per-bb read starts per dataset
 - bb_dir/MSR{msr}/bulk/sample_ids.tsv: one row per matrix column
-- bb_dir/multi_snp/bulk/: the same six files over nsnp_multi-SNP groups, binning-independent
+- bb_dir/multi_snp/bulk/: the same seven files over nsnp_multi-SNP groups, binning-independent
 - qc_dir/combine_counts.bulk.MSR{msr}.pdf: segmentation, RDR/BAF and 2D QC
+
+Read starts are additive, so every level sums them from the windows; depth, a per-base
+mean, is length-weighted instead. Both cover every dataset, in sample_ids.tsv order.
 """
 
 import logging
@@ -45,7 +51,7 @@ from range_utils import (
     merge_ranges_to_clusters,
 )
 from feature_utils import explode_feature_ids, merge_feature_ids
-from io_utils import read_snp_mats, read_window_bed, write_bb_file
+from io_utils import read_mosdepth_bed, read_snp_mats, read_window_bed, write_bb_file
 from combine_counts_utils import (
     summarize_read_depth_bb,
     summarize_rdr_bb,
@@ -68,6 +74,7 @@ tot_mtx_snp = snakemake_handle.input["tot_mtx_snp"]
 a_mtx_snp = snakemake_handle.input["a_mtx_snp"]
 b_mtx_snp = snakemake_handle.input["b_mtx_snp"]
 dp_corrected_file = snakemake_handle.input["dp_corrected"]
+rdcount_files = list(snakemake_handle.input["rdcount_files"])
 window_bed = snakemake_handle.input["window_bed"]
 sample_file = snakemake_handle.input["sample_file"]
 gmap_file = maybe_path(snakemake_handle.input["gmap_file"])
@@ -102,6 +109,7 @@ out_a_mtx_bb = list(snakemake_handle.output["a_mtx_bb"])
 out_b_mtx_bb = list(snakemake_handle.output["b_mtx_bb"])
 out_dp_mtx_bb = list(snakemake_handle.output["dp_mtx_bb"])
 out_rdr_mtx_bb = list(snakemake_handle.output["rdr_mtx_bb"])
+out_rdcount_mtx_bb = list(snakemake_handle.output["rdcount_mtx_bb"])
 out_sample_file = list(snakemake_handle.output["sample_file"])
 out_unit_snp_file = snakemake_handle.output["unit_snp_file"]
 out_unit_tot_mtx = snakemake_handle.output["unit_tot_mtx"]
@@ -109,6 +117,7 @@ out_unit_a_mtx = snakemake_handle.output["unit_a_mtx"]
 out_unit_b_mtx = snakemake_handle.output["unit_b_mtx"]
 out_unit_window_file = snakemake_handle.output["unit_window_file"]
 out_unit_dp_mtx = snakemake_handle.output["unit_dp_mtx"]
+out_unit_rdcount_mtx = snakemake_handle.output["unit_rdcount_mtx"]
 out_unit_sample_file = snakemake_handle.output["unit_sample_file"]
 out_multi_bb_file = snakemake_handle.output["multi_bb_file"]
 out_multi_tot_mtx = snakemake_handle.output["multi_tot_mtx"]
@@ -116,6 +125,7 @@ out_multi_a_mtx = snakemake_handle.output["multi_a_mtx"]
 out_multi_b_mtx = snakemake_handle.output["multi_b_mtx"]
 out_multi_dp_mtx = snakemake_handle.output["multi_dp_mtx"]
 out_multi_rdr_mtx = snakemake_handle.output["multi_rdr_mtx"]
+out_multi_rdcount_mtx = snakemake_handle.output["multi_rdcount_mtx"]
 out_multi_sample_file = snakemake_handle.output["multi_sample_file"]
 out_qc_pdf = list(snakemake_handle.output["qc_pdf"])
 
@@ -145,6 +155,29 @@ assert dp_dataset_ids == dataset_ids and dp_dataset_assays == list(dataset_assay
 assert dp_corrected.shape == (len(bin_df), num_datasets), (
     f"{dp_corrected_file}: shape {dp_corrected.shape}, expected "
     f"({len(bin_df)}, {num_datasets}) from {window_bed}"
+)
+assert len(rdcount_files) == num_datasets, (
+    f"{len(rdcount_files)} read-start files for {num_datasets} datasets"
+)
+
+# read starts, joined onto the window grid by coordinate as rd_correct does for depth
+join_keys = ["#CHR", "START", "END"]
+rdcount = np.zeros((len(bin_df), num_datasets), dtype=np.int32)
+for i, (dataset_id, rdc_file) in enumerate(zip(dataset_ids, rdcount_files)):
+    counts = bin_df[join_keys].merge(
+        read_mosdepth_bed(rdc_file, value_col="COUNT"),
+        on=join_keys,
+        how="left",
+        sort=False,
+    )
+    n_missing = int(counts["COUNT"].isna().sum())
+    assert n_missing == 0, (
+        f"{dataset_id}: {n_missing}/{len(bin_df)} windows absent from {rdc_file}"
+    )
+    rdcount[:, i] = counts["COUNT"].to_numpy(dtype=np.int32)
+logging.info(
+    f"read starts: {rdcount.sum(axis=0).tolist()} over {len(bin_df)} windows, "
+    f"columns {dataset_ids}"
 )
 
 get_rdr_base_dataset_id = {}
@@ -196,6 +229,7 @@ np.savez_compressed(out_unit_a_mtx, mat=a_mtx)
 np.savez_compressed(out_unit_b_mtx, mat=b_mtx)
 bin_df.drop(columns=["bin_id"]).to_csv(out_unit_window_file, sep="\t", index=False)
 np.savez_compressed(out_unit_dp_mtx, mat=dp_corrected)
+np.savez_compressed(out_unit_rdcount_mtx, mat=rdcount)
 sample_df.to_csv(out_unit_sample_file, sep="\t", index=False)
 logging.info(
     f"unit level: {len(snps_binned)} SNPs to {out_unit_snp_file}, "
@@ -312,6 +346,7 @@ multi_rdr = summarize_rdr_bb(
     get_rdr_base_dataset_id,
     dataset_ids,
 )
+multi_rdcount = sum_features_to_bbs(rdcount[inside], win_multi[inside], num_multi)
 
 multi_baf = np.divide(
     multi_b,
@@ -352,6 +387,7 @@ multi_tot, multi_a, multi_b = (
     multi_b[valid_multi],
 )
 multi_dp, multi_rdr = multi_dp[valid_multi], multi_rdr[valid_multi]
+multi_rdcount = multi_rdcount[valid_multi]
 old_to_new_multi = {old: new for new, old in enumerate(np.where(valid_multi)[0])}
 snps_multi_valid = snps_multi[snps_multi["bb_id"].isin(old_to_new_multi)].copy()
 snps_multi_valid["bb_id"] = snps_multi_valid["bb_id"].map(old_to_new_multi)
@@ -379,12 +415,24 @@ np.savez_compressed(out_multi_a_mtx, mat=multi_a)
 np.savez_compressed(out_multi_b_mtx, mat=multi_b)
 np.savez_compressed(out_multi_dp_mtx, mat=multi_dp)
 np.savez_compressed(out_multi_rdr_mtx, mat=multi_rdr)
+np.savez_compressed(out_multi_rdcount_mtx, mat=multi_rdcount)
 sample_df.to_csv(out_multi_sample_file, sep="\t", index=False)
 logging.info(f"wrote {len(multi_bbs)} multi-SNP groups to {out_multi_bb_file}")
 
 ##################################################
 # one adaptive binning per min_snp_reads, on the shared fixed bins
-for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zip(
+for (
+    msr,
+    out_bb,
+    out_tot,
+    out_a,
+    out_b,
+    out_dp,
+    out_rdr,
+    out_rdcount,
+    out_samp,
+    out_pdf,
+) in zip(
     msr_list,
     out_bb_file,
     out_tot_mtx_bb,
@@ -392,6 +440,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     out_b_mtx_bb,
     out_dp_mtx_bb,
     out_rdr_mtx_bb,
+    out_rdcount_mtx_bb,
     out_sample_file,
     out_qc_pdf,
 ):
@@ -435,6 +484,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     bb_dp, bb_bases = summarize_read_depth_bb(
         bin_df, dp_corrected, num_bbs, dataset_ids=dataset_ids
     )
+    bb_rdcount = sum_features_to_bbs(rdcount, bin_df["bb_id"].to_numpy(), num_bbs)
 
     logging.info(
         f"compute bb RDR, {len(get_rdr_base_dataset_id)}/{len(tumor_dataset_indices)} tumors with RDR base"
@@ -487,6 +537,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
         bb_dp = bb_dp[valid]
         bb_bases = bb_bases[valid]
         bb_rdr = bb_rdr[valid]
+        bb_rdcount = bb_rdcount[valid]
     num_bbs = len(bbs)
 
     kept_bb_ids = np.where(~nan_mask)[0]
@@ -526,6 +577,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
             bbs,
             sample_df,
             bb_bases,
+            bb_rdcount,
             b_mtx_bb,
             tot_mtx_bb,
             pdf=pdf,
@@ -564,6 +616,7 @@ for msr, out_bb, out_tot, out_a, out_b, out_dp, out_rdr, out_samp, out_pdf in zi
     np.savez_compressed(out_b, mat=b_mtx_bb)
     np.savez_compressed(out_dp, mat=bb_dp)
     np.savez_compressed(out_rdr, mat=bb_rdr)
+    np.savez_compressed(out_rdcount, mat=bb_rdcount)
     sample_df.to_csv(out_samp, sep="\t", index=False)
     logging.info(f"MSR={msr}: wrote {len(bbs)} bins")
 

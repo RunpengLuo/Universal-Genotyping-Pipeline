@@ -40,6 +40,7 @@ def plot_segmentation_qc(
     seg_df: pd.DataFrame,
     sample_df: pd.DataFrame,
     x_count_mat,
+    rd_count_mat,
     b_count_mat,
     tot_count_mat,
     out_file: str | None = None,
@@ -50,9 +51,9 @@ def plot_segmentation_qc(
     """Two-page segmentation QC histograms for combine_counts output.
 
     Page 1 — segment length (kbp) over all segments.
-    Page 2 — one row per dataset_id, three histograms of raw counts: native read counts,
-      B-allele counts, total-allele counts. The count axes use scientific notation
-      (matplotlib's offset multiplier) rather than a scaled axis label.
+    Page 2 — one row per dataset_id, four histograms of raw counts: native counts,
+      read starts, B-allele counts, total-allele counts. The count axes use scientific
+      notation (matplotlib's offset multiplier) rather than a scaled axis label.
       Each row is labelled ``{dataset_id}\\n{assay_type} {T|N}`` on the rotated row axis;
       the patient id is the page super-title.
 
@@ -63,9 +64,9 @@ def plot_segmentation_qc(
     sample_df : pd.DataFrame
         One row per count-matrix column (per dataset_id), with ``dataset_id``, ``assay_type``
         and ``sample_type``. Row order must match the columns of the count matrices.
-    x_count_mat, b_count_mat, tot_count_mat : ndarray or sparse, (n_seg, n_datasets)
-        Native, B-allele, and total-allele counts per segment per dataset_id; columns aligned
-        to *sample_df* rows.
+    x_count_mat, rd_count_mat, b_count_mat, tot_count_mat : ndarray or sparse, (n_seg, n_datasets)
+        Native, read-start, B-allele, and total-allele counts per segment per dataset_id;
+        columns aligned to *sample_df* rows.
     out_file, pdf : see the other ``plot_*`` functions. Exactly one is used.
     """
     logging.info("QC analysis - plot segmentation QC histograms")
@@ -90,8 +91,8 @@ def plot_segmentation_qc(
     # ---- page 2: per-dataset_id count histograms ----
     fig2, axes = plt.subplots(
         nrows=max(n_datasets, 1),
-        ncols=3,
-        figsize=(15, 3 * max(n_datasets, 1)),
+        ncols=4,
+        figsize=(20, 3 * max(n_datasets, 1)),
         squeeze=False,
     )
     for ri in range(n_datasets):
@@ -102,16 +103,22 @@ def plot_segmentation_qc(
             f"{str(row.get('sample_type', ''))[:1].upper()}"
         )
         _hist_with_stats(
-            axes[ri, 0], dense_observation(x_count_mat, ri), "Read count", sci_x=True
+            axes[ri, 0], dense_observation(x_count_mat, ri), "aligned bases", sci_x=True
         )
         _hist_with_stats(
             axes[ri, 1],
+            dense_observation(rd_count_mat, ri),
+            "read-start count",
+            sci_x=True,
+        )
+        _hist_with_stats(
+            axes[ri, 2],
             dense_observation(b_count_mat, ri),
             "B-allele count",
             sci_x=True,
         )
         _hist_with_stats(
-            axes[ri, 2],
+            axes[ri, 3],
             dense_observation(tot_count_mat, ri),
             "total allele count",
             sci_x=True,

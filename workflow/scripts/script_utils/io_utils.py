@@ -401,23 +401,26 @@ def read_window_bed(bed_file, chroms=None, keep_covariates=False):
     return bin_df
 
 
-def read_mosdepth_bed(mosdepth_bed: str, addchr=True):
-    """Read a mosdepth ``--by`` regions BED: headerless ``#CHR START END DEPTH``.
+def read_mosdepth_bed(mosdepth_bed: str, addchr=True, value_col="DEPTH"):
+    """Read a mosdepth ``--by`` regions BED: headerless ``#CHR START END <value>``.
 
     One row per window of the BED mosdepth was given, in BAM ``@SQ`` order.
+    ``count_read_starts_chrom`` writes the same four-column shape, so *value_col* names
+    the fourth column: ``DEPTH`` for mosdepth, ``COUNT`` for the read-start counts.
 
     Args:
-        mosdepth_bed: Path to ``{dataset_id}.regions.bed.gz``.
+        mosdepth_bed: Path to ``{dataset_id}.regions.bed.gz`` or ``.rdcount.bed.gz``.
         addchr: Prepend ``chr`` to contigs named without it.
+        value_col: Name to give the fourth column.
 
     Returns:
-        DataFrame with ``#CHR``, ``START``, ``END``, ``DEPTH``.
+        DataFrame with ``#CHR``, ``START``, ``END``, *value_col*.
     """
     df = pd.read_table(
         mosdepth_bed,
         sep="\t",
         header=None,
-        names=["#CHR", "START", "END", "DEPTH"],
+        names=["#CHR", "START", "END", value_col],
         dtype={"#CHR": str},
     )
     if addchr:

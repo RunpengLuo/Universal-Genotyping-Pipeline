@@ -75,6 +75,10 @@ def test_bulk_rules(workspace):
     assert counts["merge_read_starts"] == 2
     assert counts["window_bed_to_3bed_chrom"] == 1
     assert "pileup/bulkWGS/D1.rdcount.bed.gz" in proc.stdout
+    # combine_counts aggregates them onto every level's rows
+    assert "unit/bulk/window.rdcount.npz" in proc.stdout
+    assert "multi_snp/bulk/bb.rdcount.npz" in proc.stdout
+    assert "bulk/bb.rdcount.npz" in proc.stdout
     # the caller writes snps/raw/, post-processing writes the file phasing reads
     assert counts["post_genotype_snps_bulk"] == 1
     assert "raw/chr22.vcf.gz" in proc.stdout

@@ -3,9 +3,7 @@
 Last update: 2026-08-27
 
 Rules:
-- [bulk] combine_counts: adaptive binning, depth aggregation and RDR. Also takes the
-  per-dataset read-start counts as an input to hold them in the DAG; the script does
-  not read them.
+- [bulk] combine_counts: adaptive binning, depth, RDR and read-start counts
 - [single-cell] combine_counts_nonbulk: adaptive binning over every assay
 - [copytyping] combine_counts_fixed_bins{,_rna}: counts onto pre-computed bbs
 Outputs:
@@ -57,6 +55,10 @@ if workflow_mode == "bulk_genotyping":
                 bb_dir + f"/MSR{{msr}}/bulk/bb.rdr.npz",
                 msr=msr_list,
             ),
+            rdcount_mtx_bb=expand(
+                bb_dir + f"/MSR{{msr}}/bulk/bb.rdcount.npz",
+                msr=msr_list,
+            ),
             sample_file=expand(
                 bb_dir + f"/MSR{{msr}}/bulk/sample_ids.tsv",
                 msr=msr_list,
@@ -67,6 +69,7 @@ if workflow_mode == "bulk_genotyping":
             unit_b_mtx=bb_dir + "/unit/bulk/snp.Ballele.npz",
             unit_window_file=bb_dir + "/unit/bulk/window.tsv.gz",
             unit_dp_mtx=bb_dir + "/unit/bulk/window.depth.npz",
+            unit_rdcount_mtx=bb_dir + "/unit/bulk/window.rdcount.npz",
             unit_sample_file=bb_dir + "/unit/bulk/sample_ids.tsv",
             multi_bb_file=bb_dir + "/multi_snp/bulk/bb.tsv.gz",
             multi_tot_mtx=bb_dir + "/multi_snp/bulk/bb.Tallele.npz",
@@ -74,6 +77,7 @@ if workflow_mode == "bulk_genotyping":
             multi_b_mtx=bb_dir + "/multi_snp/bulk/bb.Ballele.npz",
             multi_dp_mtx=bb_dir + "/multi_snp/bulk/bb.depth.npz",
             multi_rdr_mtx=bb_dir + "/multi_snp/bulk/bb.rdr.npz",
+            multi_rdcount_mtx=bb_dir + "/multi_snp/bulk/bb.rdcount.npz",
             multi_sample_file=bb_dir + "/multi_snp/bulk/sample_ids.tsv",
             qc_pdf=report(
                 expand(
