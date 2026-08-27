@@ -132,11 +132,14 @@ params_phase_and_concat:
 
 ##################################################
 # Read-depth + bias correction (bulk)
-params_mosdepth:
-  read_quality: 11
-  extra_params: "--no-per-base --fast-mode"
-
+# read_quality and exclude_flags are shared by mosdepth (-Q/-F) and the read-start
+# counter (samtools view -q/-F), so window.dp and rdcount see the same reads. 1796 is
+# mosdepth's own default; it keeps supplementary alignments, which count a split read
+# once per segment. Long-read runs should raise it to 3844 (= 1796 | 2048).
 params_count_reads:
+  read_quality: 11
+  exclude_flags: 1796
+  mosdepth_extra_params: "--no-per-base --fast-mode"
   gc_correct: true
   rd_correct_method: "median"
   rt_correct: true

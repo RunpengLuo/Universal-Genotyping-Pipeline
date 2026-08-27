@@ -1,6 +1,6 @@
 """Segment BED and window BED, built in every mode.
 
-Last update: 2026-08-11
+Last update: 2026-08-27
 
 Rules:
 - build_segment_bed: arms cut at the SV extremities, blacklist-subtracted
@@ -9,6 +9,7 @@ Rules:
 - [optional] build_window_bed: tile the segments, annotate GC, MAP, REPLI
 - [optional] annotate_window_targets: per-window capture-target fraction
 - window_bed_to_3bed: headerless 3-column BED for mosdepth --by
+- window_bed_to_3bed_chrom: the same, one chromosome, for count_read_starts_chrom
 Globals:
 - extremity_tsv: the configured SV breakpoints, empty when unset
 - segment_bed, window_bed: paths, built or configured
@@ -161,3 +162,31 @@ rule window_bed_to_3bed:
     shell:
         "gzip -dc {input.window_bed} | tail -n +2 | cut -f1-3 | {params.strip_chr_prefix}"
         "gzip -c > {output.mosdepth_bed} 2> {log}"
+
+
+rule window_bed_to_3bed_chrom:
+    """One chromosome of the 3-column window BED, the -a side of count_read_starts_chrom.
+
+    Always chr-prefixed, unlike window_bed_to_3bed: the counting rule writes its read
+    records with this spelling hard-coded, so the alignment's own naming never reaches
+    the join. Both spellings are accepted on input, matching read_window_bed.
+    """
+    input:
+        window_bed=window_bed,
+    output:
+        chrom_bed=temp(aux_dir + "/windows.3col.chr{chrname}.bed.gz"),
+    log:
+        log_dir + f"/window_bed_to_3bed/window_bed_to_3bed.chr{{chrname}}.{_run_id}.log",
+    benchmark:
+        bench_dir
+        + f"/window_bed_to_3bed/window_bed_to_3bed.chr{{chrname}}.{_run_id}.tsv"
+    params:
+        chrom=lambda wc: wc.chrname,
+    shell:
+        r"""
+        set -euo pipefail
+        gzip -dc {input.window_bed} | tail -n +2 \
+        | awk -v OFS='\t' -v C="{params.chrom}" \
+              '$1 == C || $1 == "chr"C {{print "chr"C, $2, $3}}' \
+        | gzip -c > {output.chrom_bed} 2> {log}
+        """

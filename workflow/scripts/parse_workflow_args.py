@@ -670,6 +670,10 @@ def parse_workflow(config):
             phase_files = [rec["files"] for rec in phase_records]
 
     # === RDR normalization mode ===
+    assert "params_mosdepth" not in config, (
+        "params_mosdepth was folded into params_count_reads; move read_quality there and "
+        "rename extra_params to mosdepth_extra_params"
+    )
     do_repliseq = False
     if workflow_mode == "bulk_genotyping":
         rdr_normalization = config["params_combine_counts"]["rdr_normalization"]

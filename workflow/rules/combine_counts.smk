@@ -1,9 +1,11 @@
 """Bin the SNPs and depth into bbs, the pipeline's output unit.
 
-Last update: 2026-08-11
+Last update: 2026-08-27
 
 Rules:
-- [bulk] combine_counts: adaptive binning, depth aggregation and RDR
+- [bulk] combine_counts: adaptive binning, depth aggregation and RDR. Also takes the
+  per-dataset read-start counts as an input to hold them in the DAG; the script does
+  not read them.
 - [single-cell] combine_counts_nonbulk: adaptive binning over every assay
 - [copytyping] combine_counts_fixed_bins{,_rna}: counts onto pre-computed bbs
 Outputs:
@@ -18,6 +20,11 @@ if workflow_mode == "bulk_genotyping":
     rule combine_counts:
         input:
             dp_corrected=pileup_dir + "/bulk/window.dp.npz",
+            rdcount_files=[
+                pileup_dir + f"/{at}/{rid}.rdcount.bed.gz"
+                for at in assay_types
+                for rid in assay2dataset_ids[at]
+            ],
             window_bed=window_bed,
             snp_info=allele_dir + "/snps.tsv.gz",
             tot_mtx_snp=allele_dir + "/snp.Tallele.npz",

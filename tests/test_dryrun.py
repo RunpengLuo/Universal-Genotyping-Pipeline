@@ -70,6 +70,11 @@ def test_bulk_rules(workspace):
     assert counts["pileup_snps_bulk_bcftools_chrom"] == 2
     assert counts["merge_pileup_counts"] == 2
     assert counts["run_mosdepth"] == 2
+    # read starts fan out per (dataset, chromosome), sharing one per-chrom window BED
+    assert counts["count_read_starts_chrom"] == 2
+    assert counts["merge_read_starts"] == 2
+    assert counts["window_bed_to_3bed_chrom"] == 1
+    assert "pileup/bulkWGS/D1.rdcount.bed.gz" in proc.stdout
     # the caller writes snps/raw/, post-processing writes the file phasing reads
     assert counts["post_genotype_snps_bulk"] == 1
     assert "raw/chr22.vcf.gz" in proc.stdout
@@ -93,8 +98,42 @@ def test_bulk_stream_mode(workspace):
     # depth becomes per-chrom mosdepth + a merge; the whole-file rule is gone
     assert "run_mosdepth_chrom" in counts and "merge_mosdepth" in counts
     assert "run_mosdepth" not in counts
+    # read starts are already per-chrom, so stream mode reuses the same two rules
+    assert counts["count_read_starts_chrom"] == 2
+    assert counts["merge_read_starts"] == 2
     # genotype/pileup restrict to the config chroms via index jumps
     assert "--regions chr22" in proc.stdout
+
+
+def test_params_mosdepth_is_rejected(workspace):
+    """The folded-away group is a parse error naming its replacement."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_json"],
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=('params_mosdepth={"read_quality": 11}',),
+    )
+    assert proc.returncode != 0
+    assert "params_mosdepth was folded into params_count_reads" in (
+        proc.stdout + proc.stderr
+    )
+
+
+def test_read_filters_are_shared_with_mosdepth(workspace):
+    """One read_quality/exclude_flags pair reaches both mosdepth and samtools view."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_json"],
+        "T1",
+        "bulk_genotyping",
+        ["bulkWGS"],
+        extra=('params_count_reads={"read_quality": 30, "exclude_flags": 3844}',),
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "-Q 30" in proc.stdout and "-q 30" in proc.stdout
+    assert proc.stdout.count("-F 3844") >= 2
 
 
 def test_snp_panel_must_be_vcf_gz(workspace):

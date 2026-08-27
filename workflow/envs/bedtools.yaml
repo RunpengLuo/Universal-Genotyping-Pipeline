@@ -1,0 +1,7 @@
+name: genotyping-bedtools
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - bedtools>=2.31
+  - samtools>=1.19
