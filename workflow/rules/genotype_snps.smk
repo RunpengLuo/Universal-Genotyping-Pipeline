@@ -65,9 +65,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
                 if tumor_genotyping_mode == "clonal_loh_hmm"
                 else "--variants-only"
             ),
-            gt_arg=(
-                "" if tumor_genotyping_mode == "clonal_loh_hmm" else '&& GT="alt"'
-            ),
+            gt_arg=("" if tumor_genotyping_mode == "clonal_loh_hmm" else '&& GT="alt"'),
         shell:
             r"""
             set -euo pipefail
@@ -136,6 +134,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
             region_bed=region_bed,
             genome_size=genome_size,
         output:
+            **_hmm_aux,
             snp_vcfs=expand(
                 snp_dir + "/chr{chrname}.vcf.gz",
                 chrname=nochr_chromosomes,
@@ -144,7 +143,6 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
                 snp_dir + "/chr{chrname}.vcf.gz.tbi",
                 chrname=nochr_chromosomes,
             ),
-            **_hmm_aux,
             qc_pdf=report(
                 qc_dir + "/post_genotype_snps.bulk.pdf",
                 category="QC plots",
