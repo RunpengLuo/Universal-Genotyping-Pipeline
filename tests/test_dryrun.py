@@ -303,6 +303,36 @@ def test_mixed_wgs_wes(workspace):
     assert "bulkWES/bb.tsv.gz" not in proc.stdout
 
 
+def test_target_bed_adds_target_site_annotation(workspace):
+    """target_bed adds one annotation job feeding both rd_correct and combine_counts."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_mixed_json"],
+        "MX",
+        "bulk_genotyping",
+        ["bulkWGS", "bulkWES"],
+        extra=[f"target_bed={workspace['ref']}/targets.bed"],
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    counts = job_counts(proc.stdout)
+    assert counts.get("annotate_window_targets", 0) == 1, proc.stdout[-2000:]
+    assert "/window.target.npz" in proc.stdout
+
+
+def test_no_target_bed_skips_target_site_annotation(workspace):
+    """Without target_bed no annotation job exists, and the RDR SE is still emitted."""
+    proc = dryrun(
+        workspace,
+        workspace["bulk_mixed_json"],
+        "MX",
+        "bulk_genotyping",
+        ["bulkWGS", "bulkWES"],
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert "annotate_window_targets" not in job_counts(proc.stdout)
+    assert "window.target.npz" not in proc.stdout
+
+
 @pytest.mark.parametrize(
     "sheet,sample_id,mode,assays",
     [

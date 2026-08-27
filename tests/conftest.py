@@ -35,6 +35,7 @@ REF_FILES = (
     "snp_panel.vcf.gz",
     "snp_panel.vcf.gz.tbi",
     "bb.tsv.gz",
+    "targets.bed",
 )
 
 VCF_HEADER = (

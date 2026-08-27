@@ -162,13 +162,6 @@ that builds its own window BED, with `params_count_reads.rt_correct: true` and a
 
 ### Capture targets (WES)
 
-Optional; set `target_bed` to the hybrid-capture kit's target intervals (BED3+). A `bulkWES`
-dataset is then bias-corrected on- and off-target separately, and its RDR is estimated on
-each side and recombined by inverse variance. Off-target windows are kept
-throughout. See [bulk_genotyping.md](../docs/bulk_genotyping.md#whole-exome-wes).
-
-One kit is bundled; for the rest, build the file yourself (below).
-
 | Kit | Species | Reference | File |
 |-----|---------|-----------|------|
 | IDT xGen Exome Research Panel v1 | Human | hg38 | [targets.IDT_xGen_v1.hg38.bed.gz](data/targets.IDT_xGen_v1.hg38.bed.gz) |
@@ -177,10 +170,7 @@ One kit is bundled; for the rest, build the file yourself (below).
 target_bed: resources/data/targets.IDT_xGen_v1.hg38.bed.gz
 ```
 
-Any BED from the kit vendor works. `resources/scripts/fetch_capture_targets.sh` automates the
-UCSC [exomeProbesets](https://genome.ucsc.edu/cgi-bin/hgTrackUi?g=exomeProbesets) copies,
-which are already `chr`-prefixed and available per build, and normalizes them to a BED3 on
-chr1-22/X/Y, sorted with overlapping intervals unioned (the bundled file above is its output):
+`resources/scripts/fetch_capture_targets.sh` fetch a UCSC-standard capture kit interval file and convert it to BED3 format.
 
 ```bash
 bash resources/scripts/fetch_capture_targets.sh <kit-stem> <hg19|hg38> <out-dir>

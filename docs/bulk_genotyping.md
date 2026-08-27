@@ -143,6 +143,23 @@ params_combine_counts:
 > 1. For high-coverage (>=30x) data, we recommend to use `min_snp_reads>1000&<=5000`.
 > 2. For low-coverage/targeted data, we recommend to use `min_snp_reads>50&<=200`.
 
+### Whole-exome (WES)
+
+WES has highly un-uniform read depth at on-target and off-target regions. Here is an example for normal WES sample over 1kbp windows, we see a bimodal read-depth pattern.
+
+<p align="center">
+  <img src="imgs/wes_bimodal_readdepth.png" alt="Per-window read depth of a hybrid-capture WES library, on-target versus off-target" width="720">
+</p>
+
+If any `bulkWES` datasets are included, set `target_bed` based on capture kit's target intervals. `rd_correct` will perform bias correction separately for on- and off-target windows.
+
+```yaml
+# IDT xGen v1 (hg38) ships with the pipeline
+target_bed: resources/data/targets.IDT_xGen_v1.hg38.bed.gz
+```
+
+See [capture targets](../resources/README.md#capture-targets-wes) for more details.
+
 ## Output
 
 Refer to [Final bins](reference.md#final-bins) for the full specification of each file:

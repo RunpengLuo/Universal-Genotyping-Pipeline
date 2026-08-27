@@ -68,6 +68,7 @@ Defaults in `config/config.yaml`, template in [templates](../resources/templates
 | `extremity_tsv` | Optional | TSV file listing extremity from upstream SV caller. |
 | `window_bed` | Optional | Pre-built window BED with read depth covariates. Ignored when `extremity_tsv` is set. |
 | `mappability_bed` | Optional | BED mappability track (4th column = score). |
+| `target_bed` | Optional; `bulkWES` | Hybrid-capture target intervals (BED3+). Marks each window on- or off-target. See `resources/scripts/fetch_capture_targets.sh`. |
 | `blacklist_bed` | Optional | ENCODE-style blacklist; pre-built at `resources/data/hg38-blacklist.v2.bed.gz`. |
 | `gene_blacklist_file` | Optional | Genes to exclude from AnnData (single-cell). |
 | `snp_panel` | Genotyping | Population SNP VCF, bgzipped and indexed (`.vcf.gz` + `.tbi`/`.csi`). Bulk passes it to `bcftools mpileup -T` (positions only, panel alleles ignored); single-cell to `cellsnp-lite -R`. |
@@ -199,7 +200,7 @@ Used by `run_mosdepth` (bulk).
 | `extra_params` | Extra mosdepth flags. |
 
 #### `params_count_reads`
-Used by `rd_correct` (bulk); HMMcopy-style bias correction.
+Used by `rd_correct` (bulk); HMMcopy-style bias correction. Note that a `bulkWES` dataset is fitted on- and off-target separately based on `target_bed`.
 
 | Field | Description |
 |---|---|

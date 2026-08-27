@@ -340,13 +340,11 @@ def correct_readcount_quadreg(
 def correct_readcount_by_target_sites(correct_fn, reads, gc, target_sites, **kwargs):
     """Fit and apply *correct_fn* on- and off-target separately.
 
-    A hybrid-capture library is bimodal in depth: the captured windows sit at tens to
-    hundreds of x, the off-target background near 0x. Pooled, a GC fit reads that split as
-    a GC effect - exons are GC-rich, so capture status and GC are strongly confounded - and
-    dividing by it rescales tumor and normal differently, because the two libraries have
-    different sets of non-zero windows to fit on. Fitting the two apart removes the
-    confounding; each keeps its own depth scale, since every corrector rescales to the
-    median of the bins it fit.
+    Capture makes depth bimodal, and exons are GC-rich, so a pooled fit reads the capture
+    split as a GC effect and divides it out. It does so asymmetrically between tumor and
+    normal, which have different sets of non-zero windows to fit on. Fitting the two apart
+    removes the confounding; each keeps its own depth scale, since every corrector
+    rescales to the median of the bins it fit.
 
     Args:
         correct_fn: ``correct_readcount_lowess`` or ``correct_readcount_quadreg``.
