@@ -83,18 +83,17 @@ params_cellsnp_lite:
   minMAF_pileup: 0
   minCOUNT_pileup: 1
 
-# genotype from counts (single-cell pseudobulk) and the bulk clonal-LOH HMM
 params_genotype_snps:
-  apply_clonal_loh_hmm: false
+  tumor_genotyping_mode: "vaf_cutoff"
   min_dp: 10
 
-  # single-cell pseudobulk
+  # vaf_cutoff
   min_het_reads: 2
   min_vaf_thres: 0.1
   filter_nz_OTH: false
   filter_hom_ALT: false
 
-  # bulk clonal-LOH HMM
+  # clonal_loh_hmm
   hom_laf: 0.005
   loh_laf: 0.05
   pi_het: 0.5

@@ -1,14 +1,17 @@
 """Call het and hom-alt SNPs, or split a given VCF per chromosome.
 
-Last update: 2026-08-16
+Last update: 2026-08-26
+
+`tumor_genotyping_mode` (a parse_workflow global, None when no genotyped bulk dataset is a
+tumor) picks how the calls become genotypes; see workflow/scripts/post_genotype_snps.py.
 
 Rules:
 - [bulk] genotype_snps_bulk: bcftools calls one chromosome from the alignments, always
-  constrained to the snp_panel's REF/ALT. `apply_clonal_loh_hmm` keeps every callable
-  site (`--keep-alts`, no `--variants-only` and no `GT="alt"`), since under clonal LOH a
-  gHET collapses to one allele and only its neighbourhood tells it from a gHOM
-- [bulk] post_genotype_snps_bulk: re-genotype a high-purity tumor's calls with the
-  clonal-LOH HMM, or symlink the calls through, every chromosome in one job
+  constrained to the snp_panel's REF/ALT. `clonal_loh_hmm` keeps every callable site
+  (`--keep-alts`, no `--variants-only` and no `GT="alt"`), since under clonal LOH a gHET
+  collapses to one allele and only its neighbourhood tells it from a gHOM
+- [bulk] post_genotype_snps_bulk: re-genotype the calls by `tumor_genotyping_mode`, or
+  symlink them through when none applies, every chromosome in one job
 - [single-cell] genotype_snps_pseudobulk_mode1b: cellsnp-lite calls one modality
 - [single-cell] post_genotype_snps_nonbulk: genotype het/hom-alt from the pseudobulk
   counts, there being no matched normal to call against
@@ -16,8 +19,8 @@ Rules:
 Outputs:
 - snp_dir/raw/chr{chrname}.vcf.gz: the bulk caller's own output, before refinement
 - snp_dir/chr{chrname}.vcf.gz: bi-allelic het and hom-alt SNPs, what phasing reads
-- aux_dir/clonal_loh_hmm.{segments,params}.tsv: the fitted chain, header-only when it
-  did not run
+- aux_dir/clonal_loh_hmm.{segments,params}.tsv: the fitted chain; diagnostics only, no
+  rule reads them, and only `clonal_loh_hmm` declares them
 """
 
 if workflow_mode == "bulk_genotyping" and run_genotyping:
@@ -57,8 +60,14 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
                 f"--format '%CHROM\\t%POS\\t%REF,%ALT\\n' {input.snp_panel})"
             ),
             ignore_rg="--ignore-RG" if genotype_ignore_rg else "",
-            call_arg="--keep-alts" if apply_clonal_loh_hmm else "--variants-only",
-            gt_arg="" if apply_clonal_loh_hmm else '&& GT="alt"',
+            call_arg=(
+                "--keep-alts"
+                if tumor_genotyping_mode == "clonal_loh_hmm"
+                else "--variants-only"
+            ),
+            gt_arg=(
+                "" if tumor_genotyping_mode == "clonal_loh_hmm" else '&& GT="alt"'
+            ),
         shell:
             r"""
             set -euo pipefail
@@ -99,8 +108,17 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
             tabix -f -p vcf {output.snp_vcf}
             """
 
+    _hmm_aux = (
+        {
+            "hmm_segments": aux_dir + "/clonal_loh_hmm.segments.tsv",
+            "hmm_params": aux_dir + "/clonal_loh_hmm.params.tsv",
+        }
+        if tumor_genotyping_mode == "clonal_loh_hmm"
+        else {}
+    )
+
     rule post_genotype_snps_bulk:
-        """Re-genotype a high-purity tumor's calls with the clonal-LOH HMM, or symlink.
+        """Re-genotype the calls by tumor_genotyping_mode, or symlink them through.
 
         Takes the whole per-chromosome set rather than one chromosome, so the HMM is
         fitted once over the genome; region_bed supplies its per-arm chain groups.
@@ -126,8 +144,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
                 snp_dir + "/chr{chrname}.vcf.gz.tbi",
                 chrname=nochr_chromosomes,
             ),
-            hmm_segments=aux_dir + "/clonal_loh_hmm.segments.tsv",
-            hmm_params=aux_dir + "/clonal_loh_hmm.params.tsv",
+            **_hmm_aux,
             qc_pdf=report(
                 qc_dir + "/post_genotype_snps.bulk.pdf",
                 category="QC plots",
@@ -142,10 +159,14 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
             "../envs/base.yaml"
         threads: 1
         params:
-            mode="bulk",
-            apply_clonal_loh_hmm=apply_clonal_loh_hmm,
+            source="bulk",
+            genotyping=tumor_genotyping_mode or "passthrough",
             chroms=chr_chromosomes,
             input_nochr=input_nochr,
+            min_het_reads=config["params_genotype_snps"]["min_het_reads"],
+            min_vaf_thres=config["params_genotype_snps"]["min_vaf_thres"],
+            filter_nz_OTH=config["params_genotype_snps"]["filter_nz_OTH"],
+            filter_hom_ALT=config["params_genotype_snps"]["filter_hom_ALT"],
             hom_laf=config["params_genotype_snps"]["hom_laf"],
             loh_laf=config["params_genotype_snps"]["loh_laf"],
             pi_het=config["params_genotype_snps"]["pi_het"],
@@ -247,8 +268,8 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
             "../envs/base.yaml"
         threads: 1
         params:
-            mode="nonbulk",
-            apply_clonal_loh_hmm=apply_clonal_loh_hmm,
+            source="pseudobulk",
+            genotyping=tumor_genotyping_mode,
             chroms=chr_chromosomes,
             input_nochr=input_nochr,
             modalities=modalities,

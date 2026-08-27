@@ -104,7 +104,7 @@ if _has_config:
     gene_blacklist_file = _wf["gene_blacklist_file"]
     mappability_bed = _wf["mappability_bed"]
     snp_panel = _wf["snp_panel"]
-    apply_clonal_loh_hmm = _wf["apply_clonal_loh_hmm"]
+    tumor_genotyping_mode = _wf["tumor_genotyping_mode"]
     bb_file = _wf["bb_file"]
 
     # === segment and window BEDs ===

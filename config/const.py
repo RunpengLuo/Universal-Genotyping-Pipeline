@@ -8,6 +8,7 @@ Constants:
   assay vocabulary
 - SAMPLE_FILE_EXTS, SAMPLE_TYPES, RECORD_ID_KEYS, RECORD_ID_PATTERN,
   REQUIRED_RECORD_KEYS, REQUIRED_FILES: sample-file schema
+- TUMOR_GENOTYPING_MODES: tumor-only genotyping strategies
 - SNP_PANEL_EXTS: snp_panel extensions bcftools --targets-file can parse. It picks the
   parser from the filename suffix, so .bcf and .vcf.bgz reach the tab parser and match
   nothing without erroring (samtools/bcftools#690, #1368)
@@ -36,6 +37,9 @@ URL_SCHEMES = ("http://", "https://", "ftp://", "s3://")
 
 # params_combine_counts.rdr_normalization mode
 RDR_NORMALIZATIONS = ("auto", "median", "normal")
+
+# params_genotype_snps.tumor_genotyping_mode
+TUMOR_GENOTYPING_MODES = ("vaf_cutoff", "clonal_loh_hmm")
 
 # snp_panel file extensions
 SNP_PANEL_EXTS = (".vcf.gz",)

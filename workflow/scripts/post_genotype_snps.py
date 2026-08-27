@@ -1,27 +1,34 @@
 """Post-process called SNPs into the run's per-chromosome het/hom-alt VCFs.
 
-One branch per workflow mode, selected by ``params.mode``:
-- ``bulk``: under ``apply_clonal_loh_hmm`` the calls came off a high-purity tumor, where
-  clonal LOH collapses a gHET onto one allele, so every site is re-genotyped by a latent
-  LOH-state chain over the arms. Off it, the calls are germline genotypes already and the
-  outputs symlink to them.
-- ``nonbulk``: sum the per-modality cellsnp-lite DP/AD/OTH per site and keep the sites
-  whose allele balance reads as heterozygous (or hom-alt). There is no matched normal to
-  call against, so genotype comes from the counts rather than a caller.
+Two independent axes. ``params.source`` says which VCFs hold the counts:
+- ``bulk``: the bcftools calls, one alignment set, AD/DP per site.
+- ``pseudobulk``: cellsnp-lite DP/AD/OTH, summed over the per-modality base calls.
 
-Last update: 2026-08-16
+``params.genotyping`` says how the counts become a genotype:
+- ``passthrough``: the calls are germline genotypes already, so the outputs symlink to
+  them. Bulk only, and only when no genotyped dataset is a tumor.
+- ``vaf_cutoff``: threshold depth, minor-allele reads and VAF. The tumor-only default,
+  and the only option off bulk since cellsnp-lite emits no GT of its own.
+- ``clonal_loh_hmm``: bulk only. Clonal LOH collapses a gHET onto one allele, so every
+  site is re-genotyped by a latent LOH-state chain over the arms.
+
+Last update: 2026-08-26
 
 Inputs:
 - [bulk] snp_dir/raw/chr{chrname}.vcf.gz: the bcftools calls, every chromosome
 - [bulk] snp_panel: the population SNP VCF the calls were made over
 - [bulk] region_bed: chromosome arms; region_id is the HMM's chain group
-- [nonbulk] snp_dir/pseudobulk_{modality}/cellSNP.base.vcf.gz: cellsnp-lite base calls
-- [nonbulk] genome_size: chrom sizes TSV, for the ##contig header
+- [pseudobulk] snp_dir/pseudobulk_{modality}/cellSNP.base.vcf.gz: cellsnp-lite base calls
+- genome_size: chrom sizes TSV, for the ##contig header
 Outputs:
 - snp_dir/chr{chrname}.vcf.gz: bi-allelic het or hom-alt SNPs
 - snp_dir/chr{chrname}.vcf.gz.tbi: tabix index of the above
 - qc_dir/post_genotype_snps.{bulk,nonbulk}.pdf: SNP allele-freq, one page per grouping:
-  genotype, then LOH state (clonal-LOH HMM runs only)
+  genotype, then LOH state (clonal_loh_hmm runs only)
+Notes:
+- both sources report depth as cellsnp-lite does, ``REF + ALT`` with the other-allele
+  reads held apart in OTH (cellsnp-lite ``src/csp.h``: DP is "total counts for ALT and
+  REF"), so ``DP - AD`` is the REF count and one genotyping rule serves both
 """
 
 import logging
@@ -113,34 +120,20 @@ def write_per_chrom(
         )
 
 
-params = snakemake_handle.params
-mode = params["mode"]
-apply_clonal_loh_hmm = bool(params["apply_clonal_loh_hmm"])
-chroms = list(params["chroms"])
-input_nochr = params["input_nochr"]
-min_dp = int(params["min_dp"])
+def read_counts_bulk(raw_snp_vcfs):
+    """Concatenate the per-chromosome bcftools calls into one counted frame.
 
-raw_snp_vcfs = maybe_list(snakemake_handle.input["raw_snp_vcfs"])
-snp_vcfs = maybe_list(snakemake_handle.output["snp_vcfs"])
-genome_size = snakemake_handle.input["genome_size"]
+    Args:
+        raw_snp_vcfs: The caller's per-chromosome VCFs; empty ones are skipped.
 
-logging.info(
-    f"start post_genotype_snps, mode={mode}, "
-    f"apply_clonal_loh_hmm={apply_clonal_loh_hmm}"
-)
+    Returns:
+        ``(snps, alt, depth, oth)``. *snps* carries the caller's own ``GT`` and a
+        chr-prefixed ``#CHR``; *depth* is ``REF + ALT``, matching cellsnp-lite's ``DP``,
+        so the other-allele reads live only in *oth*.
 
-if mode == "bulk":
-    # =========================================================================
-    # bulk: bcftools already called these off one alignment set. Under
-    # apply_clonal_loh_hmm they came off a high-purity tumor and are re-genotyped
-    # by the chain; otherwise they are germline genotypes and pass through.
-    # =========================================================================
-    assert len(raw_snp_vcfs) == len(snp_vcfs), (
-        f"bulk: {len(raw_snp_vcfs)} input VCF(s) for {len(snp_vcfs)} output(s)"
-    )
-    hmm_segments = snakemake_handle.output["hmm_segments"]
-    hmm_params = snakemake_handle.output["hmm_params"]
-
+    Raises:
+        AssertionError: Every input VCF is empty.
+    """
     frames = []
     for raw_snp_vcf in raw_snp_vcfs:
         snps = read_VCF(
@@ -156,180 +149,34 @@ if mode == "bulk":
         frames.append(snps)
     assert frames, "bulk: every input VCF is empty"
     snps = pd.concat(frames, ignore_index=True)
-    del frames
     snps["#CHR"] = add_chr_prefix(snps["#CHROM"].astype(str))
-    if apply_clonal_loh_hmm:
-        snp_panel = snakemake_handle.input["snp_panel"]
-        region_bed = snakemake_handle.input["region_bed"]
-        tau = params["tau"]
-        logging.info(
-            f"clonal-LOH HMM over {len(raw_snp_vcfs)} VCF(s), panel={snp_panel}"
-        )
 
-        rc = snps["REF_COUNT"].to_numpy()
-        ac = snps["ALT_COUNT"].to_numpy()
-        depth = pd.to_numeric(snps["DP"], errors="coerce").fillna(0).to_numpy()
-        other = np.maximum(depth.astype(np.int64) - rc - ac, 0)
-
-        # the chain must break wherever adjacency stops meaning anything, above all
-        # across a centromere, so it is grouped by the run's own chromosome arms
-        arms = read_BED(region_bed, col_id="region_id")
-        qry = pd.DataFrame(
-            {"#CHR": snps["#CHR"].to_numpy(), "POS0": snps["POS"].to_numpy() - 1}
-        )
-        qry, na_idx = assign_pos_to_range(qry, arms, ref_id="region_id", pos_col="POS0")
-        group_id = pd.factorize(qry["region_id"])[0].astype(np.int64)
-        logging.info(
-            f"arms: {len(arms)} in {region_bed}, "
-            f"{int((group_id >= 0).sum())} SNPs assigned, "
-            f"{len(na_idx)} outside every arm"
-        )
-        fitted = group_id >= 0
-        fit = clonal_loh_hmm(
-            rc[fitted],
-            ac[fitted],
-            snps["POS"].to_numpy()[fitted],
-            group_id[fitted],
-            hom_laf=float(params["hom_laf"]),
-            loh_laf=float(params["loh_laf"]),
-            pi=float(params["pi_het"]),
-            t=float(params["breakpoint_rate"]),
-            # NB: YAML has no infinity, so null is the binomial
-            tau=np.inf if tau is None else float(tau),
-            n_retained=int(params["n_retained"]),
-            n_iter=int(params["n_iter"]),
-            em_tol=float(params["em_tol"]),
-            margin=float(params["margin"]),
-            learn_pi=bool(params["learn_pi"]),
-            loh_min=float(params["loh_min"]),
-            p_het_min=float(params["p_het_min"]),
-            min_dp=min_dp,
-        )
-        gt = np.full(len(snps), "./.", dtype=GT_DTYPE)
-        gt[fitted] = fit["gt"]
-
-        # NB: state 0 is the clonal-LOH state, so this matches hmm_segments row for row
-        loh_state = np.full(len(snps), "unassigned", dtype=object)
-        loh_state[fitted] = np.where(fit["state"] == 0, "LOH", "non-LOH")
-        snps[LOH_COL] = loh_state
-
-        # what the caller said, so the rescue can be counted in both directions
-        called = snps["GT"].astype(str).str.replace("|", "/", regex=False).to_numpy()
-        logging.info(
-            f"re-called het from 0/0={int(((called == '0/0') & (gt == '0/1')).sum())}, "
-            f"from 1/1={int(((called == '1/1') & (gt == '0/1')).sum())}"
-        )
-
-        # the Viterbi path as intervals: the model's own allelic-imbalance segmentation.
-        # A new segment starts wherever the state changes or the arm does.
-        arm = group_id[fitted]
-        state = fit["state"]
-        cut = np.r_[True, (state[1:] != state[:-1]) | (arm[1:] != arm[:-1])]
-        seg = pd.DataFrame(
-            {
-                "#CHR": snps.loc[fitted, "#CHR"].to_numpy(),
-                "POS": snps.loc[fitted, "POS"].to_numpy(),
-                "state": state,
-                "maf": fit["maf"],
-                "is_het": fit["gt"] == "0/1",
-                "seg": np.cumsum(cut),
-            }
-        )
-        segments = seg.groupby("seg", sort=True).agg(
-            START=("POS", "min"),
-            END=("POS", "max"),
-            state=("state", "first"),
-            n_snps=("POS", "size"),
-            n_het=("is_het", "sum"),
-            mean_maf=("maf", "mean"),
-        )
-        segments.insert(0, "#CHR", seg.groupby("seg", sort=True)["#CHR"].first())
-        segments["START"] -= 1
-        segments.insert(4, "b_s", fit["means"][segments["state"].to_numpy()])
-        segments.to_csv(hmm_segments, sep="\t", index=False, float_format="%.4f")
-        pd.DataFrame(
-            [
-                {
-                    "means": ",".join(f"{b:.4f}" for b in fit["means"]),
-                    "pi": float(np.mean(fit["pi"])),
-                    "loglik": fit["loglik"],
-                    "n_iter": fit["n_iter"],
-                    "converged": fit["converged"],
-                    "n_sites": int(fitted.sum()),
-                    "n_arms": len(arms),
-                    "n_segments": len(segments),
-                }
-            ]
-        ).to_csv(hmm_params, sep="\t", index=False, float_format="%.6g")
-        logging.info(f"{len(segments)} HMM segments -> {hmm_segments}")
-
-        # from here GT is this step's call, not the caller's
-        snps["GT"] = gt
-        keep = (gt == "0/1") | (gt == "1/1")
-        logging.info(f"#kept SNPs={int(keep.sum())}/{len(snps)}")
-        write_per_chrom(
-            snps.loc[keep],
-            "#CHR",
-            ac[keep],
-            (rc + ac)[keep],
-            other[keep],
-            snps.loc[keep, "GT"].to_numpy(),
-            chroms,
-            snp_vcfs,
-            input_nochr,
-            genome_size,
-        )
-        genotyped = snps
-    else:
-        # no fit ran, so both aux tables are headers only
-        pd.DataFrame(
-            columns=[
-                "#CHR",
-                "START",
-                "END",
-                "state",
-                "b_s",
-                "n_snps",
-                "n_het",
-                "mean_maf",
-            ]
-        ).to_csv(hmm_segments, sep="\t", index=False)
-        pd.DataFrame(
-            columns=[
-                "means",
-                "pi",
-                "loglik",
-                "n_iter",
-                "converged",
-                "n_sites",
-                "n_arms",
-                "n_segments",
-            ]
-        ).to_csv(hmm_params, sep="\t", index=False)
-        logging.info(f"linking {len(raw_snp_vcfs)} VCF(s) and indexes")
-        symlink_files(raw_snp_vcfs, snp_vcfs)
-        symlink_files(
-            maybe_list(snakemake_handle.input["raw_snp_vcfs_tbi"]),
-            maybe_list(snakemake_handle.output["snp_vcfs_tbi"]),
-        )
-        # the calls are kept as they are, so their own GT is what the plot shows
-        genotyped = snps
-else:
-    # =========================================================================
-    # single-cell: no matched normal to call against, so genotype comes from the
-    # per-modality cellsnp-lite counts summed per site.
-    # =========================================================================
-    filter_nz_OTH = params["filter_nz_OTH"]
-    filter_hom_ALT = params["filter_hom_ALT"]
-    min_het_reads = int(params["min_het_reads"])
-    min_vaf_thres = float(params["min_vaf_thres"])
-    modalities = list(params["modalities"])
-    logging.info(
-        f"filter_nz_OTH={filter_nz_OTH}, filter_hom_ALT={filter_hom_ALT}, "
-        f"min_het_reads={min_het_reads}, min_dp={min_dp}, "
-        f"min_vaf_thres={min_vaf_thres}"
+    ref = snps["REF_COUNT"].to_numpy()
+    alt = snps["ALT_COUNT"].to_numpy()
+    # NB: FORMAT/DP counts every base, cellsnp-lite's DP only REF+ALT; match the latter
+    total = (
+        pd.to_numeric(snps["DP"], errors="coerce").fillna(0).to_numpy().astype(np.int64)
     )
+    oth = np.maximum(total - ref - alt, 0)
+    return snps, alt, ref + alt, oth
 
+
+def read_counts_pseudobulk(raw_snp_vcfs, modalities, chroms):
+    """Sum the per-modality cellsnp-lite DP/AD/OTH onto one row per site.
+
+    Sites are keyed on ``#CHROM_POS``; a modality missing a site contributes zero. Rows
+    whose key repeats within or across modalities are dropped, since the sum would double
+    count them.
+
+    Args:
+        raw_snp_vcfs: One cellSNP.base.vcf.gz per entry of *modalities*, in that order.
+        modalities: Modality labels, for the log lines.
+        chroms: Contigs to keep; rows on any other contig are dropped.
+
+    Returns:
+        ``(snps, alt, depth, oth)`` plus the pre-genotyping site count, as
+        ``(snps, alt, depth, oth, n_sites)``.
+    """
     KEY = ["#CHROM", "POS", "REF", "ALT"]
     CNT = ["DP", "AD", "OTH"]
     CARRY = list(VCF_DEFAULT_FALLBACKS)
@@ -376,7 +223,7 @@ else:
         logging.warning("drop duplicated rows.")
         base_snps = base_snps.loc[~dup_mask, :]
     base_snps = base_snps.reset_index(drop=True)
-    nsnps_before_genotyping = len(base_snps)
+    n_sites = len(base_snps)
 
     base_snps = base_snps.sort_values(["#CHROM", "POS"], kind="mergesort")
     for cnt in CNT:
@@ -395,51 +242,235 @@ else:
             base_snps[cnt] += base_snps[f"{cnt}{idx}"].fillna(0).astype(np.int64)
         base_snps = base_snps.drop(columns=[f"{cnt}{idx}" for cnt in CNT])
 
-    ref_count = base_snps["DP"] - base_snps["AD"]
-    allele_ratio = base_snps["AD"] / base_snps["DP"]
-    called = base_snps["DP"] >= min_dp
+    base_snps["#CHR"] = base_snps["#CHROM"].astype(str)
+    return (
+        base_snps,
+        base_snps["AD"].to_numpy(),
+        base_snps["DP"].to_numpy(),
+        base_snps["OTH"].to_numpy(),
+        n_sites,
+    )
+
+
+def call_vaf_cutoff(alt, depth, min_dp, min_het_reads, min_vaf_thres):
+    """Genotype each site by thresholding its depth, minor-allele reads and VAF.
+
+    The minor-allele side is ``depth - alt``, so a site needs *min_het_reads* on each of
+    the two alleles and a VAF inside ``[min_vaf_thres, 1 - min_vaf_thres]`` to be het.
+    Hom-alt is the strict ``alt == depth``; hom-ref never survives the caller's own
+    filters, so it is recorded for QC but never kept.
+
+    Args:
+        alt: ALT read count per site.
+        depth: Total read depth per site.
+        min_dp: Depth floor; below it a site is a no-call.
+        min_het_reads: Minimum reads on each allele for a het call.
+        min_vaf_thres: Half-width of the het VAF band.
+
+    Returns:
+        Array of ``0/1`` / ``1/1`` / ``0/0`` / ``./.`` per site.
+    """
+    ref_side = depth - alt
+    allele_ratio = pd.Series(alt) / pd.Series(depth)
+    called = depth >= min_dp
     is_het = (
         called
-        & (np.minimum(base_snps["AD"], ref_count) >= min_het_reads)
-        & allele_ratio.between(min_vaf_thres, 1 - min_vaf_thres)
+        & (np.minimum(alt, ref_side) >= min_het_reads)
+        & allele_ratio.between(min_vaf_thres, 1 - min_vaf_thres).to_numpy()
     )
-    # NB: hom-ref never survives the keep below, so it is not genotyped
-    is_hom_alt = called & (base_snps["AD"] == base_snps["DP"])
+    is_hom_alt = called & (alt == depth)
 
-    # the same four classes the bulk branch reports, so one QC plot serves both
-    gt = np.full(len(base_snps), "./.", dtype=GT_DTYPE)
-    gt[called & (base_snps["AD"] == 0)] = "0/0"
+    gt = np.full(len(depth), "./.", dtype=GT_DTYPE)
+    gt[called & (alt == 0)] = "0/0"
     gt[is_hom_alt] = "1/1"
     gt[is_het] = "0/1"
+    return gt
 
-    keep = is_het if filter_hom_ALT else (is_het | is_hom_alt)
-    if filter_nz_OTH:
-        logging.info("SNPs with nonzero OTHs are filtered.")
-        keep &= base_snps["OTH"] == 0
+
+params = snakemake_handle.params
+source = params["source"]
+genotyping = params["genotyping"]
+chroms = list(params["chroms"])
+input_nochr = params["input_nochr"]
+min_dp = int(params["min_dp"])
+
+raw_snp_vcfs = maybe_list(snakemake_handle.input["raw_snp_vcfs"])
+snp_vcfs = maybe_list(snakemake_handle.output["snp_vcfs"])
+genome_size = snakemake_handle.input["genome_size"]
+
+logging.info(f"start post_genotype_snps, source={source}, genotyping={genotyping}")
+
+# =============================================================================
+# read the counts: one frame, one convention, whichever caller produced them
+# =============================================================================
+if source == "bulk":
+    assert len(raw_snp_vcfs) == len(snp_vcfs), (
+        f"bulk: {len(raw_snp_vcfs)} input VCF(s) for {len(snp_vcfs)} output(s)"
+    )
+    snps, alt_count, depth, oth = read_counts_bulk(raw_snp_vcfs)
+    nsnps_before_genotyping = len(snps)
+else:
+    assert genotyping == "vaf_cutoff", (
+        f"source={source} genotypes from counts, got genotyping={genotyping!r}"
+    )
+    snps, alt_count, depth, oth, nsnps_before_genotyping = read_counts_pseudobulk(
+        raw_snp_vcfs, list(params["modalities"]), chroms
+    )
+ref_count = depth - alt_count
+
+# =============================================================================
+# genotype: passthrough keeps the caller's GT, the other two overwrite it
+# =============================================================================
+if genotyping == "clonal_loh_hmm":
+    # clonal LOH collapses a gHET onto one allele, so a site is re-genotyped from its
+    # neighbourhood rather than its own counts
+    snp_panel = snakemake_handle.input["snp_panel"]
+    region_bed = snakemake_handle.input["region_bed"]
+    hmm_segments = snakemake_handle.output["hmm_segments"]
+    hmm_params = snakemake_handle.output["hmm_params"]
+    tau = params["tau"]
+    logging.info(f"clonal-LOH HMM over {len(raw_snp_vcfs)} VCF(s), panel={snp_panel}")
+
+    # the chain must break wherever adjacency stops meaning anything, above all
+    # across a centromere, so it is grouped by the run's own chromosome arms
+    arms = read_BED(region_bed, col_id="region_id")
+    qry = pd.DataFrame(
+        {"#CHR": snps["#CHR"].to_numpy(), "POS0": snps["POS"].to_numpy() - 1}
+    )
+    qry, na_idx = assign_pos_to_range(qry, arms, ref_id="region_id", pos_col="POS0")
+    group_id = pd.factorize(qry["region_id"])[0].astype(np.int64)
     logging.info(
-        f"#nz-OTH SNPs={int((base_snps['OTH'] > 0).sum())}/{nsnps_before_genotyping}"
+        f"arms: {len(arms)} in {region_bed}, "
+        f"{int((group_id >= 0).sum())} SNPs assigned, "
+        f"{len(na_idx)} outside every arm"
+    )
+    fitted = group_id >= 0
+    fit = clonal_loh_hmm(
+        ref_count[fitted],
+        alt_count[fitted],
+        snps["POS"].to_numpy()[fitted],
+        group_id[fitted],
+        hom_laf=float(params["hom_laf"]),
+        loh_laf=float(params["loh_laf"]),
+        pi=float(params["pi_het"]),
+        t=float(params["breakpoint_rate"]),
+        # NB: YAML has no infinity, so null is the binomial
+        tau=np.inf if tau is None else float(tau),
+        n_retained=int(params["n_retained"]),
+        n_iter=int(params["n_iter"]),
+        em_tol=float(params["em_tol"]),
+        margin=float(params["margin"]),
+        learn_pi=bool(params["learn_pi"]),
+        loh_min=float(params["loh_min"]),
+        p_het_min=float(params["p_het_min"]),
+        min_dp=min_dp,
+    )
+    gt = np.full(len(snps), "./.", dtype=GT_DTYPE)
+    gt[fitted] = fit["gt"]
+
+    # NB: state 0 is the clonal-LOH state, so this matches hmm_segments row for row
+    loh_state = np.full(len(snps), "unassigned", dtype=object)
+    loh_state[fitted] = np.where(fit["state"] == 0, "LOH", "non-LOH")
+    snps[LOH_COL] = loh_state
+
+    # what the caller said, so the rescue can be counted in both directions
+    called = snps["GT"].astype(str).str.replace("|", "/", regex=False).to_numpy()
+    logging.info(
+        f"re-called het from 0/0={int(((called == '0/0') & (gt == '0/1')).sum())}, "
+        f"from 1/1={int(((called == '1/1') & (gt == '0/1')).sum())}"
     )
 
-    final_snps = base_snps[keep]
-    logging.info(f"#kept SNPs={len(final_snps)}/{nsnps_before_genotyping}")
+    # the Viterbi path as intervals: the model's own allelic-imbalance segmentation.
+    # A new segment starts wherever the state changes or the arm does.
+    arm = group_id[fitted]
+    state = fit["state"]
+    cut = np.r_[True, (state[1:] != state[:-1]) | (arm[1:] != arm[:-1])]
+    seg = pd.DataFrame(
+        {
+            "#CHR": snps.loc[fitted, "#CHR"].to_numpy(),
+            "POS": snps.loc[fitted, "POS"].to_numpy(),
+            "state": state,
+            "maf": fit["maf"],
+            "is_het": fit["gt"] == "0/1",
+            "seg": np.cumsum(cut),
+        }
+    )
+    segments = seg.groupby("seg", sort=True).agg(
+        START=("POS", "min"),
+        END=("POS", "max"),
+        state=("state", "first"),
+        n_snps=("POS", "size"),
+        n_het=("is_het", "sum"),
+        mean_maf=("maf", "mean"),
+    )
+    segments.insert(0, "#CHR", seg.groupby("seg", sort=True)["#CHR"].first())
+    segments["START"] -= 1
+    segments.insert(4, "b_s", fit["means"][segments["state"].to_numpy()])
+    segments.to_csv(hmm_segments, sep="\t", index=False, float_format="%.4f")
+    pd.DataFrame(
+        [
+            {
+                "means": ",".join(f"{b:.4f}" for b in fit["means"]),
+                "pi": float(np.mean(fit["pi"])),
+                "loglik": fit["loglik"],
+                "n_iter": fit["n_iter"],
+                "converged": fit["converged"],
+                "n_sites": int(fitted.sum()),
+                "n_arms": len(arms),
+                "n_segments": len(segments),
+            }
+        ]
+    ).to_csv(hmm_params, sep="\t", index=False, float_format="%.6g")
+    logging.info(f"{len(segments)} HMM segments -> {hmm_segments}")
+elif genotyping == "vaf_cutoff":
+    min_het_reads = int(params["min_het_reads"])
+    min_vaf_thres = float(params["min_vaf_thres"])
+    logging.info(
+        f"vaf_cutoff: min_dp={min_dp}, min_het_reads={min_het_reads}, "
+        f"min_vaf_thres={min_vaf_thres}"
+    )
+    gt = call_vaf_cutoff(alt_count, depth, min_dp, min_het_reads, min_vaf_thres)
+else:
+    assert genotyping == "passthrough", f"unknown genotyping={genotyping!r}"
+    assert source == "bulk", "passthrough needs a caller's GT, which only bulk has"
+    gt = snps["GT"].to_numpy()
+
+# =============================================================================
+# keep, write, and hand the same points to the QC plot
+# =============================================================================
+genotyped = snps.assign(
+    REF_COUNT=ref_count, ALT_COUNT=alt_count, DP=depth, OTH=oth, GT=gt
+)
+
+if genotyping == "passthrough":
+    logging.info(f"linking {len(raw_snp_vcfs)} VCF(s) and indexes")
+    symlink_files(raw_snp_vcfs, snp_vcfs)
+    symlink_files(
+        maybe_list(snakemake_handle.input["raw_snp_vcfs_tbi"]),
+        maybe_list(snakemake_handle.output["snp_vcfs_tbi"]),
+    )
+else:
+    filter_nz_OTH = bool(params["filter_nz_OTH"])
+    filter_hom_ALT = bool(params["filter_hom_ALT"])
+    is_het = gt == "0/1"
+    # NB: hom-ref never survives the keep below, so it is not genotyped
+    keep = is_het if filter_hom_ALT else (is_het | (gt == "1/1"))
+    if filter_nz_OTH:
+        logging.info("SNPs with nonzero OTHs are filtered.")
+        keep &= oth == 0
+    logging.info(f"#nz-OTH SNPs={int((oth > 0).sum())}/{nsnps_before_genotyping}")
+    logging.info(f"#kept SNPs={int(keep.sum())}/{nsnps_before_genotyping}")
     write_per_chrom(
-        final_snps,
-        "#CHROM",
-        final_snps["AD"].to_numpy(),
-        final_snps["DP"].to_numpy(),
-        final_snps["OTH"].to_numpy(),
+        genotyped.loc[keep],
+        "#CHR",
+        alt_count[keep],
+        depth[keep],
+        oth[keep],
         gt[keep],
         chroms,
         snp_vcfs,
         input_nochr,
         genome_size,
-    )
-
-    genotyped = base_snps.assign(
-        REF_COUNT=base_snps["DP"] - base_snps["AD"],
-        ALT_COUNT=base_snps["AD"],
-        GT=gt,
-        **{"#CHR": base_snps["#CHROM"].astype(str)},
     )
 
 if len(genotyped) > REFINE_PLOT_MAX_SNPS:
