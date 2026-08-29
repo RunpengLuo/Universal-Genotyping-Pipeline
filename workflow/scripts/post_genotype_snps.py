@@ -9,22 +9,17 @@ Two independent axes. ``params.source`` says which VCFs hold the counts:
   them. Bulk only, and only when no genotyped dataset is a tumor.
 - ``vaf_cutoff``: threshold depth, minor-allele reads and VAF. The tumor-only default,
   and the only option off bulk since cellsnp-lite emits no GT of its own.
-- ``clonal_loh_hmm``: bulk only. Clonal LOH collapses a gHET onto one allele, so every
-  site is re-genotyped by a latent LOH-state chain over the arms.
 
-Last update: 2026-08-26
+Last update: 2026-08-28
 
 Inputs:
 - [bulk] snp_dir/raw/chr{chrname}.vcf.gz: the bcftools calls, every chromosome
-- [bulk] snp_panel: the population SNP VCF the calls were made over
-- [bulk] region_bed: chromosome arms; region_id is the HMM's chain group
 - [pseudobulk] snp_dir/pseudobulk_{modality}/cellSNP.base.vcf.gz: cellsnp-lite base calls
 - genome_size: chrom sizes TSV, for the ##contig header
 Outputs:
 - snp_dir/chr{chrname}.vcf.gz: bi-allelic het or hom-alt SNPs
 - snp_dir/chr{chrname}.vcf.gz.tbi: tabix index of the above
-- qc_dir/post_genotype_snps.{bulk,nonbulk}.pdf: SNP allele-freq, one page per grouping:
-  genotype, then LOH state (clonal_loh_hmm runs only)
+- qc_dir/post_genotype_snps.{bulk,nonbulk}.pdf: SNP allele frequency by genotype
 Notes:
 - both sources report depth as cellsnp-lite does, ``REF + ALT`` with the other-allele
   reads held apart in OTH (cellsnp-lite ``src/csp.h``: DP is "total counts for ALT and
@@ -50,25 +45,21 @@ import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_pdf import PdfPages
 
-from genotype_loh_hmm import GT_DTYPE, clonal_loh_hmm
 from io_utils import (
-    read_BED,
     read_chrom_sizes,
     read_VCF,
     symlink_files,
     write_VCF,
 )
 from plot_alleles import plot_allele_freqs
-from range_utils import assign_pos_to_range
+
+GT_DTYPE = "<U3"
 
 REFINE_PLOT_MAX_SNPS = (
     300_000  # QC scatter resolves no more than this; sampled above it
 )
 # blue vs red is het against hom, the call this step exists to make; grey is no-call
 GT_PLOT_COLORS = {"0/0": "red", "0/1": "blue", "1/1": "red", "./.": "gray"}
-# the same points regrouped onto a second QC page; grey stays the class with no call
-LOH_PLOT_COLORS = {"LOH": "red", "non-LOH": "blue", "unassigned": "gray"}
-LOH_COL = "LOH_STATE"
 # VCF fixed fields this step does not compute, and what to write when the input lacks them
 VCF_DEFAULT_FALLBACKS = {"ID": ".", "QUAL": ".", "FILTER": "PASS"}
 
@@ -319,110 +310,9 @@ else:
 ref_count = depth - alt_count
 
 # =============================================================================
-# genotype: passthrough keeps the caller's GT, the other two overwrite it
+# genotype: passthrough keeps the caller's GT, vaf_cutoff overwrites it
 # =============================================================================
-if genotyping == "clonal_loh_hmm":
-    # clonal LOH collapses a gHET onto one allele, so a site is re-genotyped from its
-    # neighbourhood rather than its own counts
-    snp_panel = snakemake_handle.input["snp_panel"]
-    region_bed = snakemake_handle.input["region_bed"]
-    hmm_segments = snakemake_handle.output["hmm_segments"]
-    hmm_params = snakemake_handle.output["hmm_params"]
-    tau = params["tau"]
-    logging.info(f"clonal-LOH HMM over {len(raw_snp_vcfs)} VCF(s), panel={snp_panel}")
-
-    # the chain must break wherever adjacency stops meaning anything, above all
-    # across a centromere, so it is grouped by the run's own chromosome arms
-    arms = read_BED(region_bed, col_id="region_id")
-    qry = pd.DataFrame(
-        {"#CHR": snps["#CHR"].to_numpy(), "POS0": snps["POS"].to_numpy() - 1}
-    )
-    qry, na_idx = assign_pos_to_range(qry, arms, ref_id="region_id", pos_col="POS0")
-    group_id = pd.factorize(qry["region_id"])[0].astype(np.int64)
-    logging.info(
-        f"arms: {len(arms)} in {region_bed}, "
-        f"{int((group_id >= 0).sum())} SNPs assigned, "
-        f"{len(na_idx)} outside every arm"
-    )
-    fitted = group_id >= 0
-    fit = clonal_loh_hmm(
-        ref_count[fitted],
-        alt_count[fitted],
-        snps["POS"].to_numpy()[fitted],
-        group_id[fitted],
-        hom_laf=float(params["hom_laf"]),
-        loh_laf=float(params["loh_laf"]),
-        pi=float(params["pi_het"]),
-        t=float(params["breakpoint_rate"]),
-        # NB: YAML has no infinity, so null is the binomial
-        tau=np.inf if tau is None else float(tau),
-        n_retained=int(params["n_retained"]),
-        n_iter=int(params["n_iter"]),
-        em_tol=float(params["em_tol"]),
-        margin=float(params["margin"]),
-        learn_pi=bool(params["learn_pi"]),
-        loh_min=float(params["loh_min"]),
-        p_het_min=float(params["p_het_min"]),
-        min_dp=min_dp,
-    )
-    gt = np.full(len(snps), "./.", dtype=GT_DTYPE)
-    gt[fitted] = fit["gt"]
-
-    # NB: state 0 is the clonal-LOH state, so this matches hmm_segments row for row
-    loh_state = np.full(len(snps), "unassigned", dtype=object)
-    loh_state[fitted] = np.where(fit["state"] == 0, "LOH", "non-LOH")
-    snps[LOH_COL] = loh_state
-
-    # what the caller said, so the rescue can be counted in both directions
-    called = snps["GT"].astype(str).str.replace("|", "/", regex=False).to_numpy()
-    logging.info(
-        f"re-called het from 0/0={int(((called == '0/0') & (gt == '0/1')).sum())}, "
-        f"from 1/1={int(((called == '1/1') & (gt == '0/1')).sum())}"
-    )
-
-    # the Viterbi path as intervals: the model's own allelic-imbalance segmentation.
-    # A new segment starts wherever the state changes or the arm does.
-    arm = group_id[fitted]
-    state = fit["state"]
-    cut = np.r_[True, (state[1:] != state[:-1]) | (arm[1:] != arm[:-1])]
-    seg = pd.DataFrame(
-        {
-            "#CHR": snps.loc[fitted, "#CHR"].to_numpy(),
-            "POS": snps.loc[fitted, "POS"].to_numpy(),
-            "state": state,
-            "maf": fit["maf"],
-            "is_het": fit["gt"] == "0/1",
-            "seg": np.cumsum(cut),
-        }
-    )
-    segments = seg.groupby("seg", sort=True).agg(
-        START=("POS", "min"),
-        END=("POS", "max"),
-        state=("state", "first"),
-        n_snps=("POS", "size"),
-        n_het=("is_het", "sum"),
-        mean_maf=("maf", "mean"),
-    )
-    segments.insert(0, "#CHR", seg.groupby("seg", sort=True)["#CHR"].first())
-    segments["START"] -= 1
-    segments.insert(4, "b_s", fit["means"][segments["state"].to_numpy()])
-    segments.to_csv(hmm_segments, sep="\t", index=False, float_format="%.4f")
-    pd.DataFrame(
-        [
-            {
-                "means": ",".join(f"{b:.4f}" for b in fit["means"]),
-                "pi": float(np.mean(fit["pi"])),
-                "loglik": fit["loglik"],
-                "n_iter": fit["n_iter"],
-                "converged": fit["converged"],
-                "n_sites": int(fitted.sum()),
-                "n_arms": len(arms),
-                "n_segments": len(segments),
-            }
-        ]
-    ).to_csv(hmm_params, sep="\t", index=False, float_format="%.6g")
-    logging.info(f"{len(segments)} HMM segments -> {hmm_segments}")
-elif genotyping == "vaf_cutoff":
+if genotyping == "vaf_cutoff":
     min_het_reads = int(params["min_het_reads"])
     min_vaf_thres = float(params["min_vaf_thres"])
     logging.info(
@@ -488,33 +378,25 @@ depths = ref_counts + genotyped["ALT_COUNT"].to_numpy()
 
 # NB: the pass-through branch carries the caller's GT, which may be phased
 genotyped["GT_PLOT"] = genotyped["GT"].astype(str).str.replace("|", "/", regex=False)
-# one page per grouping of the same points; the LOH page needs the chain to have run
-qc_pages = [("GT_PLOT", GT_PLOT_COLORS, "")]
-if LOH_COL in genotyped.columns:
-    qc_pages.append((LOH_COL, LOH_PLOT_COLORS, " - LOH state"))
-logging.info(f"QC pages: {', '.join(col for col, _, _ in qc_pages)}")
-
 with PdfPages(snakemake_handle.output["qc_pdf"]) as qc_pdf:
-    for group_col, group_colors, title_suffix in qc_pages:
-        plot_allele_freqs(
-            genotyped,
-            [],
-            [],
-            [],
-            depths.reshape(-1, 1),
-            ref_counts.reshape(-1, 1),
-            genome_size,
-            params["qc_dir"],
-            apply_pseudobulk=True,
-            cell_dataset_ids=None,
-            allele="ref",
-            feature_label="SNP",
-            snp_groups=genotyped[group_col].to_numpy(),
-            group_colors=group_colors,
-            run_id=params["run_id"],
-            sample_id=params["sample_id"],
-            name_prefix="post_genotype_snps",
-            pdf=qc_pdf,
-            title_suffix=title_suffix,
-        )
+    plot_allele_freqs(
+        genotyped,
+        [],
+        [],
+        [],
+        depths.reshape(-1, 1),
+        ref_counts.reshape(-1, 1),
+        genome_size,
+        params["qc_dir"],
+        apply_pseudobulk=True,
+        cell_dataset_ids=None,
+        allele="ref",
+        feature_label="SNP",
+        snp_groups=genotyped["GT_PLOT"].to_numpy(),
+        group_colors=GT_PLOT_COLORS,
+        run_id=params["run_id"],
+        sample_id=params["sample_id"],
+        name_prefix="post_genotype_snps",
+        pdf=qc_pdf,
+    )
 logging.info("finished post_genotype_snps")

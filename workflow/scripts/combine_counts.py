@@ -1,6 +1,6 @@
 """Bulk: SNP-informed adaptive binning over all bulk assays, plus depth, RDR and reads.
 
-Last update: 2026-08-27
+Last update: 2026-08-28
 
 Inputs:
 - allele_dir/snps.tsv.gz: the shared SNP set, matrix rows
@@ -15,7 +15,8 @@ Inputs:
 Outputs:
 - bb_dir/unit/bulk/snp.tsv.gz: the SNPs that landed in a window, matrix rows
 - bb_dir/unit/bulk/snp.{T,A,B}allele.npz: their allele counts
-- bb_dir/unit/bulk/window.tsv.gz: the windows on the run's chromosomes, matrix rows
+- bb_dir/unit/bulk/window.tsv.gz: the windows on the run's chromosomes, matrix rows;
+  carries is_loh under detect_loh_tumor_cell_line
 - bb_dir/unit/bulk/window.depth.npz: bias-corrected depth, windows x datasets
 - bb_dir/unit/bulk/window.rdcount.npz: read starts, windows x datasets
 - bb_dir/unit/bulk/sample_ids.tsv: one row per matrix column
@@ -26,10 +27,23 @@ Outputs:
 - bb_dir/MSR{msr}/bulk/bb.rdcount.npz: per-bb read starts per dataset
 - bb_dir/MSR{msr}/bulk/sample_ids.tsv: one row per matrix column
 - bb_dir/multi_snp/bulk/: the same seven files over nsnp_multi-SNP groups, binning-independent
+- [detect_loh_tumor_cell_line] qc_dir/detect_loh.bulk.pdf: het density and the regions
+  called from it
 - qc_dir/combine_counts.bulk.MSR{msr}.pdf: segmentation, RDR/BAF and 2D QC
 
 Read starts are additive, so every level sums them from the windows; depth, a per-base
 mean, is length-weighted instead. Both cover every dataset, in sample_ids.tsv order.
+
+A bb closes when its SNP reads meet min_snp_reads in every tumor AND its read starts meet
+min_total_reads in every dataset. Inside a clonal-LOH region the SNP criterion is dropped
+(no germline het survives there) and the bb's allele counts are stamped: B=0 in a tumor,
+T=the reads the hets it would have carried at the neutral rate, so its weight in a
+downstream beta-binomial matches a measured bb of the same span.
+
+Under detect_loh_tumor_cell_line those regions are called here from the collapse in
+het-SNP density per tile, over the run's shared SNP set and every bulk dataset's
+assayable span; see script_utils/loh_utils.py. The genotyping step never sees them,
+since one site's counts cannot tell a gHET inside LOH from a gHOM.
 """
 
 import logging
@@ -51,7 +65,13 @@ from range_utils import (
     merge_ranges_to_clusters,
 )
 from feature_utils import explode_feature_ids, merge_feature_ids
-from io_utils import read_mosdepth_bed, read_snp_mats, read_window_bed, write_bb_file
+from loh_utils import build_loh_tiles, fit_snp_rate, loh_intervals, viterbi_loh
+from io_utils import (
+    read_mosdepth_bed,
+    read_snp_mats,
+    read_window_bed,
+    write_bb_file,
+)
 from combine_counts_utils import (
     summarize_read_depth_bb,
     summarize_rdr_bb,
@@ -64,7 +84,12 @@ from phasing_utils import (
     interp_cM_between_bbs,
 )
 from matplotlib.backends.backend_pdf import PdfPages
-from plot_combine_counts import plot_rdr_baf, plot_rdr_baf_2d, plot_segmentation_qc
+from plot_combine_counts import (
+    plot_loh_density,
+    plot_rdr_baf,
+    plot_rdr_baf_2d,
+    plot_segmentation_qc,
+)
 
 ##################################################
 
@@ -94,8 +119,13 @@ phase_flip_epsilon = float(snakemake_handle.params["phase_flip_epsilon"])
 phase_flip_alpha = float(snakemake_handle.params["phase_flip_alpha"])
 
 gene_aware_binning = bool(snakemake_handle.params["gene_aware_binning"])
-max_blocksize = int(snakemake_handle.params["max_blocksize"])
 msr_list = [int(m) for m in snakemake_handle.params["min_snp_reads"]]
+min_total_reads = int(snakemake_handle.params["min_total_reads"])
+
+detect_loh_tumor_cell_line = bool(snakemake_handle.params["detect_loh_tumor_cell_line"])
+loh_tile_size = int(snakemake_handle.params["loh_tile_size"])
+loh_rate_ratio = float(snakemake_handle.params["loh_rate_ratio"])
+loh_breakpoint_rate = float(snakemake_handle.params["loh_breakpoint_rate"])
 min_snp_per_bin = int(snakemake_handle.params["min_snp_per_bin"])
 nsnp_multi = int(snakemake_handle.params["nsnp_multi"])
 nu = float(snakemake_handle.params["nu"])
@@ -128,6 +158,7 @@ out_multi_rdr_mtx = snakemake_handle.output["multi_rdr_mtx"]
 out_multi_rdcount_mtx = snakemake_handle.output["multi_rdcount_mtx"]
 out_multi_sample_file = snakemake_handle.output["multi_sample_file"]
 out_qc_pdf = list(snakemake_handle.output["qc_pdf"])
+out_loh_pdf = snakemake_handle.output["loh_pdf"] if detect_loh_tumor_cell_line else None
 
 ##################################################
 # load inputs
@@ -187,6 +218,14 @@ if "rdr_base_dataset_id" in sample_df.columns:
         base = sample_df["rdr_base_dataset_id"].iloc[i]
         if pd.notna(base):
             get_rdr_base_dataset_id[i] = obs_of[base]
+is_tumor_col = np.zeros(num_datasets, dtype=bool)
+is_tumor_col[tumor_dataset_indices] = True
+if detect_loh_tumor_cell_line and len(tumor_dataset_indices) > 1:
+    logging.warning(
+        f"{len(tumor_dataset_indices)} tumor columns {tumor_dataset_ids} share one "
+        f"clonal-LOH segmentation, called from the run's shared het-SNP set"
+    )
+
 tumor_base_dataset_ids = [
     dataset_ids[get_rdr_base_dataset_id[c]] if c in get_rdr_base_dataset_id else None
     for c in tumor_dataset_indices
@@ -222,12 +261,102 @@ tot_mtx, a_mtx, b_mtx = tot_mtx[keep_snps], a_mtx[keep_snps], b_mtx[keep_snps]
 tot_tumor = np.ascontiguousarray(tot_tumor[keep_snps])
 
 ##################################################
+# clonal LOH: the het-SNP density collapses there, so those windows bin on read starts
+# alone and their allele counts are stamped rather than measured
+if detect_loh_tumor_cell_line:
+    # a window with no assayable span emits nothing, so a coverage hole cannot read as
+    # depletion; depth enters here only, never as a copy-number signal
+    assayable = np.isfinite(dp_corrected).all(axis=1) & (rdcount.sum(axis=1) > 0)
+    tiles = build_loh_tiles(
+        bin_df,
+        snps_binned["bin_id"].to_numpy(),
+        assayable,
+        loh_tile_size,
+        cluster_cols=("seg_id",) if "seg_id" in bin_df.columns else (),
+    )
+    exposure_mb = tiles["exposure_bp"].to_numpy() / 1e6
+    rate_ref, nb_size = fit_snp_rate(tiles["n_het"].to_numpy(), exposure_mb)
+    rate_loh = loh_rate_ratio * rate_ref
+    tiles["is_loh"] = viterbi_loh(
+        tiles["n_het"].to_numpy(),
+        exposure_mb,
+        tiles["mid"].to_numpy(),
+        pd.factorize(tiles["region_id"])[0],
+        rate_ref,
+        rate_loh,
+        nb_size,
+        loh_breakpoint_rate,
+    )
+    logging.info(
+        f"clonal-LOH decode: {rate_ref:.1f} het/Mb neutral (NB size {nb_size:.2f}) vs "
+        f"{rate_loh:.1f} LOH (ratio {loh_rate_ratio}), "
+        f"{int(tiles['is_loh'].sum())}/{len(tiles)} tiles LOH"
+    )
+    loh_df = loh_intervals(tiles, tiles["is_loh"].to_numpy())
+    if len(loh_df):
+        flagged, _ = assign_range_to_range(
+            bin_df[["#CHR", "START", "END"]],
+            loh_df.assign(loh_region=np.arange(len(loh_df))),
+            "loh_region",
+            rule="midpoint",
+        )
+        bin_df["is_loh"] = flagged["loh_region"].notna().to_numpy()
+    else:
+        bin_df["is_loh"] = False
+
+    win_is_loh = bin_df["is_loh"].to_numpy()
+    snp_in_loh = win_is_loh[snps_binned["bin_id"].to_numpy()]
+    log_ratios(
+        f"windows in a clonal-LOH region ({len(loh_df)} intervals)",
+        int(win_is_loh.sum()),
+        len(bin_df),
+        (bin_df["END"] - bin_df["START"]).to_numpy()[win_is_loh],
+        "window",
+    )
+    # the residual het calls inside LOH: sequencing error the cutoff let through, kept
+    # in the unit-level table but overwritten by the bb stamp
+    log_ratios(
+        "SNPs inside an LOH window (their counts are overwritten by the stamp)",
+        int(snp_in_loh.sum()),
+        len(snps_binned),
+        np.zeros(int(snp_in_loh.sum())),
+        "snp",
+    )
+    with PdfPages(out_loh_pdf) as loh_pdf:
+        plot_loh_density(
+            tiles,
+            rate_ref,
+            rate_loh,
+            loh_df,
+            genome_size,
+            sample_id,
+            region_bed=region_bed,
+            blacklist_bed=blacklist_bed,
+            pdf=loh_pdf,
+        )
+    logging.info(f"saved clonal-LOH QC to {out_loh_pdf}")
+else:
+    bin_df["is_loh"] = False
+
+# one key per maximal run, so a bb never spans an LOH boundary in either direction
+bin_df["loh_id"] = (bin_df["is_loh"] != bin_df["is_loh"].shift()).cumsum()
+win_is_loh = bin_df["is_loh"].to_numpy()
+# the LOH key is defined on windows; a SNP inherits its window's, so the SNP-side
+# clustering (detect_phase_flips) splits on the same boundary the bins do
+snps_binned["loh_id"] = bin_df["loh_id"].to_numpy()[snps_binned["bin_id"].to_numpy()]
+snps_binned["is_loh"] = win_is_loh[snps_binned["bin_id"].to_numpy()]
+
+##################################################
 # unit level: the two grids the binning consumes, before any merge
-snps_binned.drop(columns=["bin_id"]).to_csv(out_unit_snp_file, sep="\t", index=False)
+snps_binned.drop(
+    columns=["bin_id", "loh_id"] + ([] if detect_loh_tumor_cell_line else ["is_loh"])
+).to_csv(out_unit_snp_file, sep="\t", index=False)
 np.savez_compressed(out_unit_tot_mtx, mat=tot_mtx)
 np.savez_compressed(out_unit_a_mtx, mat=a_mtx)
 np.savez_compressed(out_unit_b_mtx, mat=b_mtx)
-bin_df.drop(columns=["bin_id"]).to_csv(out_unit_window_file, sep="\t", index=False)
+bin_df.drop(
+    columns=["bin_id", "loh_id"] + ([] if detect_loh_tumor_cell_line else ["is_loh"])
+).to_csv(out_unit_window_file, sep="\t", index=False)
 np.savez_compressed(out_unit_dp_mtx, mat=dp_corrected)
 np.savez_compressed(out_unit_rdcount_mtx, mat=rdcount)
 sample_df.to_csv(out_unit_sample_file, sep="\t", index=False)
@@ -238,7 +367,7 @@ logging.info(
 
 ##################################################
 # adaptive segmentation bounderies
-cluster_cols = ["region_id", "seg_id"]
+cluster_cols = ["region_id", "seg_id", "loh_id"]
 
 if "PS" in snps.columns:
     assert snps["PS"].notna().all(), "SNP file, `PS` column has NaNs"
@@ -301,7 +430,6 @@ multi_bbs, snps_multi = build_adaptive_bins(
     0,
     nsnp_multi,
     cluster_cols=[c for c in ("region_id", "seg_id") if c in multi_bins.columns],
-    max_blocksize=0,
     gene_aware=False,
 )
 num_multi = len(multi_bbs)
@@ -324,7 +452,8 @@ mapped, off_win = assign_range_to_range(
 win_multi = (
     pd.to_numeric(mapped["bb_id"], errors="coerce").fillna(-1).to_numpy(np.int64)
 )
-inside = win_multi >= 0
+# an LOH window carries no measured allele signal, so it joins no multi-SNP group
+inside = (win_multi >= 0) & ~win_is_loh
 win_spans = (bin_df["END"] - bin_df["START"]).to_numpy()
 logging.info(f"multi-SNP groups: {num_multi} over {int(keep_multi.sum())} SNPs")
 log_ratios(
@@ -452,12 +581,18 @@ for (
         min_snp_reads_vec,
         min_snp_per_bin,
         cluster_cols=cluster_cols,
-        max_blocksize=max_blocksize,
         gene_aware=gene_aware_binning,
+        bin_total_reads=rdcount,
+        min_total_reads=min_total_reads,
+        is_loh_col="is_loh",
     )
     num_bbs = len(bbs)
     bb_spans = bbs["BLOCKSIZE"].to_numpy()
-    empty_bb = (bbs["#SNPS"] == 0).to_numpy()
+    loh_bb = np.zeros(num_bbs, dtype=bool)
+    loh_bb[bin_df["bb_id"].to_numpy()[win_is_loh]] = True
+    # carried on the frame so the NaN filter below keeps it aligned to the rows
+    bbs["is_loh"] = loh_bb
+    empty_bb = ((bbs["#SNPS"] == 0).to_numpy()) & ~loh_bb
     n_empty = int(empty_bb.sum())
     logging.info(f"{num_bbs} bbs from {len(bin_df)} bins")
     log_ratios(
@@ -467,22 +602,67 @@ for (
         bb_spans[empty_bb],
         "bb",
     )
+    if detect_loh_tumor_cell_line:
+        log_ratios(
+            "clonal-LOH bbs (binned on read starts, allele counts stamped)",
+            int(loh_bb.sum()),
+            num_bbs,
+            bb_spans[loh_bb],
+            "bb",
+        )
 
     bb_ids = snps_bb["bb_id"].to_numpy()
     a_mtx_bb = sum_features_to_bbs(a_mtx, bb_ids, num_bbs)
     b_mtx_bb = sum_features_to_bbs(b_mtx, bb_ids, num_bbs)
     tot_mtx_bb = sum_features_to_bbs(tot_mtx, bb_ids, num_bbs)
 
+    logging.info("aggregating corrected fixed-bin depth into bbs")
+    bb_dp, bb_bases = summarize_read_depth_bb(
+        bin_df, dp_corrected, num_bbs, dataset_ids=dataset_ids
+    )
+
+    # LOH bbs hold no callable het, so their allele counts are stamped: the tumor's minor
+    # haplotype is absent (B = 0), a diploid normal is still het (B = T/2). T is the
+    # counterfactual total - the reads the hets a neutral bb of this span would have
+    # carried - not the bare depth, so a downstream beta-binomial weights an LOH bb on
+    # the same scale as a measured one
+    if loh_bb.any():
+        stamp_dp = (
+            pd.DataFrame(dp_corrected)
+            .groupby(bin_df["bb_id"].to_numpy(), sort=True)
+            .median()
+            .reindex(range(num_bbs))
+            .to_numpy()
+        )
+        bb_span_mb = (
+            np.bincount(
+                bin_df["bb_id"].to_numpy(),
+                weights=(bin_df["END"] - bin_df["START"]).to_numpy(dtype=np.float64),
+                minlength=num_bbs,
+            )
+            / 1e6
+        )
+        # rate_ref is per Mb of assayable span, so pair it with the summed window span
+        expected_het = rate_ref * bb_span_mb[loh_bb]
+        stamp_T = np.maximum(
+            np.rint(np.nan_to_num(stamp_dp[loh_bb]) * expected_het[:, None]), 1.0
+        )
+        stamp_B = np.where(is_tumor_col[None, :], 0.0, stamp_T // 2)
+        tot_mtx_bb[loh_bb] = stamp_T
+        b_mtx_bb[loh_bb] = stamp_B
+        a_mtx_bb[loh_bb] = stamp_T - stamp_B
+        logging.info(
+            f"stamped {int(loh_bb.sum())} clonal-LOH bbs: T={rate_ref:.0f} het/Mb x span "
+            f"x median depth (median {np.median(stamp_T):.0f}, median "
+            f"{np.median(expected_het):.0f} het/bb), "
+            f"B=0 for {[dataset_ids[c] for c in tumor_dataset_indices]}, T//2 otherwise"
+        )
+
     baf_mtx_bb = np.divide(
         b_mtx_bb,
         tot_mtx_bb,
         where=tot_mtx_bb > 0,
         out=np.full_like(b_mtx_bb, np.nan, dtype=np.float32),
-    )
-
-    logging.info("aggregating corrected fixed-bin depth into bbs")
-    bb_dp, bb_bases = summarize_read_depth_bb(
-        bin_df, dp_corrected, num_bbs, dataset_ids=dataset_ids
     )
     bb_rdcount = sum_features_to_bbs(rdcount, bin_df["bb_id"].to_numpy(), num_bbs)
 
@@ -582,6 +762,7 @@ for (
             tot_mtx_bb,
             pdf=pdf,
             sample_id=sample_id,
+            is_loh=bbs["is_loh"].to_numpy() if detect_loh_tumor_cell_line else None,
         )
         plot_rdr_baf(
             bbs,
@@ -599,6 +780,7 @@ for (
             region_bed=region_bed,
             blacklist_bed=blacklist_bed,
             pdf=pdf,
+            is_loh=bbs["is_loh"].to_numpy() if detect_loh_tumor_cell_line else None,
         )
         plot_rdr_baf_2d(
             bb_rdr,
@@ -610,7 +792,9 @@ for (
         )
     logging.info(f"saved QC PDF to {out_pdf}")
 
-    write_bb_file(bbs, out_bb)
+    write_bb_file(
+        bbs if detect_loh_tumor_cell_line else bbs.drop(columns="is_loh"), out_bb
+    )
     np.savez_compressed(out_tot, mat=tot_mtx_bb)
     np.savez_compressed(out_a, mat=a_mtx_bb)
     np.savez_compressed(out_b, mat=b_mtx_bb)

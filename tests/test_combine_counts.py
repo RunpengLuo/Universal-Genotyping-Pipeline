@@ -244,7 +244,6 @@ def test_leading_snp_free_bin_keeps_a_cluster_key(seg):
         50,
         1,
         cluster_cols=["region_id", "seg_id", "PS"],
-        max_blocksize=0,
         gene_aware=False,
     )
     assert win["bb_id"].between(0, len(bbs) - 1).all()
@@ -270,7 +269,6 @@ def test_snp_free_segment_gets_its_own_bb(seg):
         50,
         1,
         cluster_cols=["region_id", "seg_id", "PS"],
-        max_blocksize=0,
         gene_aware=False,
     )
     assert (bbs["#SNPS"] == 0).any(), "the SNP-free segment produced no bb"
@@ -478,3 +476,251 @@ def test_summarize_read_depth_bb_all_nan_bb_is_nan(ccu):
     assert np.isnan(bb_dp[0, 0])
     assert bb_dp[0, 1] == pytest.approx(5.0)
     assert bb_bases[0, 0] == 0.0
+
+
+##################################################
+# the close rule: min_snp_reads AND min_total_reads, no span cap
+
+
+def _bin_all(
+    seg, win, snps, tot, msr, min_snp_per_bin=1, rdcount=None, mtr=0, is_loh_col=None
+):
+    """build_adaptive_bins over one window frame, SNPs already binned."""
+    return seg.build_adaptive_bins(
+        win,
+        _bin_snps(snps, win),
+        tot,
+        msr,
+        min_snp_per_bin,
+        cluster_cols=["region_id", "seg_id"]
+        + ([is_loh_col.replace("is_loh", "loh_id")] if is_loh_col else []),
+        gene_aware=False,
+        bin_total_reads=rdcount,
+        min_total_reads=mtr,
+        is_loh_col=is_loh_col,
+    )
+
+
+def test_msr_alone_closes_when_mtr_is_off(seg):
+    """With min_total_reads=0 the rule is the old one: SNP reads decide."""
+    win = _windows(10)
+    snps = _snps_in(win, list(range(10)))
+    tot = np.full((len(snps), 1), 50.0)  # 50 reads per window, MSR 100 -> 2 windows/bb
+    bbs, _ = _bin_all(seg, win, snps, tot, 100)
+    assert len(bbs) == 5, bbs
+    assert (bbs["BLOCKSIZE"] == 2000).all()
+
+
+def test_mtr_forces_a_larger_bb_than_msr_alone(seg):
+    """A read-start floor the SNP reads do not reach keeps merging past the MSR cut."""
+    win = _windows(12)
+    snps = _snps_in(win, list(range(12)))
+    tot = np.full((len(snps), 1), 50.0)
+    rd = np.full((12, 1), 100.0)  # MTR 400 needs 4 windows, MSR 100 only 2
+    bbs, _ = _bin_all(seg, win, snps, tot, 100, rdcount=rd, mtr=400)
+    assert len(bbs) == 3, bbs
+    assert (bbs["BLOCKSIZE"] == 4000).all()
+
+
+def test_mtr_covers_every_column_not_just_tumors(seg):
+    """min_total_reads is per observation; the thinnest column sets the bb."""
+    win = _windows(12)
+    snps = _snps_in(win, list(range(12)))
+    tot = np.full((len(snps), 1), 500.0)
+    rd = np.column_stack([np.full(12, 400.0), np.full(12, 100.0)])
+    bbs, _ = _bin_all(seg, win, snps, tot, 100, rdcount=rd, mtr=400)
+    assert (bbs["BLOCKSIZE"] == 4000).all(), "the 100-read column must drive the merge"
+
+
+def test_loh_cluster_ignores_the_snp_criterion(seg):
+    """No germline het survives clonal LOH, so read starts alone close the bb."""
+    win = _windows(8)
+    win["is_loh"] = True
+    win["loh_id"] = 1
+    snps = _snps_in(win, [0])  # a single SNP, far below any MSR
+    tot = np.full((len(snps), 1), 1.0)
+    rd = np.full((8, 1), 100.0)
+    bbs, _ = _bin_all(
+        seg, win, snps, tot, 10_000, rdcount=rd, mtr=200, is_loh_col="is_loh"
+    )
+    assert len(bbs) == 4, bbs
+    assert (bbs["BLOCKSIZE"] == 2000).all()
+
+
+def test_loh_boundary_never_falls_inside_a_bb(seg):
+    """loh_id in cluster_cols is what stops a bb straddling the boundary."""
+    win = _windows(12)
+    win["is_loh"] = np.r_[np.zeros(6, bool), np.ones(6, bool)]
+    win["loh_id"] = np.r_[np.ones(6, int), np.full(6, 2)]
+    snps = _snps_in(win, list(range(12)))
+    tot = np.full((len(snps), 1), 50.0)
+    rd = np.full((12, 1), 100.0)
+    bbs, _ = _bin_all(
+        seg, win, snps, tot, 100, rdcount=rd, mtr=200, is_loh_col="is_loh"
+    )
+    loh_of_bb = win.groupby("bb_id")["is_loh"].nunique()
+    assert (loh_of_bb == 1).all(), "a bb spans the LOH boundary"
+    assert bbs["END"].isin([6000]).any(), "no bb ends at the LOH boundary"
+
+
+def test_cluster_end_merges_the_short_trailing_run(seg):
+    """The remainder joins the last bb rather than forming an under-threshold one."""
+    win = _windows(5)
+    snps = _snps_in(win, list(range(5)))
+    tot = np.full((len(snps), 1), 50.0)  # MSR 100 -> 2 windows per bb, 1 left over
+    bbs, _ = _bin_all(seg, win, snps, tot, 100)
+    assert len(bbs) == 2
+    assert bbs["BLOCKSIZE"].tolist() == [2000, 3000], "the tail did not merge back"
+
+
+def test_a_cluster_that_meets_nothing_stays_one_bb(seg):
+    """HATCHet2's one-bin-per-arm case: no span cap can cut it, so it is one bb."""
+    win = _windows(6)
+    snps = _snps_in(win, [0])
+    tot = np.full((len(snps), 1), 1.0)
+    rd = np.full((6, 1), 1.0)
+    bbs, _ = _bin_all(seg, win, snps, tot, 10_000, rdcount=rd, mtr=10_000)
+    assert len(bbs) == 1
+    assert bbs["BLOCKSIZE"].tolist() == [6000]
+
+
+##################################################
+# clonal-LOH detection: density per tile, not allele fraction per site
+
+
+@pytest.fixture
+def loh():
+    """loh_utils: the tile builder, the NB fit and the two-state decode."""
+    return pytest.importorskip("loh_utils")
+
+
+def _tiles(n, het_per_tile, tile_kb=100, chrom="chr1"):
+    """n contiguous tiles of full exposure, each holding the given het count."""
+    starts = np.arange(n) * tile_kb * 1000
+    return pd.DataFrame(
+        {
+            "#CHR": [chrom] * n,
+            "START": starts,
+            "END": starts + tile_kb * 1000,
+            "region_id": ["arm"] * n,
+            "n_het": np.asarray(het_per_tile),
+            "exposure_bp": tile_kb * 1000,
+            "mid": starts + tile_kb * 500,
+        }
+    )
+
+
+def _decode(loh, tiles, ratio=0.02, t=1e-6):
+    e = tiles["exposure_bp"].to_numpy() / 1e6
+    rate, size = loh.fit_snp_rate(tiles["n_het"].to_numpy(), e)
+    return loh.viterbi_loh(
+        tiles["n_het"].to_numpy(),
+        e,
+        tiles["mid"].to_numpy(),
+        pd.factorize(tiles["region_id"])[0],
+        rate,
+        ratio * rate,
+        size,
+        t,
+    )
+
+
+def test_fit_snp_rate_recovers_a_planted_rate(loh):
+    """The rate is per Mb, so a tile's count scales with its assayable span."""
+    rng = np.random.default_rng(0)
+    e = rng.uniform(0.2, 1.0, 400)
+    x = rng.poisson(600 * e)
+    rate, size = loh.fit_snp_rate(x, e)
+    assert 540 < rate < 660, rate
+    assert size > 0
+
+
+def test_fit_snp_rate_ignores_tiles_without_exposure(loh):
+    """A window with no coverage contributes no exposure and must not skew the rate."""
+    e = np.r_[np.ones(50), np.zeros(50)]
+    x = np.r_[np.full(50, 600), np.zeros(50, dtype=int)]
+    rate, _ = loh.fit_snp_rate(x, e)
+    assert 590 < rate < 610, rate
+
+
+def test_decode_finds_a_planted_depleted_block(loh):
+    """The signal this exists for: het density collapsing over a run of tiles."""
+    rng = np.random.default_rng(1)
+    het = rng.poisson(600, 120)
+    het[40:80] = rng.poisson(3, 40)
+    is_loh = _decode(loh, _tiles(120, het))
+    assert is_loh[40:80].mean() > 0.9
+    assert is_loh[:40].sum() == 0 and is_loh[80:].sum() == 0
+
+
+def test_hom_runs_inside_a_het_rich_tile_are_not_loh(loh):
+    """The per-site chain's failure, as a unit test.
+
+    Hom-looking SNPs cluster hard - on this data 30% of them sit in runs of 30+ - and a
+    per-site chain flips on ~48 of them in a row. A tile still holding most of its hets
+    is not depleted, whatever the local runs look like.
+    """
+    rng = np.random.default_rng(2)
+    het = rng.poisson(600, 120)
+    het[40:80] = rng.poisson(400, 40)  # a third of the hets gone, not all of them
+    assert _decode(loh, _tiles(120, het)).sum() == 0
+
+
+def test_decode_restarts_at_every_arm(loh):
+    """A depleted arm must not drag the state across the centromere."""
+    tiles = _tiles(80, np.r_[np.full(40, 3), np.full(40, 600)])
+    tiles["region_id"] = ["chr1p"] * 40 + ["chr1q"] * 40
+    is_loh = _decode(loh, tiles)
+    assert is_loh[:40].all() and not is_loh[40:].any()
+
+
+def test_build_loh_tiles_never_spans_a_segment(loh):
+    """seg_id bounds cut a tile, so a tile never straddles a blacklist hole."""
+    win = pd.concat(
+        [_windows(120), _windows(120, start=120_000).assign(seg_id="seg2")],
+        ignore_index=True,
+    )
+    win["bin_id"] = np.arange(len(win))
+    tiles = loh.build_loh_tiles(
+        win, np.array([], dtype=int), np.ones(len(win), bool), 100_000
+    )
+    assert len(tiles) == 4, tiles  # 2 segments x 2 tile boundaries
+    assert (tiles["END"] - tiles["START"] <= 100_000).all()
+
+
+def test_build_loh_tiles_drops_exposure_where_unassayable(loh):
+    """An uncovered window keeps its hets but lends no exposure, so a hole is not LOH."""
+    win = _windows(200)
+    assayable = np.ones(200, bool)
+    assayable[:100] = False
+    tiles = loh.build_loh_tiles(win, np.array([0, 1, 150]), assayable, 100_000)
+    assert tiles["exposure_bp"].tolist() == [0, 100 * 1000]
+    assert tiles["n_het"].tolist() == [2, 1], "hets are kept where exposure is not"
+
+
+def test_loh_intervals_report_a_single_tile_run(loh):
+    """No length filter: the tile size is the floor, so one tile is one interval."""
+    tiles = _tiles(20, np.full(20, 600))
+    is_loh = np.zeros(20, bool)
+    is_loh[5] = True
+    out = loh.loh_intervals(tiles, is_loh)
+    assert len(out) == 1
+    assert (out["END"] - out["START"]).tolist() == [100_000]
+
+
+def test_loh_intervals_do_not_bridge_a_neutral_gap(loh):
+    """A gap is evidence against; merging over it is what chained spurious runs."""
+    tiles = _tiles(20, np.full(20, 600))
+    is_loh = np.zeros(20, bool)
+    is_loh[2:6] = True
+    is_loh[8:12] = True
+    out = loh.loh_intervals(tiles, is_loh)
+    assert len(out) == 2, out
+    assert (out["END"] - out["START"]).tolist() == [400_000, 400_000]
+
+
+def test_loh_intervals_empty_without_loh(loh):
+    tiles = _tiles(10, np.full(10, 600))
+    out = loh.loh_intervals(tiles, np.zeros(10, bool))
+    assert len(out) == 0
+    assert list(out.columns) == ["#CHR", "START", "END"]

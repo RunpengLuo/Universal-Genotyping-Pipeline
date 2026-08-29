@@ -1,9 +1,11 @@
 """Bin the SNPs and depth into bbs, the pipeline's output unit.
 
-Last update: 2026-08-27
+Last update: 2026-08-28
 
 Rules:
-- [bulk] combine_counts: adaptive binning, depth, RDR and read-start counts
+- [bulk] combine_counts: clonal-LOH detection
+  (params_combine_counts.detect_loh_tumor_cell_line), then adaptive binning, depth, RDR
+  and read-start counts
 - [single-cell] combine_counts_nonbulk: adaptive binning over every assay
 - [copytyping] combine_counts_fixed_bins{,_rna}: counts onto pre-computed bbs
 Outputs:
@@ -11,9 +13,26 @@ Outputs:
 - bb_dir/MSR{msr}/{assay}/: the single-cell bbs, sliced per assay
 - bb_dir/{assay}/: the copytyping bbs, no binning so no MSR level
 - bb_dir/unit/{bulk,assay}/: the un-binned SNP, window and gene levels binning consumes
+- qc_dir/detect_loh.bulk.pdf: the het-density decode; only a detect_loh_tumor_cell_line
+  run declares it. The regions are the is_loh column of the window and bb tables
 """
 
 if workflow_mode == "bulk_genotyping":
+
+    _detect_loh_cl = config["params_combine_counts"]["detect_loh_tumor_cell_line"]
+    # no other run has clonal LOH to find, so no other run declares this
+    _loh_out = (
+        {
+            "loh_pdf": report(
+                qc_dir + "/detect_loh.bulk.pdf",
+                category="QC plots",
+                subcategory="bulk binning",
+                labels={"plot": "clonal-LOH density"},
+            ),
+        }
+        if _detect_loh_cl
+        else {}
+    )
 
     rule combine_counts:
         input:
@@ -34,6 +53,7 @@ if workflow_mode == "bulk_genotyping":
             blacklist_bed=blacklist_bed,
             genome_size=genome_size,
         output:
+            **_loh_out,
             bb_file=expand(bb_dir + f"/MSR{{msr}}/bulk/bb.tsv.gz", msr=msr_list),
             tot_mtx_bb=expand(
                 bb_dir + f"/MSR{{msr}}/bulk/bb.Tallele.npz",
@@ -108,7 +128,11 @@ if workflow_mode == "bulk_genotyping":
             min_snp_per_bin=config["params_combine_counts"]["min_snp_per_bin"],
             nsnp_multi=config["params_combine_counts"]["nsnp_multi"],
             gene_aware_binning=config["params_combine_counts"]["gene_aware_binning"],
-            max_blocksize=config["params_combine_counts"]["max_blocksize"],
+            min_total_reads=config["params_combine_counts"]["min_total_reads"],
+            detect_loh_tumor_cell_line=_detect_loh_cl,
+            loh_tile_size=config["params_combine_counts"]["loh_tile_size"],
+            loh_rate_ratio=config["params_combine_counts"]["loh_rate_ratio"],
+            loh_breakpoint_rate=config["params_combine_counts"]["loh_breakpoint_rate"],
             phase_flip_test=config["params_combine_counts"]["phase_flip_test"],
             phase_flip_epsilon=config["params_combine_counts"]["phase_flip_epsilon"],
             phase_flip_alpha=config["params_combine_counts"]["phase_flip_alpha"],

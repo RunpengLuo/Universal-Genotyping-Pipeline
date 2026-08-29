@@ -134,13 +134,30 @@ def _load_shading(region_bed, blacklist_bed):
     )
 
 
-def _suptitle(fig, title):
-    """Bold page title, placed just above a ``tight_layout``-ed figure."""
+def _suptitle(fig, title, handles=None):
+    """Bold page title, placed just above a ``tight_layout``-ed figure.
+
+    *handles* draws a one-row legend on the title's line, at the right edge, so the
+    key never covers data.
+    """
     fig.subplots_adjust(top=1 - 0.4 / fig.get_figheight())
-    fig.suptitle(title, fontweight="bold", y=1 - 0.12 / fig.get_figheight())
+    y = 1 - 0.12 / fig.get_figheight()
+    fig.suptitle(title, fontweight="bold", y=y)
+    if handles:
+        fig.legend(
+            handles=handles,
+            loc="center right",
+            bbox_to_anchor=(1.0, y),
+            ncol=len(handles),
+            fontsize=9,
+            frameon=False,
+            markerscale=1,
+        )
 
 
-def _finish_page(fig, title, feature_label, out_file=None, dpi=72, pdf=None):
+def _finish_page(
+    fig, title, feature_label, out_file=None, dpi=72, pdf=None, legend_handles=None
+):
     """Label, lay out and title one genome-wide page, then write and close it.
 
     Args:
@@ -150,10 +167,11 @@ def _finish_page(fig, title, feature_label, out_file=None, dpi=72, pdf=None):
         out_file: Destination when *pdf* is None.
         dpi: Raster resolution.
         pdf: Open ``PdfPages`` to append to; the caller closes it.
+        legend_handles: Legend entries for the title line; None draws no legend.
     """
     fig.supxlabel(f"Genome positions (MB) - {feature_label}")
     fig.tight_layout()
-    _suptitle(fig, title)
+    _suptitle(fig, title, handles=legend_handles)
     # NB: bbox_inches keeps artists drawn outside the axes, such as an offset legend
     if pdf is not None:
         pdf.savefig(fig, dpi=dpi, bbox_inches="tight")

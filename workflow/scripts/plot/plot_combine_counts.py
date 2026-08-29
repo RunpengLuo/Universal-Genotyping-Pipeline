@@ -1,8 +1,9 @@
 """Bin-level combine_counts QC: segmentation, genome-wide RDR/BAF, RDR-vs-BAF.
 
-Last update: 2026-08-11
+Last update: 2026-08-28
 
 Functions:
+- plot_loh_density: het-SNP density per tile and the clonal-LOH regions called from it
 - plot_segmentation_qc: bb length and per-dataset raw count histograms
 - plot_rdr_baf: one page per tumor, depth then RDR then BAF
 - plot_rdr_baf_2d: RDR-vs-BAF cloud with marginal densities
@@ -47,10 +48,12 @@ def plot_segmentation_qc(
     pdf: PdfPages | None = None,
     sample_id: str = "",
     dpi: int = 150,
+    is_loh=None,
 ):
     """Two-page segmentation QC histograms for combine_counts output.
 
-    Page 1 — segment length (kbp) over all segments.
+    Page 1 — segment length (kbp) over all segments, split non-LOH / clonal-LOH when
+      *is_loh* is given, since the two are binned on different criteria.
     Page 2 — one row per dataset_id, four histograms of raw counts: native counts,
       read starts, B-allele counts, total-allele counts. The count axes use scientific
       notation (matplotlib's offset multiplier) rather than a scaled axis label.
@@ -68,6 +71,8 @@ def plot_segmentation_qc(
         Native, read-start, B-allele, and total-allele counts per segment per dataset_id;
         columns aligned to *sample_df* rows.
     out_file, pdf : see the other ``plot_*`` functions. Exactly one is used.
+    is_loh : (n_seg,) bool array or None
+        Clonal-LOH flag per segment; None draws one length panel instead of two.
     """
     logging.info("QC analysis - plot segmentation QC histograms")
 
@@ -79,8 +84,25 @@ def plot_segmentation_qc(
     # ---- page 1: segment length ----
     lengths_kbp = (seg_df["END"].to_numpy() - seg_df["START"].to_numpy()) / 1000.0
 
-    fig1, ax1 = plt.subplots(1, 1, figsize=(5.5, 4))
-    _hist_with_stats(ax1, lengths_kbp, "segment length (kbp)", "Segment length")
+    if is_loh is None:
+        panels = [(lengths_kbp, "Segment length")]
+    else:
+        is_loh = np.asarray(is_loh, dtype=bool)
+        panels = [
+            (
+                lengths_kbp[~is_loh],
+                f"Segment length, non-LOH (n={int((~is_loh).sum())})",
+            ),
+            (
+                lengths_kbp[is_loh],
+                f"Segment length, clonal LOH (n={int(is_loh.sum())})",
+            ),
+        ]
+    fig1, axes1 = plt.subplots(
+        1, len(panels), figsize=(5.5 * len(panels), 4), squeeze=False
+    )
+    for ax1, (vals, header) in zip(axes1[0], panels):
+        _hist_with_stats(ax1, vals, "segment length (kbp)", header)
     fig1.suptitle(
         f"Segmentation QC — {len(seg_df)} segments", fontsize=11, fontweight="bold"
     )
@@ -150,6 +172,12 @@ def plot_segmentation_qc(
         logging.info(f"saved segmentation QC histograms to {out_file}")
 
 
+# padded so a bb stamped at BAF 0 sits inside the axes, not on the spine; the ticks stay
+# on the [0, 1] the quantity is defined over
+BAF_XLIM = (-0.01, 1.01)
+BAF_XTICKS = np.linspace(0, 1, 6)
+
+
 def _rdr_ylim(rdr_mat):
     """Upper RDR axis limit: the 99th percentile rounded to an integer, +1, +10%."""
     return (np.round(np.nanquantile(rdr_mat, 0.99)).astype(int) + 1) * 1.1
@@ -176,13 +204,15 @@ def plot_rdr_baf(
     pdf: PdfPages | None = None,
     tumor_color="tab:red",
     normal_color="tab:blue",
+    is_loh=None,
+    loh_color="tab:green",
 ):
     """Genome-wide read-depth + RDR + BAF plot: one page per tumor, three rows.
 
     Each page stacks, top to bottom: matched-normal & tumor read depth on a shared
     axis (normal drawn first, tumor overlaid), tumor RDR, tumor BAF. Chromosome
     names are drawn (bold) under the BAF row only; the page carries a bold
-    super-title instead of per-axis titles.
+    super-title instead of per-axis titles, with the point key on the same line.
 
     Args:
         pos_df: Position DataFrame with ``#CHR`` and ``START``/``END`` columns.
@@ -196,8 +226,8 @@ def plot_rdr_baf(
         dataset_ids: Tumor dataset id per column, length T.
         assay_types: Tumor assay type per column, length T.
         rdr_base_dataset_ids: The dataset id each tumor's RDR is divided by, or
-            ``None`` for a median-normalized tumor; length T. Sets both the ``/ base``
-            half of the page title and the RDR y-label.
+            ``None`` for a median-normalized tumor; length T. Sets the ``/ base`` half
+            of the page title.
         genome_size: Path to chromosome sizes file.
         out_file: Output PDF path; used only when ``pdf`` is ``None``.
         feature_label: Feature named in the x-label (e.g. ``"bb"``).
@@ -206,6 +236,10 @@ def plot_rdr_baf(
         pdf: External ``PdfPages``; pages are appended and the caller closes it.
         tumor_color: Tumor dot color.
         normal_color: Normal dot color.
+        is_loh: (N,) bool array marking clonal-LOH bins, drawn in *loh_color*. Their
+            BAF is stamped at 0 rather than measured, so it must read as a separate
+            class; None draws every bin as a tumor bin.
+        loh_color: Clonal-LOH dot color.
     """
     n_tumors = len(dataset_ids)
     logging.info(
@@ -218,6 +252,13 @@ def plot_rdr_baf(
     region_df, blacklist_df = _load_shading(region_bed, blacklist_bed)
     s_plot = adaptive_dot_size(len(pos_df), s_base=s)
     alphas = np.full(len(pos_df), alpha)
+    if is_loh is None:
+        point_colors = tumor_color
+        n_loh = 0
+    else:
+        is_loh = np.asarray(is_loh, dtype=bool)
+        point_colors = np.where(is_loh, loh_color, tumor_color)
+        n_loh = int(is_loh.sum())
 
     _own_pdf = pdf is None
     pdf_pages = PdfPages(out_file) if _own_pdf else pdf
@@ -253,7 +294,7 @@ def plot_rdr_baf(
             pos_df.assign(_y=depth_tumor_mat[:, si]),
             axis,
             "_y",
-            colors=tumor_color,
+            colors=point_colors,
             alphas=alphas,
             markersize=s_plot,
             ylabel="Read-depth",
@@ -261,6 +302,7 @@ def plot_rdr_baf(
             mb_ticks=True,
             show_gaps=False,
         )
+        # the page key, drawn on the title line by _finish_page rather than over the data
         handles = [
             Line2D([0], [0], marker="o", linestyle="", color=tumor_color, label="tumor")
         ]
@@ -275,7 +317,17 @@ def plot_rdr_baf(
                     label="normal",
                 )
             )
-        ax_dp.legend(handles=handles, loc="upper right", fontsize=8, markerscale=1)
+        if n_loh:
+            handles.append(
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    linestyle="",
+                    color=loh_color,
+                    label="clonal LOH",
+                )
+            )
 
         # --- RDR row: tumor only ---
         _shade(ax_rdr, axis, region_df, blacklist_df)
@@ -284,11 +336,11 @@ def plot_rdr_baf(
             pos_df.assign(_y=rdr_mat[:, si]),
             axis,
             "_y",
-            colors=tumor_color,
+            colors=point_colors,
             alphas=alphas,
             markersize=s_plot,
             ylim=(0, rdr_ylim),
-            ylabel=f"RDR ({'normal' if base else 'median'})",
+            ylabel="RDR",
             plot_chrname=False,
             mb_ticks=True,
             show_gaps=False,
@@ -301,7 +353,7 @@ def plot_rdr_baf(
             pos_df.assign(_y=baf_mat[:, si]),
             axis,
             "_y",
-            colors=tumor_color,
+            colors=point_colors,
             alphas=alphas,
             markersize=s_plot,
             href=0.5,
@@ -312,7 +364,9 @@ def plot_rdr_baf(
         )
         _bold_chrnames(ax_baf)
 
-        _finish_page(fig, title, feature_label, dpi=dpi, pdf=pdf_pages)
+        _finish_page(
+            fig, title, feature_label, dpi=dpi, pdf=pdf_pages, legend_handles=handles
+        )
     if _own_pdf:
         pdf_pages.close()
 
@@ -330,7 +384,9 @@ def plot_rdr_baf_2d(
     """RDR-vs-BAF joint scatter, one page per tumor (no copy-number landmarks).
 
     A diagnostic companion to the genome-wide ``plot_rdr_baf``: the observed
-    per-bin cloud with marginal densities, via ``cnplot.plot_scatter_2d``.
+    per-bin cloud with marginal densities, via ``cnplot.plot_scatter_2d``. The BAF axis
+    is padded to :data:`BAF_XLIM` while its ticks stay on ``[0, 1]``, so a bin at 0 or 1
+    is drawn inside the axes rather than half under the spine.
 
     Args:
         rdr_mat, baf_mat: (n_bins, T) RDR and BAF per bin per tumor.
@@ -355,7 +411,7 @@ def plot_rdr_baf_2d(
             obs,
             "BAF",
             "RDR",
-            xlim=(0, 1),
+            xlim=BAF_XLIM,
             ylim=(0, rdr_ylim),
             refline_x=0.5,
             refline_y=1.0,
@@ -363,7 +419,101 @@ def plot_rdr_baf_2d(
             ylabel="RDR",
             title=f"{sample_id} - {label}",
         )
+        grid.ax_joint.set_xticks(BAF_XTICKS)
         pdf_pages.savefig(grid.figure, dpi=dpi)
         plt.close(grid.figure)
     if _own_pdf:
         pdf_pages.close()
+
+
+def plot_loh_density(
+    tiles: pd.DataFrame,
+    rate_ref: float,
+    rate_loh: float,
+    loh_df: pd.DataFrame,
+    genome_size: str,
+    sample_id: str,
+    out_file: str | None = None,
+    region_bed: str | None = None,
+    blacklist_bed: str | None = None,
+    pdf: PdfPages | None = None,
+    dpi: int = 72,
+    neutral_color="tab:red",
+    loh_color="tab:green",
+):
+    """Genome-wide het-SNP density per tile, coloured by the state the chain gave it.
+
+    One page. The two fitted rates are drawn as horizontal references, so a reader can
+    see whether the decode followed the data or the prior: a real clonal-LOH region sits
+    on the lower line with nothing in between.
+
+    Args:
+        tiles: Tile frame from ``loh_utils.build_loh_tiles`` plus an ``is_loh`` column.
+        rate_ref, rate_loh: Fitted neutral and assumed LOH het rate, per Mb.
+        loh_df: The reported intervals, for the count in the title.
+        genome_size: Path to chromosome sizes file.
+        sample_id: Sample id, opening the page title.
+        out_file: Output PDF path; used only when *pdf* is None.
+        region_bed, blacklist_bed: Background shading.
+        pdf: External ``PdfPages``; pages are appended and the caller closes it.
+        dpi: Raster resolution.
+        neutral_color, loh_color: Dot colour per state.
+    """
+    exposure_mb = tiles["exposure_bp"].to_numpy() / 1e6
+    with np.errstate(invalid="ignore", divide="ignore"):
+        density = np.where(
+            exposure_mb > 0, tiles["n_het"].to_numpy() / exposure_mb, np.nan
+        )
+    is_loh = tiles["is_loh"].to_numpy(dtype=bool)
+    logging.info(
+        f"QC analysis - clonal-LOH density over {len(tiles)} tiles, "
+        f"{int(is_loh.sum())} called"
+    )
+
+    axis = _get_axis(genome_size, tiles["#CHR"])
+    region_df, blacklist_df = _load_shading(region_bed, blacklist_bed)
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(20, 4))
+    _shade(ax, axis, region_df, blacklist_df)
+    plot_scatter_1d(
+        ax,
+        tiles.assign(_y=density),
+        axis,
+        "_y",
+        colors=np.where(is_loh, loh_color, neutral_color),
+        alphas=np.full(len(tiles), 0.7),
+        markersize=adaptive_dot_size(len(tiles), s_base=6),
+        ylim=(-0.05 * rate_ref, 1.6 * rate_ref),
+        ylabel="het SNPs / Mb",
+        mb_ticks=True,
+        show_gaps=False,
+    )
+    for rate, style, label in (
+        (rate_ref, "--", f"neutral {rate_ref:.0f}/Mb"),
+        (rate_loh, ":", f"LOH {rate_loh:.1f}/Mb"),
+    ):
+        ax.axhline(rate, linestyle=style, linewidth=1, color="black", zorder=1)
+        ax.annotate(
+            label,
+            xy=(1.0, rate),
+            xycoords=("axes fraction", "data"),
+            fontsize=8,
+            ha="right",
+            va="bottom",
+        )
+    _bold_chrnames(ax)
+    handles = [
+        Line2D([0], [0], marker="o", ls="", color=neutral_color, label="neutral tile"),
+        Line2D([0], [0], marker="o", ls="", color=loh_color, label="clonal-LOH tile"),
+    ]
+    span_mb = (
+        float((loh_df["END"] - loh_df["START"]).sum()) / 1e6 if len(loh_df) else 0.0
+    )
+    _finish_page(
+        fig,
+        f"{sample_id} - clonal LOH: {len(loh_df)} regions, {span_mb:.0f} Mbp",
+        "tile",
+        out_file=out_file,
+        dpi=dpi,
+        pdf=pdf,
+        legend_handles=handles,
+    )

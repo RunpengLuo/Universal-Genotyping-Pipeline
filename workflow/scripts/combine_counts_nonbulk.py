@@ -316,7 +316,6 @@ multi_bbs, snps_multi = build_adaptive_bins(
     0,
     nsnp_multi,
     cluster_cols=[c for c in ("region_id", "seg_id") if c in multi_bins.columns],
-    max_blocksize=0,
     gene_aware=False,
 )
 num_multi = len(multi_bbs)
@@ -369,7 +368,6 @@ for j, min_snp_reads in enumerate(msr_list):
         min_snp_reads_vec,
         min_snp_per_bin,
         cluster_cols=cluster_cols,
-        max_blocksize=0,
         gene_aware=gene_aware_binning,
     )
     num_bbs = len(bbs)

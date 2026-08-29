@@ -777,7 +777,14 @@ def write_bb_file(bbs: pd.DataFrame, out_file: str):
     assert not missing, f"bb table, missing column(s) {missing}"
     bb_cols += [
         c
-        for c in ("#SNPS", "region_id", "switchprobs", "feature_id", "#feature")
+        for c in (
+            "#SNPS",
+            "region_id",
+            "switchprobs",
+            "feature_id",
+            "#feature",
+            "is_loh",
+        )
         if c in bbs.columns
     ]
     bb_out = bbs[bb_cols]

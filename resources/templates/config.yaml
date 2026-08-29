@@ -54,6 +54,7 @@ target_bed: null
 ##################################################
 # Genotyping
 snp_panel: /path/to/snps.vcf.gz
+genotype_dataset_ids: []
 
 ##################################################
 # Phasing
@@ -72,7 +73,9 @@ gmap_path: "/path/to/Eagle_v2.4.1/tables/genetic_map_hg38_withX.txt.gz"
 ##################################################
 # Segmentation (adaptive binning + RDR/BAF)
 params_combine_counts:
+  detect_loh_tumor_cell_line: false
   min_snp_reads: [100, 500, 1000, 2000, 3000, 5000, 7500, 10000]
+  min_total_reads: 5000
 
 ##################################################
 threads:

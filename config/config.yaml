@@ -84,28 +84,11 @@ params_cellsnp_lite:
   minCOUNT_pileup: 1
 
 params_genotype_snps:
-  tumor_genotyping_mode: "vaf_cutoff"
   min_dp: 10
-
-  # vaf_cutoff
   min_het_reads: 2
   min_vaf_thres: 0.1
   filter_nz_OTH: false
   filter_hom_ALT: false
-
-  # clonal_loh_hmm
-  hom_laf: 0.005
-  loh_laf: 0.05
-  pi_het: 0.5
-  breakpoint_rate: 1.0e-6
-  tau: null
-  n_retained: 5
-  n_iter: 10
-  em_tol: 1.0e-5
-  margin: 0.02
-  learn_pi: true
-  loh_min: 0.1
-  p_het_min: 0.1
 
 ##################################################
 # Phasing
@@ -154,15 +137,26 @@ params_combine_counts:
   min_switchprob: 1e-6
   nu: 1
   switchprob_ps: 5e-2
-  nsnp_multi: 2
-  min_snp_reads: [100, 500, 1000, 2000, 3000, 5000, 7500, 10000]
-  min_snp_per_bin: 1
-  max_blocksize: 500000
-  gene_aware_binning: true
-  rdr_normalization: auto
   phase_flip_test: true
   phase_flip_epsilon: 0.05
   phase_flip_alpha: 0.05
+
+  nsnp_multi: 2
+
+  ## BB adaptive binning criteria
+  min_snp_reads: [100, 500, 1000, 2000, 3000, 5000, 7500, 10000]
+  min_snp_per_bin: 1
+  min_total_reads: 5000
+
+  gene_aware_binning: true
+
+  # clonal-LOH detection (bulk only) for tumor cell-line datasets when no matched-normal sample.
+  detect_loh_tumor_cell_line: false
+  loh_tile_size: 100000
+  loh_rate_ratio: 0.02
+  loh_breakpoint_rate: 1.0e-6
+
+  rdr_normalization: auto
 
 ##################################################
 # bcftools mpileup is single-threaded: --threads only sizes the output compressor

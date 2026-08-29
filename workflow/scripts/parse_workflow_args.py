@@ -42,7 +42,6 @@ from const import (
     REQUIRED_RECORD_KEYS,
     SAMPLE_FILE_EXTS,
     SAMPLE_TYPES,
-    TUMOR_GENOTYPING_MODES,
     SCALAR_RECORD_KEYS,
     SINGLE_CELL_TARGETS,
     SNP_PANEL_EXTS,
@@ -485,23 +484,7 @@ def parse_workflow(config):
         run_genotyping = False
 
     snp_panel = config["snp_panel"]
-    params_genotype = config["params_genotype_snps"]
-    assert "apply_clonal_loh_hmm" not in params_genotype, (
-        "params_genotype_snps.apply_clonal_loh_hmm was replaced by tumor_genotyping_mode; "
-        f"use one of {TUMOR_GENOTYPING_MODES} (true -> 'clonal_loh_hmm', "
-        "false -> 'vaf_cutoff', which applies only when a tumor is genotyped)"
-    )
-    configured_tumor_mode = params_genotype["tumor_genotyping_mode"]
-    assert configured_tumor_mode in TUMOR_GENOTYPING_MODES, (
-        "params_genotype_snps.tumor_genotyping_mode must be one of "
-        f"{TUMOR_GENOTYPING_MODES}, got {configured_tumor_mode!r}"
-    )
-    assert not (
-        configured_tumor_mode == "clonal_loh_hmm" and workflow_mode != "bulk_genotyping"
-    ), (
-        "tumor_genotyping_mode='clonal_loh_hmm' needs the per-arm depth of a bulk "
-        f"alignment, but workflow_mode={workflow_mode!r}; use 'vaf_cutoff'"
-    )
+
     # the strategy that actually runs; None passes the caller's germline calls through
     tumor_genotyping_mode = None
     genotype_files = None
@@ -530,15 +513,12 @@ def parse_workflow(config):
             genotype_records = [
                 rec for rec in records if rec["dataset_id"] in set(genotype_dataset_ids)
             ]
-        want_sample_type = (
-            "tumor" if configured_tumor_mode == "clonal_loh_hmm" else "normal"
-        )
         if len(genotype_records) == 0:
-            # the first bulkWGS dataset of the preferred sample type
+            # the first bulkWGS normal, falling through to a tumor when none exists
             genotype_records = sorted(
                 records,
                 key=lambda r: (
-                    r["sample_type"] != want_sample_type,
+                    r["sample_type"] != "normal",
                     GT_ASSAY_ORD.get(r["assay_type"], len(GT_ASSAY_ORD)),
                 ),
             )
@@ -548,27 +528,15 @@ def parse_workflow(config):
             genotype_records = genotype_records[:1]
         genotype_dataset_ids = [rec["dataset_id"] for rec in genotype_records]
         logging_snakemake(f"genotype_dataset_ids: {genotype_dataset_ids}")
-        if configured_tumor_mode == "clonal_loh_hmm":
-            # NB: one-directional; genotyping a tumor with vaf_cutoff is fine
-            mismatched = [
-                rec["dataset_id"]
-                for rec in genotype_records
-                if rec["sample_type"] != "tumor"
-            ]
-            assert not mismatched, (
-                "tumor_genotyping_mode='clonal_loh_hmm' rescues het SNPs from a tumor's "
-                f"clonal LOH, but {mismatched} are not tumor; use 'vaf_cutoff' or set "
-                "genotype_dataset_ids"
-            )
         if workflow_mode == "bulk_genotyping":
             # only bulk can fall back on the caller's germline GT; cellsnp-lite emits none
             genotype_tumor = any(
                 rec["sample_type"] == "tumor" for rec in genotype_records
             )
-            tumor_genotyping_mode = configured_tumor_mode if genotype_tumor else None
+            tumor_genotyping_mode = "vaf_cutoff" if genotype_tumor else None
             logging_snakemake(
                 f"tumor_genotyping_mode={tumor_genotyping_mode or 'none'} "
-                f"(configured {configured_tumor_mode}, genotyped tumor={genotype_tumor})"
+                f"(genotyped tumor={genotype_tumor})"
             )
         else:
             tumor_genotyping_mode = "vaf_cutoff"
@@ -705,6 +673,11 @@ def parse_workflow(config):
                 )
 
     # === min_snp_reads sweep (one MSR{msr}/ subdir per value) ===
+    assert "max_blocksize" not in config["params_combine_counts"], (
+        "params_combine_counts.max_blocksize was removed: a span cap can only fire by "
+        "cutting a bb that has not met its read thresholds. Use min_total_reads, the "
+        "read-start floor every bb must clear"
+    )
     msr_raw = config["params_combine_counts"]["min_snp_reads"]
     msr_list = [int(m) for m in (msr_raw if isinstance(msr_raw, list) else [msr_raw])]
 
