@@ -1,12 +1,14 @@
 """Bin-level combine_counts QC: segmentation, genome-wide RDR/BAF, RDR-vs-BAF.
 
-Last update: 2026-08-28
+Last update: 2026-08-29
 
 Functions:
 - plot_loh_density: het-SNP density per tile and the clonal-LOH regions called from it
 - plot_segmentation_qc: bb length and per-dataset raw count histograms
 - plot_rdr_baf: one page per tumor, depth then RDR then BAF
 - plot_rdr_baf_2d: RDR-vs-BAF cloud with marginal densities
+- compute_pseudobulk_rdr: per-dataset share of library size, the no-normal RDR
+- plot_pseudobulk_tracks: those tracks, one page per dataset and one row per track
 """
 
 import logging
@@ -24,7 +26,7 @@ from matplotlib.lines import Line2D
 
 from cnplot import adaptive_dot_size, plot_scatter_1d, plot_scatter_2d
 
-from segmentation_utils import dense_observation
+from segmentation_utils import dense_observation, sum_observations_to_pseudobulk
 
 from plot_utils import (
     _bold_chrnames,
@@ -422,6 +424,114 @@ def plot_rdr_baf_2d(
         grid.ax_joint.set_xticks(BAF_XTICKS)
         pdf_pages.savefig(grid.figure, dpi=dpi)
         plt.close(grid.figure)
+    if _own_pdf:
+        pdf_pages.close()
+
+
+def compute_pseudobulk_rdr(x_mtx, cell_dataset_ids, n_datasets):
+    """Per-dataset share of library size: ``sum_i X_{i,g} / sum_i T_i``, features x datasets.
+
+    Cells are summed within their ``dataset_id`` and the column is divided by its own
+    library size, where ``T_i = sum_g X_{i,g}``.
+
+    Args:
+        x_mtx: (n_features, n_cells) raw count matrix, dense or sparse.
+        cell_dataset_ids: Length-n_cells index of each cell into the dataset roster.
+        n_datasets: Number of pseudobulk columns to emit.
+
+    Returns:
+        float32 (n_features, n_datasets); a dataset with no counts is all ``NaN``.
+    """
+    pseudobulk = sum_observations_to_pseudobulk(
+        x_mtx, cell_dataset_ids, n_datasets
+    ).astype(np.float32)
+    lib_size = pseudobulk.sum(axis=0)
+    out = np.full(pseudobulk.shape, np.nan, dtype=np.float32)
+    np.divide(pseudobulk, lib_size, out=out, where=lib_size > 0)
+    logging.info(f"pseudobulk library sizes: {lib_size.astype(np.int64).tolist()}")
+    return out
+
+
+def plot_pseudobulk_tracks(
+    pos_df: pd.DataFrame,
+    tracks: list,
+    sample_id: str,
+    dataset_ids: list,
+    assay_types: list,
+    sample_types: list,
+    genome_size: str,
+    out_file: str,
+    feature_label="bb",
+    s=4,
+    dpi=72,
+    alpha=0.7,
+    region_bed: str | None = None,
+    blacklist_bed: str | None = None,
+    pdf: PdfPages | None = None,
+):
+    """Genome-wide pseudobulk tracks: one page per dataset, one row per track.
+
+    Args:
+        pos_df: Feature positions with ``#CHR`` and ``START``/``END``, row-aligned to
+            every track matrix.
+        tracks: ``(val_type, mat, ylabel)`` per row, top to bottom. *val_type* is the
+            value-type abbreviation; ``AF``/``BAF`` draw a 0.5 reference line on a
+            ``[0, 1]`` axis, anything else takes an automatic axis in scientific
+            notation. *mat* is ``(n_features, n_datasets)``. *ylabel* is the drawn
+            label, falling back to *val_type*; mathtext is allowed.
+        sample_id: Sample/patient id, opening every page super-title.
+        dataset_ids, assay_types, sample_types: Per-dataset identifying columns; the
+            page title is composed from them by ``_observation_labels``.
+        genome_size: Path to chromosome sizes file.
+        out_file: Output PDF path; used only when *pdf* is None.
+        feature_label: Feature named in the x-label.
+        region_bed: Path to whitelist BED for background shading.
+        blacklist_bed: Path to blacklist BED for background shading.
+        pdf: External ``PdfPages``; pages are appended and the caller closes it.
+    """
+    labels = _observation_labels(dataset_ids, assay_types, sample_types)
+    n_rows = len(tracks)
+    logging.info(
+        f"genome-wide {feature_label}-level pseudobulk plot "
+        f"({len(labels)} datasets x {n_rows} tracks), out_file={out_file}"
+    )
+    axis = _get_axis(genome_size, pos_df["#CHR"])
+    region_df, blacklist_df = _load_shading(region_bed, blacklist_bed)
+    s_plot = adaptive_dot_size(len(pos_df), s_base=s)
+    alphas = np.full(len(pos_df), alpha)
+
+    _own_pdf = pdf is None
+    pdf_pages = PdfPages(out_file) if _own_pdf else pdf
+    for si, label in enumerate(labels):
+        fig, axes = plt.subplots(
+            nrows=n_rows, ncols=1, figsize=(20, 3 * n_rows), sharex=True, squeeze=False
+        )
+        axes = axes[:, 0]
+        for ri, (ax, (val_type, mat, ylabel)) in enumerate(zip(axes, tracks)):
+            is_frac = val_type in ("AF", "BAF")
+            is_last = ri == n_rows - 1
+            _shade(ax, axis, region_df, blacklist_df)
+            plot_scatter_1d(
+                ax,
+                pos_df.assign(_y=mat[:, si] if mat.ndim == 2 else mat),
+                axis,
+                "_y",
+                alphas=alphas,
+                markersize=s_plot,
+                href=0.5 if is_frac else None,
+                ylim=(-0.05, 1.05) if is_frac else None,
+                ylabel=ylabel or val_type,
+                plot_chrname=is_last,
+                mb_ticks=True,
+                show_gaps=False,
+            )
+            if not is_frac:
+                ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+            if is_last:
+                _bold_chrnames(ax)
+        _finish_page(
+            fig, f"{sample_id} - {label}", feature_label, dpi=dpi, pdf=pdf_pages
+        )
     if _own_pdf:
         pdf_pages.close()
 

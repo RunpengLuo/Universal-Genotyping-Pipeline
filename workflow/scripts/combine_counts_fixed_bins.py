@@ -1,6 +1,6 @@
 """copytyping_preprocess: count one non-bulk assay onto pre-computed bbs.
 
-Last update: 2026-08-11
+Last update: 2026-08-29
 
 Inputs:
 - bb_file: pre-computed bbs, the feature axis of every output
@@ -23,7 +23,8 @@ Outputs:
 - bb_dir/{assay}/bb.{Xcount,Tallele,Aallele,Ballele}.npz: per-bb count matrices
 - bb_dir/{assay}/barcodes.tsv.gz: this assay's cells, matrix column order
 - bb_dir/{assay}/sample_ids.tsv: this assay's datasets
-- qc_dir/combine_counts_fixed_bins.{assay}.pdf: two-page BAF QC
+- qc_dir/combine_counts_fixed_bins.{assay}.pdf: per dataset, one SNP BAF page then one
+  bb page carrying pseudobulk RDR over BAF
 """
 
 import logging
@@ -57,9 +58,12 @@ from feature_utils import (
     sum_atac_fragments_to_bins,
 )
 from matplotlib.backends.backend_pdf import PdfPages
-from plot_alleles import plot_allele_freqs
+from plot_alleles import compute_af_by_clusters
+from plot_combine_counts import compute_pseudobulk_rdr, plot_pseudobulk_tracks
 
 COUNT_DTYPE = np.int32
+# the pseudobulk RDR is a share of library size, not a ratio to a reference column
+RDR_YLABEL = r"$\sum_i X_{i,g}/\sum_i T_i$"
 
 # inputs
 snp_info = snakemake_handle.input["snp_info"]
@@ -75,11 +79,9 @@ sample_file = snakemake_handle.input["sample_file"]
 bb_file = snakemake_handle.input["bb_file"]
 
 # parameters
-qc_dir = snakemake_handle.params["qc_dir"]
 sample_id = snakemake_handle.params["sample_id"]
 assay_type = snakemake_handle.params["assay_type"]
 chroms = list(snakemake_handle.params["chroms"])
-run_id = snakemake_handle.params["run_id"]
 
 # outputs
 out_x_count = snakemake_handle.output["x_count"]
@@ -102,6 +104,7 @@ out_qc_pdf = snakemake_handle.output["qc_pdf"]
 sample_df = pd.read_table(sample_file)
 sample_df = sample_df[sample_df["assay_type"] == assay_type].reset_index(drop=True)
 dataset_ids = sample_df["dataset_id"].tolist()
+dataset_assays = sample_df["assay_type"].tolist()
 sample_types = sample_df["sample_type"].tolist()
 
 is_rna_assay = ASSAY_TYPE2MODALITY[assay_type] == "RNA"
@@ -199,45 +202,6 @@ b_mtx_bb = sum_features_to_bbs(b_mtx, bb_ids, num_bbs)
 
 logging.info(f"bb-level matrices: shape={tot_mtx_bb.shape}, T nnz={tot_mtx_bb.nnz}")
 
-with PdfPages(out_qc_pdf) as pdf:
-    plot_allele_freqs(
-        snps,
-        dataset_ids,
-        [assay_type] * len(dataset_ids),
-        sample_types,
-        tot_mtx,
-        b_mtx,
-        genome_size,
-        qc_dir,
-        apply_pseudobulk=True,
-        cell_dataset_ids=cell_dataset_ids,
-        allele="cnv-B",
-        feature_label="snp",
-        suffix=f"_{assay_type}",
-        run_id=run_id,
-        sample_id=sample_id,
-        pdf=pdf,
-    )
-    plot_allele_freqs(
-        bb_df,
-        dataset_ids,
-        [assay_type] * len(dataset_ids),
-        sample_types,
-        tot_mtx_bb,
-        b_mtx_bb,
-        genome_size,
-        qc_dir,
-        apply_pseudobulk=True,
-        cell_dataset_ids=cell_dataset_ids,
-        allele="cnv-B",
-        feature_label="bb",
-        suffix=f"_{assay_type}",
-        run_id=run_id,
-        sample_id=sample_id,
-        pdf=pdf,
-    )
-logging.info(f"saved 2-page BAF PDF to {out_qc_pdf}")
-
 if is_rna_assay:
     adata: sc.AnnData = sc.read_h5ad(h5ad_file)
     barcodes = cells["BARCODE"].to_numpy().astype(str)
@@ -271,6 +235,38 @@ else:
         num_bbs,
     )
 logging.info(f"bb-level X matrix: shape={x_count.shape}, nnz={x_count.nnz}")
+
+num_datasets = len(dataset_ids)
+baf_snp = compute_af_by_clusters(tot_mtx, b_mtx, cell_dataset_ids, num_datasets)
+baf_bb = compute_af_by_clusters(tot_mtx_bb, b_mtx_bb, cell_dataset_ids, num_datasets)
+rdr_bb = compute_pseudobulk_rdr(x_count, cell_dataset_ids, num_datasets)
+
+with PdfPages(out_qc_pdf) as pdf:
+    plot_pseudobulk_tracks(
+        snps,
+        [("BAF", baf_snp, "BAF")],
+        sample_id,
+        dataset_ids,
+        dataset_assays,
+        sample_types,
+        genome_size,
+        out_qc_pdf,
+        feature_label="SNP",
+        pdf=pdf,
+    )
+    plot_pseudobulk_tracks(
+        bb_df,
+        [("RDR", rdr_bb, RDR_YLABEL), ("BAF", baf_bb, "BAF")],
+        sample_id,
+        dataset_ids,
+        dataset_assays,
+        sample_types,
+        genome_size,
+        out_qc_pdf,
+        feature_label="bb",
+        pdf=pdf,
+    )
+logging.info(f"saved QC PDF to {out_qc_pdf}")
 
 save_npz(out_x_count, x_count.astype(COUNT_DTYPE))
 save_npz(out_tot_mtx_bb, tot_mtx_bb.astype(COUNT_DTYPE))
