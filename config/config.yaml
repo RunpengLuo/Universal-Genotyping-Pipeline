@@ -150,11 +150,11 @@ params_combine_counts:
 
   gene_aware_binning: true
 
-  # clonal-LOH detection (bulk only) for tumor cell-line datasets when no matched-normal sample.
+  # clonal-LOH detection (bulk only) for tumor cell-line datasets without matched-normal sample.
   detect_loh_tumor_cell_line: false
-  loh_tile_size: 100000
+  loh_tile_size: 250000
   loh_rate_ratio: 0.02
-  loh_breakpoint_rate: 1.0e-6
+  loh_breakpoint_rate: 1.0e-8
 
   rdr_normalization: auto
 
