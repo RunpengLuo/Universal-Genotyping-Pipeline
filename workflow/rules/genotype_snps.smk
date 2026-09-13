@@ -1,11 +1,22 @@
-"""
-Inputs
-1. BAM files
-2. SNP panels
-3. reference genome
+"""Call het and hom-alt SNPs, or split a given VCF per chromosome.
 
-Outputs: bi-allelic hom-alt and het ref/alt SNPs, per chromosome.
-snps/<chrom>.vcf.gz
+Last update: 2026-08-28
+
+`tumor_genotyping_mode` (a parse_workflow global, None when no genotyped bulk dataset is a
+tumor) picks how the calls become genotypes; see workflow/scripts/post_genotype_snps.py.
+
+Rules:
+- [bulk] genotype_snps_bulk: bcftools calls one chromosome from the alignments, at the
+  snp_panel's positions and, under panel_allele_only, its REF/ALT
+- [bulk] post_genotype_snps_bulk: threshold the calls into genotypes, or symlink them
+  through when no genotyped dataset is a tumor, every chromosome in one job
+- [single-cell] genotype_snps_pseudobulk_mode1b: cellsnp-lite calls one modality
+- [single-cell] post_genotype_snps_nonbulk: genotype het/hom-alt from the pseudobulk
+  counts, there being no matched normal to call against
+- [optional] split_het_snp_vcf: split a given het_snp_vcf per chromosome
+Outputs:
+- snp_dir/raw/chr{chrname}.vcf.gz: the bulk caller's own output, before refinement
+- snp_dir/chr{chrname}.vcf.gz: bi-allelic het and hom-alt SNPs, what phasing reads
 """
 
 if workflow_mode == "bulk_genotyping" and run_genotyping:
@@ -14,16 +25,16 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
         input:
             alignment=bam_stream_input(genotype_files),
             alignment_index=bam_stream_index_input(genotype_files),
-            target_pos=lambda wc: config["snp_targets"] + "/target.chr{chrname}.pos.gz",
-            reference=config["reference"],
+            snp_panel=snp_panel,
+            reference=reference,
         output:
-            snp_vcf=config["snp_dir"] + "/chr{chrname}.vcf.gz",
-            unfiltered_vcf=temp(config["snp_dir"] + "/chr{chrname}.unfiltered.vcf.gz"),
+            snp_vcf=snp_dir + "/raw/chr{chrname}.vcf.gz",
+            snp_vcf_tbi=snp_dir + "/raw/chr{chrname}.vcf.gz.tbi",
         log:
-            config["log_dir"]
+            log_dir
             + f"/genotype_snps_bulk/genotype_snps_bulk.chr{{chrname}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
+            bench_dir
             + f"/genotype_snps_bulk/genotype_snps_bulk.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/bcftools.yaml"
@@ -31,7 +42,6 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
         resources:
             downloads=download_slots(genotype_files),
         params:
-            chrom="chr{chrname}",
             min_mapq=config["params_bcftools"]["min_mapq"],
             min_baseq=config["params_bcftools"]["min_baseq"],
             min_dp=config["params_bcftools"]["min_dp"],
@@ -39,42 +49,110 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
             min_qual=config["params_bcftools"]["min_qual"],
             extra_params=config["params_bcftools"]["extra_params"],
             bam_arg=bam_stream_arg(genotype_files),
-            region_arg=lambda wc: f"-r chr{wc.chrname}" if remote_stream else "",
+            chrom=lambda wc: input_chrom(wc.chrname),
+            alleles_arg=lambda wc, input: (
+                (
+                    "--constrain alleles --targets-file "
+                    f"<(bcftools query --regions {input_chrom(wc.chrname)} "
+                    f"--format '%CHROM\\t%POS\\t%REF,%ALT\\n' {input.snp_panel})"
+                )
+                if panel_allele_only
+                else ""
+            ),
+            ignore_rg="--ignore-RG" if genotype_ignore_rg else "",
         shell:
             r"""
+            set -euo pipefail
             ALN="{input.alignment}"; [ -z "$ALN" ] && ALN="{params.bam_arg}"
-            bcftools mpileup $ALN \
-                -f "{input.reference}" \
-                -Ou \
-                --threads {threads} \
-                -a INFO/AD,AD,DP \
-                --skip-indels \
-                -q {params.min_mapq} \
-                -Q {params.min_baseq} \
-                -d {params.max_depth} \
-                {params.extra_params} \
-                {params.region_arg} \
-                -T {input.target_pos} \
-            | bcftools call -m \
-                -Oz -o {output.unfiltered_vcf} 2> {log}
+            (
+              bcftools mpileup $ALN \
+                  --fasta-ref "{input.reference}" \
+                  --output-type u \
+                  --annotate INFO/AD,AD,DP \
+                  --skip-indels \
+                  --min-MQ {params.min_mapq} \
+                  --min-BQ {params.min_baseq} \
+                  --max-depth {params.max_depth} \
+                  {params.ignore_rg} \
+                  {params.extra_params} \
+                  --regions {params.chrom} \
+                  --targets-file "{input.snp_panel}" \
+              | bcftools call --multiallelic-caller \
+                  --variants-only \
+                  {params.alleles_arg} \
+                  --output-type u \
+              | bcftools view \
+                  --types snps --min-alleles 2 --max-alleles 2 \
+                  --include 'QUAL>={params.min_qual} && FMT/DP>={params.min_dp} && GT="alt"' \
+                  --threads {threads} \
+                  --output-type z --output {output.snp_vcf}
+            ) 2> {log}
 
-            NSAMPLE=$(bcftools query -l {output.unfiltered_vcf} | wc -l | tr -d ' ')
+            NSAMPLE=$(bcftools query --list-samples {output.snp_vcf} | wc -l | tr -d ' ')
             if [ "$NSAMPLE" -ne 1 ]; then
-                echo "ERROR: genotyping produced $NSAMPLE samples; expected 1. Pooled alignments must share one @RG SM tag (config genotype_dataset_ids)." >> {log}
+                echo "ERROR: genotyping produced $NSAMPLE samples; expected 1. Pooled alignments must share one @RG SM tag, or name a single per-cell dataset (config genotype_dataset_ids)." >> {log}
                 exit 1
             fi
 
-            TOTAL=$(bcftools view -H {output.unfiltered_vcf} | wc -l | tr -d ' ')
+            PASS=$(bcftools query --format '\n' {output.snp_vcf} | wc -l | tr -d ' ')
+            echo "Passed filters: $PASS" >> {log}
 
-            bcftools view {output.unfiltered_vcf} -v snps -m2 -M2 \
-                -i 'QUAL>={params.min_qual} && GT="alt" && FMT/DP>={params.min_dp}' \
-                -Oz -o {output.snp_vcf} 2>> {log}
-
-            PASS=$(bcftools view -H {output.snp_vcf} | wc -l | tr -d ' ')
-            echo "Total called: $TOTAL, Passed filters: $PASS, Filtered: $((TOTAL - PASS))" >> {log}
-
-            tabix -p vcf {output.snp_vcf}
+            tabix -f -p vcf {output.snp_vcf}
             """
+
+    rule post_genotype_snps_bulk:
+        """Threshold the calls into het/hom-alt genotypes, or symlink them through.
+
+        Takes the whole per-chromosome set rather than one chromosome, so the kept-SNP
+        counts are logged once over the genome.
+        """
+        input:
+            raw_snp_vcfs=expand(
+                snp_dir + "/raw/chr{chrname}.vcf.gz",
+                chrname=nochr_chromosomes,
+            ),
+            raw_snp_vcfs_tbi=expand(
+                snp_dir + "/raw/chr{chrname}.vcf.gz.tbi",
+                chrname=nochr_chromosomes,
+            ),
+            genome_size=genome_size,
+        output:
+            snp_vcfs=expand(
+                snp_dir + "/chr{chrname}.vcf.gz",
+                chrname=nochr_chromosomes,
+            ),
+            snp_vcfs_tbi=expand(
+                snp_dir + "/chr{chrname}.vcf.gz.tbi",
+                chrname=nochr_chromosomes,
+            ),
+            qc_pdf=report(
+                qc_dir + "/post_genotype_snps.bulk.pdf",
+                category="QC plots",
+                subcategory="genotyping",
+                labels={"plot": "genotype allele frequency"},
+            ),
+        log:
+            log_dir + f"/post_genotype_snps.bulk.{_run_id}.log",
+        benchmark:
+            bench_dir + f"/post_genotype_snps.bulk.{_run_id}.tsv"
+        conda:
+            "../envs/base.yaml"
+        threads: 1
+        params:
+            source="bulk",
+            genotyping=tumor_genotyping_mode or "passthrough",
+            chroms=chr_chromosomes,
+            input_nochr=input_nochr,
+            min_het_reads=config["params_genotype_snps"]["min_het_reads"],
+            min_vaf_thres=config["params_genotype_snps"]["min_vaf_thres"],
+            filter_nz_OTH=config["params_genotype_snps"]["filter_nz_OTH"],
+            filter_hom_ALT=config["params_genotype_snps"]["filter_hom_ALT"],
+            min_dp=config["params_genotype_snps"]["min_dp"],
+            qc_dir=qc_dir,
+            run_id=_run_id,
+            sample_id=sample_id,
+        script:
+            "../scripts/post_genotype_snps.py"
 
 
 if workflow_mode == "single_cell_genotyping" and run_genotyping:
@@ -85,19 +163,19 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
             alignment_indexes=lambda wc: alignment_index_input(
                 modality2files[wc.modality]
             ),
-            snp_panel=config["snp_panel"],
+            snp_panel=snp_panel,
         output:
-            out_dir=directory(config["snp_dir"] + "/pseudobulk_{modality}"),
-            out_vcf=config["snp_dir"] + "/pseudobulk_{modality}/cellSNP.base.vcf.gz",
-            out_tsv=config["snp_dir"] + "/pseudobulk_{modality}/cellSNP.samples.tsv",
-            out_dp=config["snp_dir"] + "/pseudobulk_{modality}/cellSNP.tag.DP.mtx",
-            out_ad=config["snp_dir"] + "/pseudobulk_{modality}/cellSNP.tag.AD.mtx",
+            out_dir=directory(snp_dir + "/pseudobulk_{modality}"),
+            out_vcf=snp_dir + "/pseudobulk_{modality}/cellSNP.base.vcf.gz",
+            out_tsv=snp_dir + "/pseudobulk_{modality}/cellSNP.samples.tsv",
+            out_dp=snp_dir + "/pseudobulk_{modality}/cellSNP.tag.DP.mtx",
+            out_ad=snp_dir + "/pseudobulk_{modality}/cellSNP.tag.AD.mtx",
             bam_lst=temp("tmp/bams.{modality}.lst"),
         log:
-            config["log_dir"]
+            log_dir
             + f"/genotype_snps_pseudobulk/genotype_snps_pseudobulk.{{modality}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
+            bench_dir
             + f"/genotype_snps_pseudobulk/genotype_snps_pseudobulk.{{modality}}.{_run_id}.tsv"
         conda:
             "../envs/cellsnp.yaml"
@@ -127,46 +205,52 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
                 --gzip > {log} 2>&1
             """
 
-    rule annotate_snps_pseudobulk:
+    rule post_genotype_snps_nonbulk:
+        """Genotype het/hom-alt from the pseudobulk counts, no matched normal to call."""
         input:
             raw_snp_vcfs=[
-                config["snp_dir"] + f"/pseudobulk_{modality}/cellSNP.base.vcf.gz"
+                snp_dir + f"/pseudobulk_{modality}/cellSNP.base.vcf.gz"
                 for modality in modalities
             ],
-            genome_size=config["genome_size"],
+            genome_size=genome_size,
         output:
             snp_vcfs=expand(
-                config["snp_dir"] + "/chr{chrname}.vcf.gz",
-                chrname=config["chromosomes"],
+                snp_dir + "/chr{chrname}.vcf.gz",
+                chrname=nochr_chromosomes,
             ),
             snp_vcfs_tbi=expand(
-                config["snp_dir"] + "/chr{chrname}.vcf.gz.tbi",
-                chrname=config["chromosomes"],
+                snp_dir + "/chr{chrname}.vcf.gz.tbi",
+                chrname=nochr_chromosomes,
             ),
-            snp_stats=report(
-                config["snp_dir"] + "/pseudobulk_snp_statistics.tsv",
-                category="QC stats",
+            qc_pdf=report(
+                qc_dir + "/post_genotype_snps.nonbulk.pdf",
+                category="QC plots",
                 subcategory="genotyping",
-                labels={"table": "pseudobulk SNP statistics"},
+                labels={"plot": "genotype allele frequency"},
             ),
         log:
-            config["log_dir"]
-            + f"/annotate_snps_pseudobulk/annotate_snps_pseudobulk.{_run_id}.log",
+            log_dir + f"/post_genotype_snps.nonbulk.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
-            + f"/annotate_snps_pseudobulk/annotate_snps_pseudobulk.{_run_id}.tsv"
+            bench_dir + f"/post_genotype_snps.nonbulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1
         params:
+            source="pseudobulk",
+            genotyping=tumor_genotyping_mode,
+            chroms=chr_chromosomes,
+            input_nochr=input_nochr,
             modalities=modalities,
-            min_het_reads=config["params_annotate_snps"]["min_het_reads"],
-            min_hom_dp=config["params_annotate_snps"]["min_hom_dp"],
-            min_vaf_thres=config["params_annotate_snps"]["min_vaf_thres"],
-            filter_nz_OTH=config["params_annotate_snps"]["filter_nz_OTH"],
-            filter_hom_ALT=config["params_annotate_snps"]["filter_hom_ALT"],
+            min_het_reads=config["params_genotype_snps"]["min_het_reads"],
+            min_dp=config["params_genotype_snps"]["min_dp"],
+            min_vaf_thres=config["params_genotype_snps"]["min_vaf_thres"],
+            filter_nz_OTH=config["params_genotype_snps"]["filter_nz_OTH"],
+            filter_hom_ALT=config["params_genotype_snps"]["filter_hom_ALT"],
+            qc_dir=qc_dir,
+            run_id=_run_id,
+            sample_id=sample_id,
         script:
-            "../scripts/annotate_snps_pseudobulk.py"
+            "../scripts/post_genotype_snps.py"
 
 
 if not run_genotyping and run_phasing:
@@ -174,27 +258,27 @@ if not run_genotyping and run_phasing:
     rule split_het_snp_vcf:
         """Per-chromosome SNPs from a supplied unphased het_snp_vcf, for the phaser."""
         input:
-            het_snp_vcf=config["het_snp_vcf"],
+            het_snp_vcf=het_snp_vcf,
         output:
-            snp_vcf=config["snp_dir"] + "/chr{chrname}.vcf.gz",
-            snp_vcf_tbi=config["snp_dir"] + "/chr{chrname}.vcf.gz.tbi",
+            snp_vcf=snp_dir + "/chr{chrname}.vcf.gz",
+            snp_vcf_tbi=snp_dir + "/chr{chrname}.vcf.gz.tbi",
         log:
-            config["log_dir"]
+            log_dir
             + f"/split_het_snp_vcf/split_het_snp_vcf.chr{{chrname}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
+            bench_dir
             + f"/split_het_snp_vcf/split_het_snp_vcf.chr{{chrname}}.{_run_id}.tsv"
         conda:
             "../envs/bcftools.yaml"
         threads: 1
         params:
-            chrom="chr{chrname}",
+            chrom=lambda wc: input_chrom(wc.chrname),
         shell:
             r"""
             if [ ! -f "{input.het_snp_vcf}.tbi" ] && [ ! -f "{input.het_snp_vcf}.csi" ]; then
                 tabix -f -p vcf "{input.het_snp_vcf}" 2> {log}
             fi
-            bcftools view "{input.het_snp_vcf}" -r "{params.chrom}" \
-                -Oz -o "{output.snp_vcf}" 2>> {log}
+            bcftools view "{input.het_snp_vcf}" --regions "{params.chrom}" \
+                --output-type z --output "{output.snp_vcf}" 2>> {log}
             tabix -f -p vcf "{output.snp_vcf}" 2>> {log}
             """

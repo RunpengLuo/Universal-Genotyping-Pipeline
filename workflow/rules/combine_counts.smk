@@ -1,87 +1,138 @@
-##################################################
-# SNP-informed adaptive binning + window→bin depth aggregation
-# Bulk: combine_counts (with corrected window depth)
-# Non-bulk: combine_counts_nonbulk (derived bins) + combine_counts_fixed_bins (given bins)
-##################################################
+"""Bin the SNPs and depth into bbs, the pipeline's output unit.
+
+Last update: 2026-08-28
+
+Rules:
+- [bulk] combine_counts: clonal-LOH detection
+  (params_combine_counts.detect_loh_tumor_cell_line), then adaptive binning, depth, RDR
+  and read-start counts
+- [single-cell] combine_counts_nonbulk: adaptive binning over every assay
+- [copytyping] combine_counts_fixed_bins{,_rna}: counts onto pre-computed bbs
+Outputs:
+- bb_dir/MSR{msr}/bulk/: the bulk bbs, one subdir per min_snp_reads
+- bb_dir/MSR{msr}/{assay}/: the single-cell bbs, sliced per assay
+- bb_dir/{assay}/: the copytyping bbs, no binning so no MSR level
+- bb_dir/unit/{bulk,assay}/: the un-binned SNP, window and gene levels binning consumes
+- qc_dir/detect_loh.bulk.pdf: the het-density decode; only a detect_loh_tumor_cell_line
+  run declares it. The regions are the is_loh column of the window and bb tables
+"""
 
 if workflow_mode == "bulk_genotyping":
 
+    _detect_loh_cl = config["params_combine_counts"]["detect_loh_tumor_cell_line"]
+    # no other run has clonal LOH to find, so no other run declares this
+    _loh_out = (
+        {
+            "loh_pdf": report(
+                qc_dir + "/detect_loh.bulk.pdf",
+                category="QC plots",
+                subcategory="bulk binning",
+                labels={"plot": "clonal-LOH density"},
+            ),
+        }
+        if _detect_loh_cl
+        else {}
+    )
+
     rule combine_counts:
         input:
-            # depth/window stay per-assay; allele matrices are one joint set
-            dp_corrected=[
-                config["pileup_dir"] + f"/{at}/window.dp.npz" for at in assay_types
+            dp_corrected=pileup_dir + "/bulk/window.dp.npz",
+            rdcount_files=[
+                pileup_dir + f"/{at}/{rid}.rdcount.bed.gz"
+                for at in assay_types
+                for rid in assay2dataset_ids[at]
             ],
-            window_df=[
-                config["pileup_dir"] + f"/{at}/window.tsv.gz" for at in assay_types
-            ],
-            snp_info=config["allele_dir"] + "/bulk/snps.tsv.gz",
-            tot_mtx_snp=config["allele_dir"] + "/bulk/snp.Tallele.npz",
-            a_mtx_snp=config["allele_dir"] + "/bulk/snp.Aallele.npz",
-            b_mtx_snp=config["allele_dir"] + "/bulk/snp.Ballele.npz",
-            sample_file=config["allele_dir"] + "/bulk/sample_ids.tsv",
-            gmap_file=lambda wc: (
-                config["phase_dir"] + "/genetic_map.tsv.gz"
-                if require_genetic_map
-                else []
-            ),
+            window_bed=window_bed,
+            snp_info=allele_dir + "/snps.tsv.gz",
+            tot_mtx_snp=allele_dir + "/snp.Tallele.npz",
+            a_mtx_snp=allele_dir + "/snp.Aallele.npz",
+            b_mtx_snp=allele_dir + "/snp.Ballele.npz",
+            sample_file=allele_dir + "/sample_ids.tsv",
+            gmap_file=gmap_file,
             region_bed=segment_bed,
-            blacklist_bed=config["blacklist_bed"] or [],
-            genome_size=config["genome_size"],
+            blacklist_bed=blacklist_bed,
+            genome_size=genome_size,
         output:
-            bb_file=expand(
-                config["bb_dir"] + f"/MSR{{msr}}/bulk/bb.tsv.gz", msr=msr_list
-            ),
+            **_loh_out,
+            bb_file=expand(bb_dir + f"/MSR{{msr}}/bulk/bb.tsv.gz", msr=msr_list),
             tot_mtx_bb=expand(
-                config["bb_dir"] + f"/MSR{{msr}}/bulk/bb.Tallele.npz",
+                bb_dir + f"/MSR{{msr}}/bulk/bb.Tallele.npz",
                 msr=msr_list,
             ),
             a_mtx_bb=expand(
-                config["bb_dir"] + f"/MSR{{msr}}/bulk/bb.Aallele.npz",
+                bb_dir + f"/MSR{{msr}}/bulk/bb.Aallele.npz",
                 msr=msr_list,
             ),
             b_mtx_bb=expand(
-                config["bb_dir"] + f"/MSR{{msr}}/bulk/bb.Ballele.npz",
+                bb_dir + f"/MSR{{msr}}/bulk/bb.Ballele.npz",
                 msr=msr_list,
             ),
             dp_mtx_bb=expand(
-                config["bb_dir"] + f"/MSR{{msr}}/bulk/bb.depth.npz",
+                bb_dir + f"/MSR{{msr}}/bulk/bb.depth.npz",
                 msr=msr_list,
             ),
             rdr_mtx_bb=expand(
-                config["bb_dir"] + f"/MSR{{msr}}/bulk/bb.rdr.npz",
+                bb_dir + f"/MSR{{msr}}/bulk/bb.rdr.npz",
+                msr=msr_list,
+            ),
+            rdcount_mtx_bb=expand(
+                bb_dir + f"/MSR{{msr}}/bulk/bb.rdcount.npz",
                 msr=msr_list,
             ),
             sample_file=expand(
-                config["bb_dir"] + f"/MSR{{msr}}/bulk/sample_ids.tsv",
+                bb_dir + f"/MSR{{msr}}/bulk/sample_ids.tsv",
                 msr=msr_list,
             ),
+            unit_snp_file=bb_dir + "/unit/bulk/snp.tsv.gz",
+            unit_tot_mtx=bb_dir + "/unit/bulk/snp.Tallele.npz",
+            unit_a_mtx=bb_dir + "/unit/bulk/snp.Aallele.npz",
+            unit_b_mtx=bb_dir + "/unit/bulk/snp.Ballele.npz",
+            unit_window_file=bb_dir + "/unit/bulk/window.tsv.gz",
+            unit_dp_mtx=bb_dir + "/unit/bulk/window.depth.npz",
+            unit_rdcount_mtx=bb_dir + "/unit/bulk/window.rdcount.npz",
+            unit_sample_file=bb_dir + "/unit/bulk/sample_ids.tsv",
+            multi_bb_file=bb_dir + "/multi_snp/bulk/bb.tsv.gz",
+            multi_tot_mtx=bb_dir + "/multi_snp/bulk/bb.Tallele.npz",
+            multi_a_mtx=bb_dir + "/multi_snp/bulk/bb.Aallele.npz",
+            multi_b_mtx=bb_dir + "/multi_snp/bulk/bb.Ballele.npz",
+            multi_dp_mtx=bb_dir + "/multi_snp/bulk/bb.depth.npz",
+            multi_rdr_mtx=bb_dir + "/multi_snp/bulk/bb.rdr.npz",
+            multi_rdcount_mtx=bb_dir + "/multi_snp/bulk/bb.rdcount.npz",
+            multi_sample_file=bb_dir + "/multi_snp/bulk/sample_ids.tsv",
             qc_pdf=report(
                 expand(
-                    config["qc_dir"] + f"/combine_counts.bulk.MSR{{msr}}.pdf",
+                    qc_dir + f"/combine_counts.bulk.MSR{{msr}}.pdf",
                     msr=msr_list,
                 ),
                 category="QC plots",
                 subcategory="bulk binning",
             ),
         log:
-            config["log_dir"] + f"/combine_counts/combine_counts.bulk.{_run_id}.log",
+            log_dir + f"/combine_counts.bulk.{_run_id}.log",
         benchmark:
-            config["bench_dir"] + f"/combine_counts/combine_counts.bulk.{_run_id}.tsv"
+            bench_dir + f"/combine_counts.bulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1
         params:
-            qc_dir=config["qc_dir"],
-            bulk_assays=assay_types,
+            qc_dir=qc_dir,
+            sample_id=sample_id,
+            assay_types=assay_types,
+            dataset_ids=[rid for at in assay_types for rid in assay2dataset_ids[at]],
+            dataset_assays=[at for at in assay_types for rid in assay2dataset_ids[at]],
+            chroms=chr_chromosomes,
             nu=config["params_combine_counts"]["nu"],
             min_switchprob=config["params_combine_counts"]["min_switchprob"],
             switchprob_ps=config["params_combine_counts"]["switchprob_ps"],
             min_snp_reads=msr_list,
             min_snp_per_bin=config["params_combine_counts"]["min_snp_per_bin"],
+            nsnp_multi=config["params_combine_counts"]["nsnp_multi"],
             gene_aware_binning=config["params_combine_counts"]["gene_aware_binning"],
-            rdr_outlier_quantile=config["params_combine_counts"]["rdr_outlier_quantile"],
-            max_blocksize=config["params_combine_counts"]["max_blocksize"],
+            min_total_reads=config["params_combine_counts"]["min_total_reads"],
+            detect_loh_tumor_cell_line=_detect_loh_cl,
+            loh_tile_size=config["params_combine_counts"]["loh_tile_size"],
+            loh_rate_ratio=config["params_combine_counts"]["loh_rate_ratio"],
+            loh_breakpoint_rate=config["params_combine_counts"]["loh_breakpoint_rate"],
             phase_flip_test=config["params_combine_counts"]["phase_flip_test"],
             phase_flip_epsilon=config["params_combine_counts"]["phase_flip_epsilon"],
             phase_flip_alpha=config["params_combine_counts"]["phase_flip_alpha"],
@@ -93,26 +144,12 @@ elif workflow_mode == "single_cell_genotyping":
 
     rule combine_counts_nonbulk:
         input:
-            snp_info=[config["allele_dir"] + f"/{at}/snps.tsv.gz" for at in assay_types],
-            tot_mtx_snp=[
-                config["allele_dir"] + f"/{at}/snp.Tallele.npz" for at in assay_types
-            ],
-            a_mtx_snp=[
-                config["allele_dir"] + f"/{at}/snp.Aallele.npz" for at in assay_types
-            ],
-            b_mtx_snp=[
-                config["allele_dir"] + f"/{at}/snp.Ballele.npz" for at in assay_types
-            ],
-            sample_file=[
-                config["allele_dir"] + f"/{at}/sample_ids.tsv" for at in assay_types
-            ],
-            all_barcodes=[
-                config["allele_dir"] + f"/{at}/barcodes.tsv.gz" for at in assay_types
-            ],
-            barcodes_full=[
-                config["allele_dir"] + f"/{at}/barcodes.full.tsv.gz"
-                for at in assay_types
-            ],
+            snp_info=allele_dir + "/snps.tsv.gz",
+            tot_mtx_snp=allele_dir + "/snp.Tallele.npz",
+            a_mtx_snp=allele_dir + "/snp.Aallele.npz",
+            b_mtx_snp=allele_dir + "/snp.Ballele.npz",
+            sample_file=allele_dir + "/sample_ids.tsv",
+            all_barcodes=allele_dir + "/barcodes.tsv.gz",
             frag_files=file_input(
                 [
                     get_data[("scATAC", rid)]["fragments"]
@@ -120,81 +157,90 @@ elif workflow_mode == "single_cell_genotyping":
                 ]
             ),
             h5ad_files=[
-                config["bb_dir"] + f"/{at}.h5ad"
+                bb_dir + f"/{at}.h5ad"
                 for at in assay_types
                 if ASSAY_TYPE2MODALITY[at] == "RNA"
             ],
-            gmap_file=(
-                config["phase_dir"] + "/genetic_map.tsv.gz"
-                if require_genetic_map
-                else []
-            ),
-            region_bed=config["region_bed"],
-            genome_size=config["genome_size"],
+            gmap_file=gmap_file,
+            window_bed=window_bed,
+            genome_size=genome_size,
         output:
             bb_file=[
-                config["bb_dir"] + f"/MSR{msr}/{at}/bb.tsv.gz"
+                bb_dir + f"/MSR{msr}/{at}/bb.tsv.gz"
                 for at in assay_types
                 for msr in msr_list
             ],
             sample_file=[
-                config["bb_dir"] + f"/MSR{msr}/{at}/sample_ids.tsv"
+                bb_dir + f"/MSR{msr}/{at}/sample_ids.tsv"
                 for at in assay_types
                 for msr in msr_list
             ],
             tot_mtx_bb=[
-                config["bb_dir"] + f"/MSR{msr}/{at}/bb.Tallele.npz"
+                bb_dir + f"/MSR{msr}/{at}/bb.Tallele.npz"
                 for at in assay_types
                 for msr in msr_list
             ],
             a_mtx_bb=[
-                config["bb_dir"] + f"/MSR{msr}/{at}/bb.Aallele.npz"
+                bb_dir + f"/MSR{msr}/{at}/bb.Aallele.npz"
                 for at in assay_types
                 for msr in msr_list
             ],
             b_mtx_bb=[
-                config["bb_dir"] + f"/MSR{msr}/{at}/bb.Ballele.npz"
+                bb_dir + f"/MSR{msr}/{at}/bb.Ballele.npz"
                 for at in assay_types
                 for msr in msr_list
             ],
-            multi_snp_file=[
-                config["bb_dir"] + f"/MSR{msr}/{at}/multi_snp.tsv.gz"
-                for at in assay_types
-                for msr in msr_list
+            unit_snp_file=[bb_dir + f"/unit/{at}/snp.tsv.gz" for at in assay_types],
+            unit_tot_mtx=[bb_dir + f"/unit/{at}/snp.Tallele.npz" for at in assay_types],
+            unit_a_mtx=[bb_dir + f"/unit/{at}/snp.Aallele.npz" for at in assay_types],
+            unit_b_mtx=[bb_dir + f"/unit/{at}/snp.Ballele.npz" for at in assay_types],
+            unit_barcodes=[bb_dir + f"/unit/{at}/barcodes.tsv.gz" for at in assay_types],
+            unit_sample_file=[
+                bb_dir + f"/unit/{at}/sample_ids.tsv" for at in assay_types
             ],
+            unit_window_file=[
+                bb_dir + f"/unit/{at}/window.tsv.gz"
+                for at in assay_types
+                if at == "scATAC"
+            ],
+            unit_window_x=[
+                bb_dir + f"/unit/{at}/window.Xcount.npz"
+                for at in assay_types
+                if at == "scATAC"
+            ],
+            unit_gene_file=[
+                bb_dir + f"/unit/{at}/gene.tsv.gz"
+                for at in assay_types
+                if ASSAY_TYPE2MODALITY[at] == "RNA"
+            ],
+            unit_gene_x=[
+                bb_dir + f"/unit/{at}/gene.Xcount.npz"
+                for at in assay_types
+                if ASSAY_TYPE2MODALITY[at] == "RNA"
+            ],
+            multi_snp_file=[bb_dir + f"/multi_snp/{at}/bb.tsv.gz" for at in assay_types],
             tot_mtx_multi=[
-                config["bb_dir"] + f"/MSR{msr}/{at}/multi_snp.Tallele.npz"
-                for at in assay_types
-                for msr in msr_list
+                bb_dir + f"/multi_snp/{at}/bb.Tallele.npz" for at in assay_types
             ],
             a_mtx_multi=[
-                config["bb_dir"] + f"/MSR{msr}/{at}/multi_snp.Aallele.npz"
-                for at in assay_types
-                for msr in msr_list
+                bb_dir + f"/multi_snp/{at}/bb.Aallele.npz" for at in assay_types
             ],
             b_mtx_multi=[
-                config["bb_dir"] + f"/MSR{msr}/{at}/multi_snp.Ballele.npz"
-                for at in assay_types
-                for msr in msr_list
+                bb_dir + f"/multi_snp/{at}/bb.Ballele.npz" for at in assay_types
             ],
             all_barcodes=[
-                config["bb_dir"] + f"/MSR{msr}/{at}/barcodes.tsv.gz"
-                for at in assay_types
-                for msr in msr_list
-            ],
-            barcodes_full=[
-                config["bb_dir"] + f"/MSR{msr}/{at}/barcodes.full.tsv.gz"
+                bb_dir + f"/MSR{msr}/{at}/barcodes.tsv.gz"
                 for at in assay_types
                 for msr in msr_list
             ],
             x_count=[
-                config["bb_dir"] + f"/MSR{msr}/{at}/bb.Xcount.npz"
+                bb_dir + f"/MSR{msr}/{at}/bb.Xcount.npz"
                 for at in assay_types
                 for msr in msr_list
             ],
             qc_pdf=report(
                 [
-                    config["qc_dir"] + f"/combine_counts.{at}.MSR{msr}.pdf"
+                    qc_dir + f"/combine_counts.{at}.MSR{msr}.pdf"
                     for at in assay_types
                     for msr in msr_list
                 ],
@@ -202,19 +248,17 @@ elif workflow_mode == "single_cell_genotyping":
                 subcategory="single-cell binning",
             ),
         log:
-            config["log_dir"]
-            + f"/combine_counts_nonbulk/combine_counts_nonbulk.{_run_id}.log",
+            log_dir + f"/combine_counts_nonbulk.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
-            + f"/combine_counts_nonbulk/combine_counts_nonbulk.{_run_id}.tsv"
+            bench_dir + f"/combine_counts_nonbulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
         threads: 1
         params:
-            qc_dir=config["qc_dir"],
-            nonbulk_assays=assay_types,
-            frag_reps=assay2dataset_ids["scATAC"],
-            h5ad_assays=[at for at in assay_types if ASSAY_TYPE2MODALITY[at] == "RNA"],
+            qc_dir=qc_dir,
+            sample_id=sample_id,
+            assay_types=assay_types,
+            chroms=chr_chromosomes,
             nu=config["params_combine_counts"]["nu"],
             min_switchprob=config["params_combine_counts"]["min_switchprob"],
             switchprob_ps=config["params_combine_counts"]["switchprob_ps"],
@@ -230,19 +274,14 @@ elif workflow_mode == "copytyping_preprocess":
 
     rule combine_counts_fixed_bins:
         input:
-            snp_info=lambda wc: config["allele_dir"] + f"/{wc.assay_type}/snps.tsv.gz",
-            tot_mtx_snp=lambda wc: config["allele_dir"]
-            + f"/{wc.assay_type}/snp.Tallele.npz",
-            a_mtx_snp=lambda wc: config["allele_dir"]
-            + f"/{wc.assay_type}/snp.Aallele.npz",
-            b_mtx_snp=lambda wc: config["allele_dir"]
-            + f"/{wc.assay_type}/snp.Ballele.npz",
-            sample_file=lambda wc: config["allele_dir"]
-            + f"/{wc.assay_type}/sample_ids.tsv",
-            all_barcodes=config["allele_dir"] + "/{assay_type}/barcodes.tsv.gz",
-            barcodes_full=config["allele_dir"] + "/{assay_type}/barcodes.full.tsv.gz",
+            snp_info=allele_dir + "/snps.tsv.gz",
+            tot_mtx_snp=allele_dir + "/snp.Tallele.npz",
+            a_mtx_snp=allele_dir + "/snp.Aallele.npz",
+            b_mtx_snp=allele_dir + "/snp.Ballele.npz",
+            sample_file=allele_dir + "/sample_ids.tsv",
+            all_barcodes=allele_dir + "/barcodes.tsv.gz",
             h5ad_file=lambda wc: (
-                config["bb_dir"] + f"/{wc.assay_type}.h5ad"
+                bb_dir + f"/{wc.assay_type}.h5ad"
                 if ASSAY_TYPE2MODALITY[wc.assay_type] == "RNA"
                 else []
             ),
@@ -254,39 +293,74 @@ elif workflow_mode == "copytyping_preprocess":
                 if wc.assay_type == "scATAC"
                 else []
             ),
-            region_bed=lambda wc: config["region_bed"],
-            genome_size=lambda wc: config["genome_size"],
-            bb_file=lambda wc: config["bb_file"] or [],
+            genome_size=genome_size,
+            window_bed=window_bed,
+            bb_file=bb_file,
         output:
-            cnv_segments=config["bb_dir"] + "/{assay_type}/cnv_segments.tsv",
-            x_count=config["bb_dir"] + "/{assay_type}/bb.Xcount.npz",
-            tot_mtx_bb=config["bb_dir"] + "/{assay_type}/bb.Tallele.npz",
-            a_mtx_bb=config["bb_dir"] + "/{assay_type}/bb.Aallele.npz",
-            b_mtx_bb=config["bb_dir"] + "/{assay_type}/bb.Ballele.npz",
-            barcodes_out=config["bb_dir"] + "/{assay_type}/barcodes.tsv.gz",
-            barcodes_full_out=config["bb_dir"] + "/{assay_type}/barcodes.full.tsv.gz",
-            sample_file=config["bb_dir"] + "/{assay_type}/sample_ids.tsv",
+            bb_file=bb_dir + "/{assay_type}/bb.tsv.gz",
+            x_count=bb_dir + "/{assay_type}/bb.Xcount.npz",
+            tot_mtx_bb=bb_dir + "/{assay_type}/bb.Tallele.npz",
+            a_mtx_bb=bb_dir + "/{assay_type}/bb.Aallele.npz",
+            b_mtx_bb=bb_dir + "/{assay_type}/bb.Ballele.npz",
+            barcodes_out=bb_dir + "/{assay_type}/barcodes.tsv.gz",
+            sample_file=bb_dir + "/{assay_type}/sample_ids.tsv",
+            unit_snp_file=bb_dir + "/unit/{assay_type}/snp.tsv.gz",
+            unit_tot_mtx=bb_dir + "/unit/{assay_type}/snp.Tallele.npz",
+            unit_a_mtx=bb_dir + "/unit/{assay_type}/snp.Aallele.npz",
+            unit_b_mtx=bb_dir + "/unit/{assay_type}/snp.Ballele.npz",
+            unit_barcodes=bb_dir + "/unit/{assay_type}/barcodes.tsv.gz",
+            unit_sample_file=bb_dir + "/unit/{assay_type}/sample_ids.tsv",
+            unit_window_file=bb_dir + "/unit/{assay_type}/window.tsv.gz",
+            unit_window_x=bb_dir + "/unit/{assay_type}/window.Xcount.npz",
             qc_pdf=report(
-                config["qc_dir"] + "/combine_counts_fixed_bins.{assay_type}.pdf",
+                qc_dir + "/combine_counts_fixed_bins.{assay_type}.pdf",
                 category="QC plots",
                 subcategory="fixed-bin aggregation",
                 labels={"assay": "{assay_type}"},
             ),
         log:
-            config["log_dir"]
+            log_dir
             + f"/combine_counts_fixed_bins/combine_counts_fixed_bins.{{assay_type}}.{_run_id}.log",
         benchmark:
-            config["bench_dir"]
+            bench_dir
             + f"/combine_counts_fixed_bins/combine_counts_fixed_bins.{{assay_type}}.{_run_id}.tsv"
         wildcard_constraints:
-            assay_type="(scRNA|scATAC|VISIUM|VISIUM3prime)",
+            assay_type="scATAC",
         conda:
             "../envs/base.yaml"
         threads: 1
         params:
-            qc_dir=config["qc_dir"],
-            sample_name=sample_id,
+            qc_dir=qc_dir,
+            sample_id=sample_id,
             assay_type=lambda wc: wc.assay_type,
+            chroms=chr_chromosomes,
             run_id=_run_id,
         script:
             """../scripts/combine_counts_fixed_bins.py"""
+
+    # NB: same script; a gene is indivisible, so RNA's unit is the gene, not the window
+    use rule combine_counts_fixed_bins as combine_counts_fixed_bins_rna with:
+        output:
+            bb_file=bb_dir + "/{assay_type}/bb.tsv.gz",
+            x_count=bb_dir + "/{assay_type}/bb.Xcount.npz",
+            tot_mtx_bb=bb_dir + "/{assay_type}/bb.Tallele.npz",
+            a_mtx_bb=bb_dir + "/{assay_type}/bb.Aallele.npz",
+            b_mtx_bb=bb_dir + "/{assay_type}/bb.Ballele.npz",
+            barcodes_out=bb_dir + "/{assay_type}/barcodes.tsv.gz",
+            sample_file=bb_dir + "/{assay_type}/sample_ids.tsv",
+            unit_snp_file=bb_dir + "/unit/{assay_type}/snp.tsv.gz",
+            unit_tot_mtx=bb_dir + "/unit/{assay_type}/snp.Tallele.npz",
+            unit_a_mtx=bb_dir + "/unit/{assay_type}/snp.Aallele.npz",
+            unit_b_mtx=bb_dir + "/unit/{assay_type}/snp.Ballele.npz",
+            unit_barcodes=bb_dir + "/unit/{assay_type}/barcodes.tsv.gz",
+            unit_sample_file=bb_dir + "/unit/{assay_type}/sample_ids.tsv",
+            unit_gene_file=bb_dir + "/unit/{assay_type}/gene.tsv.gz",
+            unit_gene_x=bb_dir + "/unit/{assay_type}/gene.Xcount.npz",
+            qc_pdf=report(
+                qc_dir + "/combine_counts_fixed_bins.{assay_type}.pdf",
+                category="QC plots",
+                subcategory="fixed-bin aggregation",
+                labels={"assay": "{assay_type}"},
+            ),
+        wildcard_constraints:
+            assay_type="(scRNA|VISIUM|VISIUM3prime)",

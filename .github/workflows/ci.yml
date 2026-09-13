@@ -10,6 +10,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: ruff + snakefmt (format + lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # Both are capped: neither pins a rule set, so a minor release changes the
+      # verdict on an unchanged commit. ruff 0.16 adds LOG015/I001/EXE001 (217 hits)
+      # and formats python blocks inside Markdown; snakefmt 2.0 runs shfmt over every
+      # shell: directive. Raise a cap only together with the churn it brings.
+      - run: pip install "ruff>=0.15,<0.16" "snakefmt>=1.1,<2"
+      # F821 is the point: no `import *` hides an undefined name in a script:
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: snakefmt --check workflow/
+
   dryrun:
     name: pytest + snakemake dry-run (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -28,23 +46,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install "snakemake>=9" snakemake-storage-plugin-http snakemake-storage-plugin-fs \
-                      pandas numpy pyyaml pulp pytest
+                      pandas numpy scipy numba pyyaml pulp pytest
 
       - name: pytest (DAG dry-run, all modes x JSON/TSV)
         run: pytest tests/
-
-      - name: snakemake dry-run on a real sample sheet (HCC1395, chr16)
-        run: |
-          set -euo pipefail
-          # Stub only the references not bundled in resources/data/; a dry-run just
-          # builds the DAG, so empty files are enough.
-          R=.test-run/HCC1395/reference
-          mkdir -p "$R/target_positions" "$R/phasing_panel"
-          : > "$R/hg38.fa"
-          : > "$R/gencode.hg38.gtf.gz"
-          : > "$R/genetic_map_hg38_withX.txt.gz"
-          : > "$R/target_positions/target.chr16.pos.gz"
-          : > "$R/target_positions/target.chr16.pos.gz.tbi"
-          : > "$R/phasing_panel/chr16.genotypes.bcf"
-          : > "$R/phasing_panel/chr16.genotypes.bcf.csi"
-          snakemake -n -c1 -s workflow/Snakefile --configfile tests/data/HCC1395/config.yaml

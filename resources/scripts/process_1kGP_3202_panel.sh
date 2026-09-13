@@ -2,8 +2,7 @@
 set -euo pipefail
 
 # Prepare 1kGP n=3,202 phased panel for use with the genotyping pipeline.
-# Produces per-chromosome SNP panel VCFs, target position files, and phasing
-# panel BCFs.
+# Produces one indexed sites-only SNP panel VCF and per-chromosome phasing panel BCFs.
 #
 # Supports two reference versions:
 #   hg38     — downloads per-chromosome VCFs from EBI FTP
@@ -53,7 +52,7 @@ done
 [[ "${REFVERS}" != "hg38" && "${REFVERS}" != "chm13v2" ]] && { echo "ERROR: --ref must be hg38 or chm13v2" >&2; exit 1; }
 [[ -z "${CHROMS}" ]] && CHROMS="$(seq 1 22) X"
 
-mkdir -p "${OUT}"/{snps,target_positions,phasing_panel}
+mkdir -p "${OUT}"/{snps,phasing_panel}
 
 ##################################################
 # Download / locate source data
@@ -118,14 +117,6 @@ for chr in ${CHROMS}; do
   fi
   echo "${OUT}/snps/chr${chr}.vcf.gz" >> "${OUT}/snp_vcfs.lst"
 
-  # Target positions
-  if [ ! -f "${OUT}/target_positions/target.chr${chr}.pos.gz" ]; then
-    echo "extract target positions"
-    bcftools query -f '%CHROM\t%POS\n' \
-      "${OUT}/snps/chr${chr}.vcf.gz" | bgzip -c > "${OUT}/target_positions/target.chr${chr}.pos.gz"
-    tabix -s1 -b2 -e2 "${OUT}/target_positions/target.chr${chr}.pos.gz"
-  fi
-
   # Phasing panel BCF
   if [ ! -f "${OUT}/phasing_panel/chr${chr}.genotypes.bcf" ]; then
     echo "extract phasing panel BCF"
@@ -151,7 +142,6 @@ rm -rf "${OUT}/raw" "${OUT}/snps" "${OUT}/snp_vcfs.lst" "${OUT}/snp_files.lst"
 date
 echo "=====summary====="
 echo "reference: ${REFVERS}"
-echo "target positions: ${OUT}/target_positions/"
 echo "phasing panel: ${OUT}/phasing_panel/"
 echo "snp panel: ${OUT}/snps.vcf.gz"
 exit 0

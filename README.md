@@ -1,7 +1,7 @@
 # Universal Genotyping Pipeline
 
 [![CI](https://github.com/raphael-group/Universal-Genotyping-Pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/raphael-group/Universal-Genotyping-Pipeline/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.1.0b1-blue.svg)](VERSION)
+[![Version](https://img.shields.io/badge/version-0.1.0b2-blue.svg)](VERSION)
 [![Snakemake](https://img.shields.io/badge/snakemake->=9.0-brightgreen.svg)](https://snakemake.readthedocs.io)
 
 Universal Genotyping Pipeline is a Snakemake preprocessing pipeline for downstream allele-specific CNA inference softwares including:
@@ -28,7 +28,7 @@ snakemake --profile profile/ \
     -s workflow/Snakefile
 ```
 
-All pipeline dependencies can be found at [`workflow/envs/`](./workflow/envs/), see [dependencies](./docs/reference.md#dependencies) for details.
+All pipeline dependencies can be found at [`workflow/envs/`](./workflow/envs/), see [environments](./docs/reference.md#environments) for details.
 
 ---
 
@@ -50,10 +50,12 @@ The profile at [`profile/config.yaml`](profile/config.yaml) holds run-wide setti
 
 ---
 
-The sample sheet ([template](resources/templates/samples.json)) is a JSON file lists the input datasets & configurations. Copy the template and modify from it according to [schema](docs/sample_sheet.md). Validate the format and check the file existence via:
+The sample sheet ([template](resources/templates/samples.json)) is a JSON file lists the input datasets & configurations. Copy the template and modify from it according to [schema](docs/sample_sheet.md). The sample sheet is parsed and validated at DAG build, so a dry run checks it without executing anything:
 
 ```sh
-python resources/scripts/validate_sample_file.py /path/to/samples.json --check-files
+snakemake --profile profile/ -s workflow/Snakefile --configfile /path/to/my_config.yaml \
+  --directory <output_dir> --config sample_file=/path/to/samples.json sample_id=<PATIENT_ID> \
+  --dry-run
 ```
 
 ---
@@ -79,6 +81,7 @@ snakemake --profile profile/ \
 > - For the first run, use CMD argument `--dry-run` (`-n`). It lists the jobs Snakemake would run without actual executions, so you can confirm the plan and catch potential configuration errors.
 > - If a run failed at intermediate jobs or user changed downstream parameters, use CMD argument 
 > `--rerun-incomplete` to resume execution.
+> - Add CMD arguments `--report /path/to/report.html --report-after-run` to create a QC report.
 
 ---
 

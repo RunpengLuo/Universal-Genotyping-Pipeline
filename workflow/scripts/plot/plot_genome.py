@@ -1,4 +1,11 @@
-"""Genome-wide 1D scatter primitives (single- and multi-sample), on the cnplot axis."""
+"""Genome-wide 1D scatter primitives, shared by the per-step plot modules.
+
+Last update: 2026-08-08
+
+Functions:
+- plot_1d_sample: one genome-wide track, optionally split by a mask
+- plot_1d_multi_sample: one row per sample on a shared axis
+"""
 
 import logging
 
@@ -12,9 +19,16 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.lines import Line2D
 
-from cnplot import adaptive_dot_size, plot_scatter_1d, read_bed
+from cnplot import adaptive_dot_size, plot_scatter_1d
 
-from plot_utils import _bold_chrnames, _get_axis, _shade, _val_full
+from plot_utils import (
+    _bold_chrnames,
+    _finish_page,
+    _get_axis,
+    _load_shading,
+    _shade,
+    _val_full,
+)
 
 
 def plot_1d_multi_sample(
@@ -23,7 +37,7 @@ def plot_1d_multi_sample(
     labels: list,
     genome_size: str,
     out_file: str,
-    unit="window",
+    feature_label="bin",
     val_type="RD",
     s=4,
     dpi=72,
@@ -31,7 +45,6 @@ def plot_1d_multi_sample(
     min_ylim=0.0,
     max_ylim=None,
     sample_id: str | None = None,
-    row_order: list | None = None,
     region_bed: str | None = None,
     blacklist_bed: str | None = None,
     pdf: PdfPages | None = None,
@@ -50,20 +63,14 @@ def plot_1d_multi_sample(
         Sample labels, length == mat.shape[1].
     sample_id : str or None
         Sample/patient id for the page super-title.
-    row_order : list[int] or None
-        Row permutation applied to *labels* and *mat* columns before drawing.
     """
-    if row_order is not None:
-        labels = [labels[i] for i in row_order]
-        mat = mat[:, row_order]
     n_samples = len(labels)
     logging.info(
-        f"genome-wide {unit}-level {val_type} multi-sample plot "
+        f"genome-wide {feature_label}-level {val_type} multi-sample plot "
         f"({n_samples} samples), out_file={out_file}"
     )
     axis = _get_axis(genome_size, pos_df["#CHR"])
-    region_df = read_bed(region_bed) if region_bed else None
-    blacklist_df = read_bed(blacklist_bed) if blacklist_bed else None
+    region_df, blacklist_df = _load_shading(region_bed, blacklist_bed)
     s_plot = adaptive_dot_size(len(pos_df), s_base=s)
     alphas = np.full(len(pos_df), alpha)
     is_frac = val_type in ("AF", "BAF")
@@ -92,7 +99,8 @@ def plot_1d_multi_sample(
             ylim=(-0.05, 1.05)
             if is_frac
             else ((min_ylim, max_ylim) if max_ylim is not None else None),
-            ylabel=label,
+            # rotated axis: break "{dataset_id} {assay} {T|N}" after the dataset_id
+            ylabel=label.replace(" ", "\n", 1),
             plot_chrname=is_last,
             mb_ticks=True,
             show_gaps=False,
@@ -102,15 +110,7 @@ def plot_1d_multi_sample(
 
     val_name = _val_full(val_type)
     title = f"{sample_id} - {val_name}" if sample_id else val_name
-    fig.supxlabel(f"Genome positions (MB) - {unit}")
-    fig.tight_layout()
-    fig.subplots_adjust(top=1 - 0.4 / fig.get_figheight())
-    fig.suptitle(title, fontweight="bold", y=1 - 0.12 / fig.get_figheight())
-    if pdf is not None:
-        pdf.savefig(fig, dpi=dpi)
-    else:
-        fig.savefig(out_file, dpi=dpi)
-    plt.close(fig)
+    _finish_page(fig, title, feature_label, out_file=out_file, dpi=dpi, pdf=pdf)
 
 
 def plot_1d_sample(
@@ -118,7 +118,7 @@ def plot_1d_sample(
     val: np.ndarray,
     genome_size: str,
     out_file: str,
-    unit="SNP",
+    feature_label="SNP",
     val_type="BAF",
     s=4,
     dpi=72,
@@ -129,10 +129,13 @@ def plot_1d_sample(
     mask: np.ndarray | None = None,
     mask_labels=("kept", "filtered"),
     mask_colors=("blue", "red"),
+    groups: np.ndarray | None = None,
+    group_colors: dict | None = None,
     sample_id: str | None = None,
     region_bed: str | None = None,
     blacklist_bed: str | None = None,
     pdf: PdfPages | None = None,
+    title_suffix: str = "",
 ):
     """Single-sample 1-D genome-wide scatter plot: all chromosomes on one page.
 
@@ -141,11 +144,16 @@ def plot_1d_sample(
 
     When *mask* is given, ``mask``-true points use ``mask_colors[0]``/``mask_labels[0]``
     and ``mask``-false points use ``mask_colors[1]``/``mask_labels[1]``, with a legend.
+    *groups* generalizes that to any number of classes: a per-point label array plus a
+    ``{label: color}`` map, whose insertion order is the legend order. Either way the
+    legend carries each class's point count, so classes may share a color and stay
+    countable.
     """
-    logging.info(f"genome-wide {unit}-level {val_type} plot, out_file={out_file}")
+    logging.info(
+        f"genome-wide {feature_label}-level {val_type} plot, out_file={out_file}"
+    )
     axis = _get_axis(genome_size, pos_df["#CHR"])
-    region_df = read_bed(region_bed) if region_bed else None
-    blacklist_df = read_bed(blacklist_bed) if blacklist_bed else None
+    region_df, blacklist_df = _load_shading(region_bed, blacklist_bed)
 
     m = np.isfinite(val)
     s_plot = adaptive_dot_size(int(m.sum()), s_base=s)
@@ -159,17 +167,20 @@ def plot_1d_sample(
     fig, ax = plt.subplots(1, 1, figsize=figsize)
     _shade(ax, axis, region_df, blacklist_df)
 
-    if mask is not None:
+    if groups is None and mask is not None:
         mask = np.asarray(mask, dtype=bool)
-        hue = np.where(mask, mask_labels[0], mask_labels[1])
-        palette = {mask_labels[0]: mask_colors[0], mask_labels[1]: mask_colors[1]}
+        groups = np.where(mask, mask_labels[0], mask_labels[1])
+        group_colors = {mask_labels[0]: mask_colors[0], mask_labels[1]: mask_colors[1]}
+
+    if groups is not None:
+        groups = np.asarray(groups)
         plot_scatter_1d(
             ax,
-            pos_df.assign(_y=val, _hue=hue),
+            pos_df.assign(_y=val, _hue=groups),
             axis,
             "_y",
             hue="_hue",
-            palette=palette,
+            palette=dict(group_colors),
             alphas=np.full(len(pos_df), 0.8),
             markersize=s_plot,
             href=0.5 if is_frac else None,
@@ -178,26 +189,26 @@ def plot_1d_sample(
             mb_ticks=True,
             show_gaps=False,
         )
-        on, off = int((m & mask).sum()), int((m & ~mask).sum())
         handles = [
             Line2D(
                 [0],
                 [0],
                 marker="o",
                 linestyle="",
-                color=mask_colors[0],
-                label=f"{mask_labels[0]} ({on})",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                linestyle="",
-                color=mask_colors[1],
-                label=f"{mask_labels[1]} ({off})",
-            ),
+                color=color,
+                label=f"{label} ({int((m & (groups == label)).sum())})",
+            )
+            for label, color in group_colors.items()
         ]
-        ax.legend(handles=handles, loc="upper right", fontsize=8, markerscale=1)
+        ax.legend(
+            handles=handles,
+            loc="upper left",
+            bbox_to_anchor=(1.005, 1.0),
+            borderaxespad=0,
+            fontsize=8,
+            markerscale=1,
+            frameon=False,
+        )
     else:
         plot_scatter_1d(
             ax,
@@ -216,13 +227,6 @@ def plot_1d_sample(
 
     val_name = _val_full(val_type)
     title = f"{sample_id} - {val_name}" if sample_id else val_name
-    fig.supxlabel(f"Genome positions (MB) - {unit}")
-    fig.tight_layout()
-    fig.subplots_adjust(top=1 - 0.4 / fig.get_figheight())
-    fig.suptitle(title, fontweight="bold", y=1 - 0.12 / fig.get_figheight())
-    if pdf is not None:
-        pdf.savefig(fig, dpi=dpi)
-    else:
-        fig.savefig(out_file, dpi=dpi)
-    plt.close(fig)
+    title += title_suffix
+    _finish_page(fig, title, feature_label, out_file=out_file, dpi=dpi, pdf=pdf)
     return

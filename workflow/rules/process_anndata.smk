@@ -1,6 +1,12 @@
-##################################################
-# Build AnnData objects from single-cell data (scRNA / scATAC / VISIUM)
-##################################################
+"""One AnnData per RNA-family assay, before phasing needs its features.
+
+Last update: 2026-08-11
+
+Rules:
+- process_rna_anndata: 10x Ranger matrices into one gene-annotated h5ad
+Outputs:
+- bb_dir/{assay}.h5ad: cells x genes, MSR-independent so it sits flat
+"""
 
 
 rule process_rna_anndata:
@@ -17,7 +23,6 @@ rule process_rna_anndata:
                 for rid in assay2dataset_ids[wc.assay_type]
             ]
         ),
-        # spatial only; staged into a Space Ranger layout for squidpy
         spatial_files=lambda wc: (
             file_input(
                 spatial_layout(wc.assay_type, assay2dataset_ids[wc.assay_type])[1]
@@ -25,21 +30,16 @@ rule process_rna_anndata:
             if wc.assay_type in SPATIAL_ASSAYS
             else []
         ),
-        region_bed=lambda wc: config["region_bed"],
-        genome_size=lambda wc: config["genome_size"],
-        gene_blacklist_file=lambda wc: branch(
-            config["gene_blacklist_file"] is None,
-            then=[],
-            otherwise=config["gene_blacklist_file"],
-        ),
-        gtf_file=lambda wc: config["gtf_file"],
+        region_bed=region_bed,
+        gene_blacklist_file=gene_blacklist_file,
+        gtf_file=gtf_file,
     output:
-        h5ad_file=config["bb_dir"] + "/{assay_type}.h5ad",
+        h5ad_file=bb_dir + "/{assay_type}.h5ad",
     log:
-        config["log_dir"]
+        log_dir
         + f"/process_rna_anndata/process_rna_anndata.{{assay_type}}.{_run_id}.log",
     benchmark:
-        config["bench_dir"]
+        bench_dir
         + f"/process_rna_anndata/process_rna_anndata.{{assay_type}}.{_run_id}.tsv"
     wildcard_constraints:
         assay_type="(scRNA|VISIUM|VISIUM3prime)",
@@ -48,16 +48,12 @@ rule process_rna_anndata:
     params:
         assay_type=lambda wc: wc.assay_type,
         dataset_ids=lambda wc: assay2dataset_ids[wc.assay_type],
-        sample_types=lambda wc: assay2sample_types[wc.assay_type],
-        # per-dataset spatial/ filenames, aligned with input.spatial_files
         spatial_names=lambda wc: (
             spatial_layout(wc.assay_type, assay2dataset_ids[wc.assay_type])[0]
             if wc.assay_type in SPATIAL_ASSAYS
             else []
         ),
-        min_frac_barcodes=lambda wc: config["params_process_anndata"][
-            "min_frac_barcodes"
-        ],
-        gene_id_colname=lambda wc: config["params_process_anndata"]["gene_id_colname"],
+        min_frac_barcodes=config["params_process_anndata"]["min_frac_barcodes"],
+        gene_id_colname=config["params_process_anndata"]["gene_id_colname"],
     script:
         """../scripts/process_rna_anndata.py"""

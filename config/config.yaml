@@ -14,12 +14,13 @@ log_dir: "logs"
 aux_dir: "aux"
 bench_dir: "benchmarks"
 
+##################################################
+# Input
 workflow_mode: "bulk_genotyping"
 assay_types: ["bulkWGS"]
 
-##################################################
-# Input
 sample_id: sample_id
+dataset_ids: []
 sample_file: /path/to/sample.tsv
 chromosomes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
 
@@ -28,17 +29,22 @@ chromosomes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
 # (2) stream = read remote URLs directly, fetching only `chromosomes`.
 remote_mode: storage
 
+# Pre-built (phased) gHETs
 het_snp_vcf: null
 het_snp_vcf_phased: true
+
+# Pre-built segmentation coordinates (copy-typing preprocess ONLY)
 bb_file: null
 
 ##################################################
 # Reference
+species: human
 reference_version: null
 reference: null
 gtf_file: null
 genome_size: null
 region_bed: null
+extremity_tsv: null
 
 # Blacklist excluded regions/genes
 blacklist_bed: null
@@ -48,14 +54,20 @@ gene_blacklist_file: null
 # Build windows (bulk)
 window_bed: null
 mappability_bed: null
+# Hybrid-capture target intervals (bulkWES)
+target_bed: null
 params_build_windows:
   window_size: 1000
 
 ##################################################
 # Genotyping
 snp_panel: null
-snp_targets: null
 genotype_dataset_ids: []
+# true: bcftools call is constrained to the panel's REF/ALT, so a site can only be
+# genotyped as the panel spells it. false: the panel gives positions only, REF comes from
+# `reference` and ALT from the reads. Forced true when a genotyped dataset is a tumor.
+# bulk_genotyping only; cellsnp-lite -R already fixes the alleles.
+panel_allele_only: true
 
 # bulk genotyping + bulk pileup (bcftools mpileup)
 params_bcftools:
@@ -76,10 +88,9 @@ params_cellsnp_lite:
   minMAF_pileup: 0
   minCOUNT_pileup: 1
 
-# single-cell pseudobulk genotype annotation
-params_annotate_snps:
+params_genotype_snps:
+  min_dp: 10
   min_het_reads: 2
-  min_hom_dp: 10
   min_vaf_thres: 0.1
   filter_nz_OTH: false
   filter_hom_ALT: false
@@ -109,13 +120,16 @@ params_phase_and_concat:
 
 ##################################################
 # Read-depth + bias correction (bulk)
-params_mosdepth:
-  read_quality: 11
-  extra_params: "--no-per-base --fast-mode"
-
+# read_quality and exclude_flags are shared by mosdepth (-Q/-F) and the read-start
+# counter (samtools view -q/-F), so window.dp and rdcount see the same reads. 1796 is
+# mosdepth's own default; it keeps supplementary alignments, which count a split read
+# once per segment. Long-read runs should raise it to 3844 (= 1796 | 2048).
 params_count_reads:
+  read_quality: 11
+  exclude_flags: 1796
+  mosdepth_extra_params: "--no-per-base --fast-mode"
   gc_correct: true
-  gc_correct_method: "median"
+  rd_correct_method: "median"
   rt_correct: true
   samplesize: 50000
   routlier: 0.01
@@ -128,25 +142,34 @@ params_combine_counts:
   min_switchprob: 1e-6
   nu: 1
   switchprob_ps: 5e-2
-  nsnp_multi: 2
-  min_snp_reads: [500, 1000]
-  min_snp_per_bin: 2
-  max_blocksize: 500000
-  gene_aware_binning: true
-  rdr_normalization: auto
-  rdr_outlier_quantile: 0.002
   phase_flip_test: true
   phase_flip_epsilon: 0.05
   phase_flip_alpha: 0.05
 
-##################################################
-# Quality control
-# bulk genotyping: render qc/genotype_snp_qc.pdf (het vs hom-alt ref-AF diagnostic)
-qc_genotype_snps: true
+  nsnp_multi: 2
+
+  ## BB adaptive binning criteria
+  min_snp_reads: [100, 500, 1000, 2000, 3000, 5000, 7500, 10000]
+  min_snp_per_bin: 1
+  min_total_reads: 5000
+
+  gene_aware_binning: true
+
+  # clonal-LOH detection (bulk only) for tumor cell-line datasets without matched-normal sample.
+  detect_loh_tumor_cell_line: false
+  loh_tile_size: 250000
+  loh_rate_ratio: 0.02
+  loh_breakpoint_rate: 1.0e-8
+
+  rdr_normalization: auto
 
 ##################################################
+# bcftools mpileup is single-threaded: --threads only sizes the output compressor
+# (hts_set_threads on the output handle, never on the BAM/CRAM readers). genotype and
+# pileup therefore spend these on bgzip/BCF writing only, and both rules fan out per
+# chromosome, so a small number here buys more concurrent jobs.
 threads:
-  genotype: 4
+  genotype: 2
   phase: 4
-  pileup: 8
+  pileup: 2
   mosdepth: 4

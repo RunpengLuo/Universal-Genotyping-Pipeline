@@ -1,106 +1,89 @@
-##################################################
-# Bulk window construction (gated on workflow_mode == "bulk_genotyping").
-# Rule flow (region.bed stays the raw arm-level file; downloads/tool calls are
-# Snakemake rules, only binning is Python):
-#
-#   . build_segment_bed                [always for bulk]
-#       in : region_bed (raw arm BED) + blacklist_bed + bedpe
-#       out: segment_bed  (#CHR START END region_id[arm] seg_id[chunk]); also read by
-#            phase_and_concat (SNP region/seg assignment), rd_correct + combine_counts
-#            (QC region overlay) -- so it runs even when windows are pre-built.
-#
-# The window BED is EITHER consumed pre-built OR built (see the if/else below):
-#
-#   use_prebuilt_windows [window_bed set, no BEDPE]:
-#       config["window_bed"] is read directly by the consumers (window_bed_path);
-#       nothing is built and the Repli-seq fetch is skipped. rd_correct filters it to
-#       config["chromosomes"], so extra contigs are harmless.
-#
-#   else -- build the window BED (all inside the `if not use_prebuilt_windows` block):
-#     . repliseq_bigwig_to_bedgraph    [do_repliseq only, per bigWig {name}]
-#         in : bigWig URL (storage)            out: {name}.hg19.bedGraph
-#     . repliseq_liftover              [do_repliseq + hg38 target only, per {name}]
-#         in : {name}.hg19.bedGraph + chain URL (storage)
-#         out: {name}.hg38.bedGraph (cached under aux); hg19 runs skip this
-#     . build_window_bed              [one grid for every bulk assay: WGS/WGS-lr/WES]
-#         in : segment_bed + reference + genome_size, and the optional
-#              mappability_bed, {reference_version} bedgraphs
-#         out: windows.bed.gz  (#CHR START END region_id seg_id GC [MAP] [REPLI])
-#              + qc_pdf (segment- and window-length histograms)
-#
-#   . window_bed_to_3bed               [one shared file for every bulk assay]
-#       in : windows.bed.gz           out: aux/windows.3col.bed.gz (mosdepth --by)
-#
-# Globals from parse_workflow: segment_bed, bedpe_files, has_breakpoints,
-# use_prebuilt_windows, do_repliseq, window_size.
-##################################################
+"""Segment BED and window BED, built in every mode.
 
-# One window BED for every bulk assay (WGS/WGS-lr/WES share the segment.bed grid).
-window_bed_path = (
-    config["window_bed"]
-    if use_prebuilt_windows
-    else config["aux_dir"] + "/windows.bed.gz"
-)
+Last update: 2026-08-27
+
+Rules:
+- build_segment_bed: arms cut at the SV extremities, blacklist-subtracted
+- [optional] repliseq_bigwig_to_bedgraph: fetch one ENCODE Repli-seq bigWig
+- [optional] repliseq_liftover: lift an hg19 Repli-seq bedGraph to the run build
+- [optional] build_window_bed: tile the segments, annotate GC, MAP, REPLI
+- [optional] annotate_window_targets: per-window capture-target fraction
+- window_bed_to_3bed: headerless 3-column BED for mosdepth --by
+- window_bed_to_3bed_chrom: the same, one chromosome, for count_read_starts_chrom
+Globals:
+- extremity_tsv: the configured SV breakpoints, empty when unset
+- segment_bed, window_bed: paths, built or configured
+- target_bed, window_target: the capture kit's targets and the per-window fraction,
+  both empty when target_bed is unset
+- build_windows, do_repliseq, window_size: build switches and the tile size
+"""
 
 
-if workflow_mode == "bulk_genotyping":
+rule build_segment_bed:
+    """Cut the arms at the SV extremities, subtract the blacklist."""
+    input:
+        region_bed=region_bed,
+        extremity_tsv=extremity_tsv,
+        blacklist_bed=blacklist_bed,
+    output:
+        segment_bed=segment_bed,
+    log:
+        log_dir + f"/build_segment_bed.{_run_id}.log",
+    benchmark:
+        bench_dir + f"/build_segment_bed.{_run_id}.tsv"
+    conda:
+        "../envs/base.yaml"
+    script:
+        "../scripts/build_segment_bed.py"
 
-    rule build_segment_bed:
-        """Segment BED: region_id (arm) + seg_id (breakpoint chunk).
 
-        Subtracts the blacklist from the raw region.bed and splits each arm at the
-        union of all datasets' BEDPE breakpoints. Always runs for bulk; with no BEDPE
-        every arm is one segment (seg_id one-per-arm).
-        """
-        input:
-            region_bed=config["region_bed"],
-            blacklist_bed=config["blacklist_bed"] or [],
-            bedpe=[file_input(f) for f in bedpe_files],
-        output:
-            segment_bed=segment_bed,
-        log:
-            config["log_dir"] + f"/build_segment_bed/build_segment_bed.{_run_id}.log",
-        benchmark:
-            config["bench_dir"] + f"/build_segment_bed/build_segment_bed.{_run_id}.tsv"
-        conda:
-            "../envs/base.yaml"
-        script:
-            "../scripts/build_segment_bed.py"
+if build_windows:
+    if do_repliseq:
 
-    # ------------------------------------------------------------------------
-    # Window BED: EITHER consumed pre-built, OR built from scratch (window_bed_path).
-    #   use_prebuilt_windows (window_bed set, no BEDPE) -> config["window_bed"] is read
-    #     directly; nothing is built here, and the Repli-seq fetch/convert is skipped
-    #     (only build_window_bed consumes it).
-    #   else -> build_window_bed builds the one shared window BED (all bulk assays),
-    #     fed by the Repli-seq bedGraphs staged just below (when do_repliseq).
-    # ------------------------------------------------------------------------
-    if not use_prebuilt_windows:
-        if do_repliseq:
-            _repli_cache = config["aux_dir"] + "/repliseq"
-            _repli_names = [f[: -len(".bigWig")] for f in REPLISEQ_BIGWIG_FILES]
-            # Repli-seq bigWigs are hg19; lift to hg38 only when the run is hg38.
-            _repli_target = config["reference_version"]
-            _repli_lift = _repli_target != "hg19"
+        rule repliseq_bigwig_to_bedgraph:
+            """Fetch an ENCODE Repli-seq bigWig (hg19) and convert to bedGraph."""
+            input:
+                bigwig=lambda wc: file_input(f"{UCSC_REPLISEQ_BASE}/{wc.name}.bigWig"),
+            output:
+                (
+                    temp(aux_dir + "/repliseq/{name}.hg19.bedGraph")
+                    if reference_version in REPLI_LIFTOVER
+                    else aux_dir + "/repliseq/{name}.hg19.bedGraph"
+                ),
+            log:
+                log_dir
+                + f"/repliseq_bigwig_to_bedgraph/repliseq_bigwig_to_bedgraph.{{name}}.{_run_id}.log",
+            benchmark:
+                bench_dir
+                + f"/repliseq_bigwig_to_bedgraph/repliseq_bigwig_to_bedgraph.{{name}}.{_run_id}.tsv"
+            wildcard_constraints:
+                name="[A-Za-z0-9]+",
+            conda:
+                "../envs/ucsc.yaml"
+            resources:
+                downloads=1,
+            shell:
+                "bigWigToBedGraph {input.bigwig} {output} 2> {log}"
 
-            rule repliseq_bigwig_to_bedgraph:
-                """Fetch an ENCODE Repli-seq bigWig (hg19) and convert to bedGraph."""
+        if reference_version in REPLI_LIFTOVER:
+
+            rule repliseq_liftover:
+                """liftOver an hg19 Repli-seq bedGraph to the run's build."""
                 input:
-                    bigwig=lambda wc: file_input(
-                        f"{UCSC_REPLISEQ_BASE}/{wc.name}.bigWig"
-                    ),
+                    bedgraph=aux_dir + "/repliseq/{name}.hg19.bedGraph",
+                    chain=file_input(LIFTOVER_CHAIN_URLS[reference_version]),
                 output:
-                    (
-                        temp(_repli_cache + "/{name}.hg19.bedGraph")
-                        if _repli_lift
-                        else _repli_cache + "/{name}.hg19.bedGraph"
+                    bedgraph=aux_dir
+                    + f"/repliseq/{{name}}.{reference_version}.bedGraph",
+                    unmapped=temp(
+                        aux_dir + f"/repliseq/{{name}}.{reference_version}.unmapped"
                     ),
                 log:
-                    config["log_dir"]
-                    + f"/repliseq_bigwig_to_bedgraph/repliseq_bigwig_to_bedgraph.{{name}}.{_run_id}.log",
+                    log_dir
+                    + f"/repliseq_liftover/repliseq_liftover.{{name}}.{_run_id}.log",
                 benchmark:
-                    config["bench_dir"]
-                    + f"/repliseq_bigwig_to_bedgraph/repliseq_bigwig_to_bedgraph.{{name}}.{_run_id}.tsv"
+                    bench_dir
+                    + f"/repliseq_liftover/repliseq_liftover.{{name}}.{_run_id}.tsv"
                 wildcard_constraints:
                     name="[A-Za-z0-9]+",
                 conda:
@@ -108,87 +91,102 @@ if workflow_mode == "bulk_genotyping":
                 resources:
                     downloads=1,
                 shell:
-                    "bigWigToBedGraph {input.bigwig} {output} 2> {log}"
+                    "liftOver {input.bedgraph} {input.chain} {output.bedgraph} "
+                    "{output.unmapped} 2> {log}"
 
-            if _repli_lift:
+    rule build_window_bed:
+        """Tile segment_bed, then annotate GC, MAP and REPLI where configured."""
+        input:
+            segment_bed=segment_bed,
+            reference=reference,
+            genome_size=genome_size,
+            mappability_bed=mappability_bed,
+            bedgraphs=(
+                [
+                    aux_dir
+                    + f"/repliseq/{f.removesuffix('.bigWig')}.{reference_version}.bedGraph"
+                    for f in REPLISEQ_BIGWIG_FILES
+                ]
+                if do_repliseq
+                else []
+            ),
+        output:
+            window_bed=window_bed,
+        log:
+            log_dir + f"/build_window_bed.{_run_id}.log",
+        benchmark:
+            bench_dir + f"/build_window_bed.{_run_id}.tsv"
+        conda:
+            "../envs/base.yaml"
+        params:
+            chroms=chr_chromosomes,
+            input_nochr=input_nochr,
+            window_size=window_size,
+        script:
+            "../scripts/build_window_bed.py"
 
-                rule repliseq_liftover:
-                    """liftOver an hg19 Repli-seq bedGraph to hg38 (cached under aux)."""
-                    input:
-                        bedgraph=_repli_cache + "/{name}.hg19.bedGraph",
-                        chain=file_input(LIFTOVER_CHAIN_URL),
-                    output:
-                        bedgraph=_repli_cache + "/{name}.hg38.bedGraph",
-                        unmapped=temp(_repli_cache + "/{name}.unmapped"),
-                    log:
-                        config["log_dir"]
-                        + f"/repliseq_liftover/repliseq_liftover.{{name}}.{_run_id}.log",
-                    benchmark:
-                        config["bench_dir"]
-                        + f"/repliseq_liftover/repliseq_liftover.{{name}}.{_run_id}.tsv"
-                    wildcard_constraints:
-                        name="[A-Za-z0-9]+",
-                    conda:
-                        "../envs/ucsc.yaml"
-                    resources:
-                        downloads=1,
-                    shell:
-                        "liftOver {input.bedgraph} {input.chain} {output.bedgraph} "
-                        "{output.unmapped} 2> {log}"
 
-        rule build_window_bed:
-            """Build the window BED in one pass -> config["aux_dir"]/windows.bed.gz.
+if target_bed:
 
-            Tiles segment_bed, assigns region_id + seg_id, then annotates GC (always),
-            MAP (when mappability_bed is set), and REPLI (when Repli-seq bedGraphs are
-            available). Optional inputs are empty ([]) when absent, and the script skips
-            the covariate whose input is empty. One grid for every bulk assay.
-            """
-            input:
-                region_bed=segment_bed,
-                reference=config["reference"],
-                genome_size=config["genome_size"],
-                mappability_bed=config.get("mappability_bed") or [],
-                bedgraphs=(
-                    [
-                        _repli_cache + f"/{n}.{_repli_target}.bedGraph"
-                        for n in _repli_names
-                    ]
-                    if do_repliseq
-                    else []
-                ),
-            output:
-                window_bed=config["aux_dir"] + "/windows.bed.gz",
-                qc_pdf=report(
-                    config["qc_dir"] + "/build_window_bed.pdf",
-                    category="QC plots",
-                    subcategory="window build",
-                ),
-            log:
-                config["log_dir"] + f"/build_window_bed/build_window_bed.{_run_id}.log",
-            benchmark:
-                config["bench_dir"]
-                + f"/build_window_bed/build_window_bed.{_run_id}.tsv"
-            conda:
-                "../envs/base.yaml"
-            params:
-                reference_version=config["reference_version"],
-                chromosomes=config["chromosomes"],
-                window_size=window_size,
-            script:
-                "../scripts/build_window_bed.py"
+    rule annotate_window_targets:
+        """Per-window capture-target bp fraction, the on/off-target split."""
+        input:
+            window_bed=window_bed,
+            target_bed=target_bed,
+        output:
+            window_target=window_target,
+        log:
+            log_dir + f"/annotate_window_targets.{_run_id}.log",
+        benchmark:
+            bench_dir + f"/annotate_window_targets.{_run_id}.tsv"
+        conda:
+            "../envs/base.yaml"
+        params:
+            chroms=chr_chromosomes,
+        script:
+            "../scripts/annotate_window_targets.py"
 
 
 rule window_bed_to_3bed:
-    """Headerless 3-column BED (#CHR/START/END) for mosdepth --by; one grid, all bulk assays."""
+    """Headerless 3-column BED (#CHR/START/END) for mosdepth --by; one bin set, all bulk assays."""
     input:
-        window_bed=window_bed_path,
+        window_bed=window_bed,
     output:
-        mosdepth_bed=temp(config["aux_dir"] + "/windows.3col.bed.gz"),
+        mosdepth_bed=temp(aux_dir + "/windows.3col.bed.gz"),
     log:
-        config["log_dir"] + f"/window_bed_to_3bed/window_bed_to_3bed.{_run_id}.log",
+        log_dir + f"/window_bed_to_3bed.{_run_id}.log",
     benchmark:
-        config["bench_dir"] + f"/window_bed_to_3bed/window_bed_to_3bed.{_run_id}.tsv"
+        bench_dir + f"/window_bed_to_3bed.{_run_id}.tsv"
+    params:
+        strip_chr_prefix="sed 's/^chr//' | " if input_nochr else "",
     shell:
-        "gzip -dc {input.window_bed} | tail -n +2 | cut -f1-3 | gzip -c "
-        "> {output.mosdepth_bed} 2> {log}"
+        "gzip -dc {input.window_bed} | tail -n +2 | cut -f1-3 | {params.strip_chr_prefix}"
+        "gzip -c > {output.mosdepth_bed} 2> {log}"
+
+
+rule window_bed_to_3bed_chrom:
+    """One chromosome of the 3-column window BED, the -a side of count_read_starts_chrom.
+
+    Always chr-prefixed, unlike window_bed_to_3bed: the counting rule writes its read
+    records with this spelling hard-coded, so the alignment's own naming never reaches
+    the join. Both spellings are accepted on input, matching read_window_bed.
+    """
+    input:
+        window_bed=window_bed,
+    output:
+        chrom_bed=temp(aux_dir + "/windows.3col.chr{chrname}.bed.gz"),
+    log:
+        log_dir + f"/window_bed_to_3bed/window_bed_to_3bed.chr{{chrname}}.{_run_id}.log",
+    benchmark:
+        bench_dir
+        + f"/window_bed_to_3bed/window_bed_to_3bed.chr{{chrname}}.{_run_id}.tsv"
+    params:
+        chrom=lambda wc: wc.chrname,
+    shell:
+        r"""
+        set -euo pipefail
+        gzip -dc {input.window_bed} | tail -n +2 \
+        | awk -v OFS='\t' -v C="{params.chrom}" \
+              '$1 == C || $1 == "chr"C {{print "chr"C, $2, $3}}' \
+        | gzip -c > {output.chrom_bed} 2> {log}
+        """

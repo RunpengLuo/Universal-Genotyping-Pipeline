@@ -1,3 +1,18 @@
+"""Entry point: parse the config and sample sheet, then include the rule files.
+
+Last update: 2026-08-11
+
+Rules:
+- all: requests final_targets, assembled by parse_workflow for this mode
+Includes:
+- common.smk: input helpers, wrapping a remote path in storage()
+- build_windows.smk: the segment BED and the window BED
+- genotype_snps.smk, phase_snps.smk: call and phase the het SNPs
+- pileup_snps.smk, phase_and_concat.smk: per-replicate counts, then one matrix
+- count_reads.smk: mosdepth and bias correction, bulk only
+- combine_counts.smk: bin into bbs, the output unit
+"""
+
 import os
 import sys
 from datetime import datetime
@@ -14,23 +29,22 @@ sys.path.insert(0, os.path.join(workflow.basedir, "scripts", "script_utils"))
 sys.path.insert(0, os.path.join(workflow.basedir, "scripts", "plot"))
 from const import (
     BULK_ASSAYS,
+    BULK_LR_ASSAYS,
     NONBULK_ASSAYS,
+    PSEUDOBULK_ASSAYS,
     SPATIAL_ASSAYS,
-    LONGREAD_ASSAYS,
     ALLOWED_ASSAY_TYPES,
     ASSAY_TYPE2MODALITY,
     RANGER_LAYOUT,
     REPLISEQ_BIGWIG_FILES,
     UCSC_REPLISEQ_BASE,
-    LIFTOVER_CHAIN_URL,
-    is_url,
+    REPLI_LIFTOVER,
+    LIFTOVER_CHAIN_URLS,
 )
 from parse_workflow_args import parse_workflow
+from utils import logging_snakemake, is_url
 
 _run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-# Skip validation when no real config is provided (e.g., --conda-create-envs-only).
-# Detected by checking that sample_file points to an existing file.
 _has_config = (
     "workflow_mode" in config
     and config.get("sample_file") is not None
@@ -38,56 +52,97 @@ _has_config = (
 )
 
 if _has_config:
-    print("=== Configuration Parameters ===")
+    logging_snakemake("=== Configuration Parameters ===")
     for key, val in config.items():
-        print(f"  {key}: {val}")
-    print()
+        logging_snakemake(f"  {key}: {val}")
+    logging_snakemake("")
 
-    # config + sample file -> every name the rules read; see scripts/parse_workflow_args.py
     _wf = parse_workflow(config)
+
+    # === run ===
     workflow_mode = _wf["workflow_mode"]
     sample_id = _wf["sample_id"]
-    remote_stream = _wf["remote_stream"]
+    remote_mode = _wf["remote_mode"]
+    reference_version = _wf["reference_version"]
+    species = _wf["species"]
+
+    # === chromosomes ===
+    nochr_chromosomes = _wf["nochr_chromosomes"]
+    chr_chromosomes = _wf["chr_chromosomes"]
+    input_nochr = _wf["input_nochr"]
+
+    def input_chrom(chrname):
+        """Region string for a tool that reads the alignment."""
+        return str(chrname) if input_nochr else f"chr{chrname}"
+
+    # === dirs ===
+    snp_dir = _wf["snp_dir"]
+    phase_dir = _wf["phase_dir"]
+    pileup_dir = _wf["pileup_dir"]
+    allele_dir = _wf["allele_dir"]
+    bb_dir = _wf["bb_dir"]
+    qc_dir = _wf["qc_dir"]
+    log_dir = _wf["log_dir"]
+    aux_dir = _wf["aux_dir"]
+    bench_dir = _wf["bench_dir"]
+
+    # === datasets ===
     assay_types = _wf["assay_types"]
     modalities = _wf["modalities"]
-    msr_list = _wf["msr_list"]
-    # get_data[(assay_type, dataset_id)] -> the record's files map (docs/sample_sheet.md)
     get_data = _wf["get_data"]
     modality2files = _wf["modality2files"]
     assay2dataset_ids = _wf["assay2dataset_ids"]
     assay2sample_types = _wf["assay2sample_types"]
-    assay2base_reps = _wf["assay2base_reps"]
-    phaser = _wf["phaser"]
+    assay2base_dataset_ids = _wf["assay2base_dataset_ids"]
+
+    # === reference inputs ===
+    reference = _wf["reference"]
+    genome_size = _wf["genome_size"]
+    gtf_file = _wf["gtf_file"]
+    region_bed = _wf["region_bed"]
+    blacklist_bed = _wf["blacklist_bed"]
+    gene_blacklist_file = _wf["gene_blacklist_file"]
+    mappability_bed = _wf["mappability_bed"]
+    snp_panel = _wf["snp_panel"]
+    tumor_genotyping_mode = _wf["tumor_genotyping_mode"]
+    panel_allele_only = _wf["panel_allele_only"]
+    bb_file = _wf["bb_file"]
+
+    # === segment and window BEDs ===
+    extremity_tsv = _wf["extremity_tsv"]
+    segment_bed = _wf["segment_bed"]
+    window_bed = _wf["window_bed"]
+    window_size = _wf["window_size"]
+    build_windows = _wf["build_windows"]
+    do_repliseq = _wf["do_repliseq"]
+    target_bed = _wf["target_bed"]
+    window_target = _wf["window_target"]
+
+    # === genotyping and phasing ===
     run_genotyping = _wf["run_genotyping"]
+    genotype_files = _wf["genotype_files"]
+    genotype_ignore_rg = _wf["genotype_ignore_rg"]
     run_phasing = _wf["run_phasing"]
+    phaser = _wf["phaser"]
+    phase_files = _wf["phase_files"]
     het_snp_vcf = _wf["het_snp_vcf"]
     phased_snp_vcf = _wf["phased_snp_vcf"]
-    require_genetic_map = _wf["require_genetic_map"]
-    segment_bed = _wf["segment_bed"]
-    bedpe_files = _wf["bedpe_files"]
-    has_breakpoints = _wf["has_breakpoints"]
-    use_prebuilt_windows = _wf["use_prebuilt_windows"]
-    do_repliseq = _wf["do_repliseq"]
-    window_size = _wf["window_size"]
-    genotype_files = _wf["genotype_files"]
-    phase_files = _wf["phase_files"]
+    gmap_file = _wf["gmap_file"]
     get_genetic_map = _wf["get_genetic_map"]
     get_phasing_panel = _wf["get_phasing_panel"]
+
+    # === binning and targets ===
+    msr_list = _wf["msr_list"]
     final_targets = _wf["final_targets"]
 
-    os.makedirs(config["qc_dir"], exist_ok=True)
+    os.makedirs(qc_dir, exist_ok=True)
 
-    # Global wildcard grammar: the token universe for wildcards shared across rules.
-    # Rules may narrow a wildcard further (e.g. non-bulk rules restrict assay_type).
-    # Pinning dataset_id/chrname stops a greedy wildcard from swallowing an adjacent
-    # path segment (e.g. mosdepth {dataset_id}.chr{chrname} vs {dataset_id}).
     wildcard_constraints:
         assay_type="|".join(sorted(ALLOWED_ASSAY_TYPES, key=len, reverse=True)),
         dataset_id=r"[^./]+",
         chrname=r"[0-9]+|[XYM]",
         modality="|".join(sorted(set(ASSAY_TYPE2MODALITY.values()))),
 
-    # entrypoint
     include: "rules/common.smk"
     include: "rules/build_windows.smk"
     include: "rules/genotype_snps.smk"
@@ -97,7 +152,6 @@ if _has_config:
     include: "rules/phase_and_concat.smk"
     include: "rules/count_reads.smk"
     include: "rules/combine_counts.smk"
-    include: "rules/quality_control.smk"
 
     report: "report/workflow.rst"
 
@@ -107,9 +161,6 @@ if _has_config:
             final_targets,
 
 else:
-
-    # No config: one target per conda env so a plain `snakemake --use-conda` run
-    # (or `--conda-create-envs-only`) pre-builds them all.
     _ENV_YAMLS = [
         "base",
         "bcftools",
@@ -118,6 +169,7 @@ else:
         "longphase",
         "cellsnp",
         "mosdepth",
+        "bedtools",
         "ucsc",
     ]
 

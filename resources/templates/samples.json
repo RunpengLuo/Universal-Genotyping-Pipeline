@@ -24,8 +24,7 @@
       "reference_version": "GRCh38",
       "files": {
         "alignment": "https://example.org/HT001/tumor_p23.bam",
-        "alignment_index": "https://example.org/HT001/tumor_p23.bam.bai",
-        "breakpoint_bedpe": "/path/to/HT001/tumor_p23.sv.bedpe"
+        "alignment_index": "https://example.org/HT001/tumor_p23.bam.bai"
       },
       "meta": {
         "note": "bam is fetched on demand and deleted after the last job that needs it"
@@ -84,6 +83,7 @@
       "dataset_id": "N1",
       "assay_type": "bulkWGS",
       "sample_type": "normal",
+      "reference_version": "GRCh38",
       "files": {
         "alignment": "/path/to/HT003/normal.bam",
         "alignment_index": "/path/to/HT003/normal.bam.bai"
@@ -95,6 +95,7 @@
       "rdr_base_dataset_id": "N1",
       "assay_type": "bulkWES",
       "sample_type": "tumor",
+      "reference_version": "GRCh38",
       "files": {
         "alignment": "/path/to/HT003/tumor.cram",
         "alignment_index": "/path/to/HT003/tumor.cram.crai"

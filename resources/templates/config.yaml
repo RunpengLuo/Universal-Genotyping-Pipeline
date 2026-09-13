@@ -21,6 +21,7 @@ assay_types: ["bulkWGS"]
 ##################################################
 # Input
 sample_id: PATIENT_ID
+dataset_ids: [] # run all if leave []
 sample_file: /path/to/samples.json
 chromosomes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
 
@@ -30,11 +31,13 @@ bb_file: null
 
 ##################################################
 # Reference
+species: human
 reference_version: "hg38"
 reference: /path/to/reference.fa
 gtf_file: /path/to/genes.gtf.gz
 genome_size: /path/to/genome.sizes
 region_bed: /path/to/regions.bed
+extremity_tsv: null
 
 # Blacklist excluded regions/genes
 blacklist_bed: null
@@ -44,11 +47,16 @@ gene_blacklist_file: null
 # Build windows (bulk)
 window_bed: null
 mappability_bed: null
+# bulkWES only: the capture kit's target intervals, splitting the windows into
+# on- and off-target. resources/scripts/fetch_capture_targets.sh fetches one.
+target_bed: null
 
 ##################################################
 # Genotyping
 snp_panel: /path/to/snps.vcf.gz
-snp_targets: /path/to/target_positions
+genotype_dataset_ids: []
+# false: the panel gives positions only, ALT is called from the reads
+panel_allele_only: true
 
 ##################################################
 # Phasing
@@ -67,7 +75,9 @@ gmap_path: "/path/to/Eagle_v2.4.1/tables/genetic_map_hg38_withX.txt.gz"
 ##################################################
 # Segmentation (adaptive binning + RDR/BAF)
 params_combine_counts:
-  min_snp_reads: [500, 1000]
+  detect_loh_tumor_cell_line: false
+  min_snp_reads: [100, 500, 1000, 2000, 3000, 5000, 7500, 10000]
+  min_total_reads: 5000
 
 ##################################################
 threads:

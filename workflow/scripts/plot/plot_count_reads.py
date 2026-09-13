@@ -1,4 +1,11 @@
-"""Read-depth bias-correction QC plots (rd_correct / count_reads step)."""
+"""Read-depth bias-correction QC for rd_correct.
+
+Last update: 2026-08-06
+
+Functions:
+- plot_rd_1d_scatter: genome-wide depth before and after correction
+- plot_rd_2d_kde: depth against GC, mappability and replication timing
+"""
 
 import logging
 
@@ -11,9 +18,15 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from cnplot import adaptive_dot_size, plot_scatter_1d, read_bed
+from cnplot import adaptive_dot_size, plot_scatter_1d
 
-from plot_utils import _get_axis, _shade, _val_full
+from plot_utils import (
+    _get_axis,
+    _load_shading,
+    _observation_labels,
+    _shade,
+    _val_full,
+)
 
 
 def _plot_cov_panel(
@@ -85,7 +98,9 @@ def plot_rd_2d_kde(
     gc,
     dp_before,
     dp_after,
-    labels,
+    dataset_ids,
+    assay_types,
+    sample_types,
     pdf,
     gc_rmse=None,
     mappability=None,
@@ -94,19 +109,21 @@ def plot_rd_2d_kde(
 ):
     """Two-page PDF: before/after correction KDE density plots.
 
-    Each page has up to 3 rows (GC, MAP, RT) x nsamples columns.
+    Each page has up to 3 rows (GC, MAP, RT) x nsamples columns. Column labels are
+    composed by ``_observation_labels`` from the three identifying columns.
 
     Parameters
     ----------
     gc_rmse : list of float or None
         Per-sample RMSE from the GC fit. Shown on the "Before" panel only.
     mappability : np.ndarray or None
-        Per-window mappability values. If provided, a MAP row is added.
+        Per-bin mappability values. If provided, a MAP row is added.
     repliseq : np.ndarray or None
-        Per-window replication timing values. If provided, an RT row is added.
+        Per-bin replication timing values. If provided, an RT row is added.
     title_prefix : str
         Optional prefix for page titles (e.g. ``"target — "``).
     """
+    labels = _observation_labels(dataset_ids, assay_types, sample_types)
     nsamples = len(labels)
     panel_w = max(5, 5 * nsamples)
 
@@ -160,10 +177,12 @@ def plot_rd_1d_scatter(
     pos_df,
     dp_before,
     dp_after,
-    labels,
+    dataset_ids,
+    assay_types,
+    sample_types,
     genome_size,
     pdf,
-    unit="window",
+    feature_label="bin",
     val_type="RD",
     ylim_before=None,
     ylim_after=None,
@@ -173,10 +192,14 @@ def plot_rd_1d_scatter(
     region_bed=None,
     blacklist_bed=None,
 ):
-    """One page per sample: top = before correction, bottom = after correction."""
+    """One page per sample: top = before correction, bottom = after correction.
+
+    Page titles are composed by ``_observation_labels`` from the three identifying
+    columns.
+    """
+    labels = _observation_labels(dataset_ids, assay_types, sample_types)
     axis = _get_axis(genome_size, pos_df["#CHR"])
-    region_df = read_bed(region_bed) if region_bed else None
-    blacklist_df = read_bed(blacklist_bed) if blacklist_bed else None
+    region_df, blacklist_df = _load_shading(region_bed, blacklist_bed)
     s_plot = adaptive_dot_size(len(pos_df), s_base=s)
     alphas = np.full(len(pos_df), alpha)
 
@@ -205,7 +228,7 @@ def plot_rd_1d_scatter(
             )
             ax.grid(axis="y", alpha=0.2)
         fig.suptitle(str(label), fontsize=12, y=1.0, fontweight="bold")
-        fig.supxlabel(f"Genome positions (MB) - {unit}")
+        fig.supxlabel(f"Genome positions (MB) - {feature_label}")
         fig.tight_layout()
         pdf.savefig(fig, dpi=dpi)
         plt.close(fig)

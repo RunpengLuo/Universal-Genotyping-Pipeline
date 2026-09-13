@@ -1,46 +1,37 @@
-import os
+"""Parse Eagle/SHAPEIT genetic maps into one chr-prefixed table.
+
+Last update: 2026-08-11
+
+Inputs:
+- gmap_path: eagle single map, or shapeit per-chromosome maps
+Outputs:
+- phase_dir/genetic_map.tsv.gz: #CHR POS cM, chr-prefixed and sorted
+"""
+
 import logging
 
 snakemake_handle = snakemake
 
-t = int(getattr(snakemake_handle, "threads", 1))
-os.environ["OMP_NUM_THREADS"] = str(t)
-os.environ["OPENBLAS_NUM_THREADS"] = str(t)
-os.environ["MKL_NUM_THREADS"] = str(t)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(t)
-os.environ["NUMEXPR_NUM_THREADS"] = str(t)
+from utils import set_omp_threads, setup_logging, sort_df_chr, SPECIES2SEXCHROM
+
+set_omp_threads(snakemake_handle)
+setup_logging(snakemake_handle.log[0])
 
 import pandas as pd
 
-from utils import sort_df_chr, REFVER2SEXCHROM
-
-##################################################
-"""
-Parse genetic map files from Shapeit or Eagle resources.
-chr-prefix will always be added to comply with other tools.
-"""
-
-log_file = snakemake_handle.log[0]
-logging.basicConfig(
-    filename=log_file,
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-)
 
 # inputs
 gmap_files = list(snakemake_handle.input["gmap_files"])
 
 # parameters
-chrnames = list(snakemake_handle.params["chrnames"])
+chroms = list(snakemake_handle.params["chroms"])
 phaser = snakemake_handle.params["phaser"]
-reference_version = snakemake_handle.params["reference_version"]
+species = snakemake_handle.params["species"]
 
 # outputs
-gmap_tsv = snakemake_handle.output["gmap_tsv"]
+out_gmap_file = snakemake_handle.output["gmap_file"]
 
-logging.info(
-    f"parse genetic map files, phaser={phaser}, reference_version={reference_version}"
-)
+logging.info(f"parse genetic map files, phaser={phaser}, species={species}")
 
 required_columns = ["#CHR", "POS", "cM"]
 if phaser == "eagle":
@@ -62,57 +53,40 @@ if phaser == "eagle":
         ignore_index=True,
     )
     missing = [c for c in required_columns if c not in genetic_map.columns]
-    assert not missing, (
-        f"eagle gmap missing expected columns {missing}; "
-        f"got {list(genetic_map.columns)}"
-    )
+    assert not missing, f"eagle gmap, missing column(s) {missing}"
 
     # Strip any 'chr' prefix, filter to requested chroms (as bare strings), re-add.
-    wanted = {str(c) for c in chrnames}
+    wanted = {str(c) for c in chroms}
     genetic_map["#CHR"] = (
         genetic_map["#CHR"].astype(str).str.replace(r"^chr", "", regex=True)
     )
-    # Relabel numeric sex chroms to letters: via REFVER2SEXCHROM for a known
-    # reference, else the "largest non-autosome int is X" heuristic. Labels are
-    # strings, so compare by int (key=int).
     labels = set(genetic_map["#CHR"])
-    sexmap = REFVER2SEXCHROM.get(reference_version)
-    if sexmap is not None:
+    if not wanted <= labels:
+        sexmap = SPECIES2SEXCHROM.get(species)
+        if sexmap is None:
+            raise ValueError(
+                f"eagle gmap lacks requested chromosome(s) {sorted(wanted - labels)} "
+                f"and species={species!r} has no sex-chromosome numbering to relabel "
+                f"by; known species: {sorted(SPECIES2SEXCHROM)}"
+            )
         for sex_name, sex_num in sexmap.items():
             if sex_name not in wanted or sex_name in labels:
                 continue
             if str(sex_num) in labels:
                 genetic_map.loc[genetic_map["#CHR"] == str(sex_num), "#CHR"] = sex_name
+                labels = set(genetic_map["#CHR"])
                 logging.info(
                     f"eagle: relabeled chromosome {sex_num} as {sex_name} "
-                    f"(reference_version={reference_version})"
+                    f"(species={species})"
                 )
-            else:
-                logging.warning(
-                    f"eagle: {sex_name} requested but chromosome {sex_num} absent "
-                    f"in gmap (reference_version={reference_version})"
-                )
-    elif "X" in wanted and "X" not in labels:
-        autosomes = {c for c in wanted if c.isdigit()}
-        cand = [c for c in labels if c.isdigit() and c not in autosomes]
-        if cand:
-            x_label = max(cand, key=int)
-            genetic_map.loc[genetic_map["#CHR"] == x_label, "#CHR"] = "X"
-            logging.info(
-                f"eagle: relabeled largest int chromosome '{x_label}' as 'X' "
-                f"(heuristic; reference_version={reference_version!r})"
+        missing_chroms = sorted(wanted - labels)
+        if missing_chroms:
+            raise ValueError(
+                f"eagle gmap has no rows for requested chromosome(s) {missing_chroms}; "
+                f"map labels are {sorted(labels)} (species={species}). Supply a genetic "
+                "map that covers them, or relabel it to match."
             )
-        else:
-            logging.warning(
-                f"eagle: X requested but no X-like chromosome found in gmap "
-                f"(reference_version={reference_version!r})"
-            )
-
     genetic_map = genetic_map[genetic_map["#CHR"].isin(wanted)].reset_index(drop=True)
-    assert len(genetic_map) > 0, (
-        f"no eagle gmap rows match requested chromosomes {sorted(wanted)}; "
-        f"map chromosome labels were {sorted(labels)}"
-    )
     genetic_map["#CHR"] = "chr" + genetic_map["#CHR"]
     genetic_map = sort_df_chr(genetic_map, ch="#CHR", pos="POS")
     logging.info(
@@ -120,20 +94,22 @@ if phaser == "eagle":
         f"chroms={sorted(genetic_map['#CHR'].unique().tolist())}, "
         f"cM range=[{genetic_map['cM'].min():.4f}, {genetic_map['cM'].max():.4f}]"
     )
-    genetic_map[required_columns].to_csv(gmap_tsv, sep="\t", header=True, index=False)
+    genetic_map[required_columns].to_csv(
+        out_gmap_file, sep="\t", header=True, index=False
+    )
 
 if phaser == "shapeit":
     genetic_maps = []
-    for chrname, gmap_file in zip(chrnames, gmap_files):
+    for chrom, gmap_file in zip(chroms, gmap_files):
         genetic_map = pd.read_csv(
             gmap_file,
             sep="\t",
             comment="#",
         )
         assert "pos" in genetic_map.columns and "cM" in genetic_map.columns, (
-            "gmap.gz file is invalid"
+            "gmap file, missing `pos` or `cM` column"
         )
-        genetic_map["#CHR"] = f"chr{chrname}"
+        genetic_map["#CHR"] = f"chr{chrom}"
         genetic_map["POS"] = genetic_map["pos"]
 
         genetic_maps.append(genetic_map[["#CHR", "POS", "cM"]].reset_index(drop=True))
@@ -145,4 +121,6 @@ if phaser == "shapeit":
         f"chroms={sorted(genetic_map['#CHR'].unique().tolist())}, "
         f"cM range=[{genetic_map['cM'].min():.4f}, {genetic_map['cM'].max():.4f}]"
     )
-    genetic_map[required_columns].to_csv(gmap_tsv, sep="\t", header=True, index=False)
+    genetic_map[required_columns].to_csv(
+        out_gmap_file, sep="\t", header=True, index=False
+    )

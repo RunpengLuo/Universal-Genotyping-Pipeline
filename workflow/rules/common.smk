@@ -1,3 +1,16 @@
+"""Input helpers shared by every rule file.
+
+Last update: 2026-08-11
+
+Functions:
+- file_input: wrap a sample-file path in storage() when remote
+- alignment_input, alignment_index_input: the .bam/.cram pair of one record
+- bam_stream_input, bam_stream_index_input: the remote_mode stream variants
+- bam_stream_arg: the htslib url##idx##idxurl argument for longphase
+- download_slots: the downloads resource that throttles storage() retrieval
+"""
+
+
 def file_input(paths):
     """Rule input for sample-file path(s); accepts one path or a list.
 
@@ -36,7 +49,7 @@ def bam_stream_input(files):
         return [x for x in out if x != []]
     aln = files["alignment"]
     if is_url(aln):
-        return [] if remote_stream else storage(aln)
+        return [] if remote_mode == "stream" else storage(aln)
     return str(aln)
 
 
@@ -47,7 +60,7 @@ def bam_stream_index_input(files):
         return [x for x in out if x != []]
     idx = files["alignment_index"]
     if is_url(idx):
-        return [] if remote_stream else storage(idx)
+        return [] if remote_mode == "stream" else storage(idx)
     return str(idx)
 
 
@@ -60,7 +73,7 @@ def bam_stream_arg(files):
     if isinstance(files, (list, tuple)):
         return " ".join(filter(None, (bam_stream_arg(f) for f in files)))
     aln = files["alignment"]
-    if remote_stream and is_url(aln):
+    if remote_mode == "stream" and is_url(aln):
         return f"{aln}##idx##{files['alignment_index']}"
     return ""
 
@@ -79,12 +92,12 @@ def download_slots(files):
 
 
 def spatial_layout(assay_type, dataset_ids):
-    """Space Ranger `spatial/` members of each rep, for staging before squidpy.
+    """Space Ranger `spatial/` members of each dataset_id, for staging before squidpy.
 
     squidpy.read.visium() takes a directory, so process_rna_anndata stages each
-    rep's files under <tmp>/spatial/ using their canonical Space Ranger names
+    dataset_id's files under <tmp>/spatial/ using their canonical Space Ranger names
     (RANGER_LAYOUT, const.py). Returns (names, paths): names[i] lists the spatial/
-    filenames of rep i, and paths is those files flattened in the same order, so a
+    filenames of dataset_id i, and paths is those files flattened in the same order, so a
     rule can pass paths as an input list and names as a param and still pair them up.
     """
     names, paths = [], []

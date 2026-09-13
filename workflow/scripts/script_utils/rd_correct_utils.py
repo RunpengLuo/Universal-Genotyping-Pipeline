@@ -1,13 +1,26 @@
-"""Utility functions for per-window read depth bias correction.
+"""Read-depth bias correction and the depth statistics around it.
 
-Contains HMMcopy-style LOWESS correction.
+Last update: 2026-08-08
+
+Functions:
+- correct_readcount_lowess: HMMcopy-style LOWESS correction on GC, MAP, REPLI
+- correct_readcount_quadreg: median quadratic-regression correction, the default
+- correct_readcount_by_target_sites: run either corrector on- and off-target separately
+- normalize_library_by_target: one library-size factor per (dataset, capture group)
+- compute_gc_rd_stats: GC-vs-depth correlation and spread, before and after
+- compute_depth_statistics: per-dataset depth summary written to depth_statistics.tsv
 """
 
 import logging
 
 import numpy as np
+import pandas as pd
+import statsmodels.formula.api as smf
 from scipy.interpolate import interp1d
+from scipy.stats import pearsonr, spearmanr
 from statsmodels.nonparametric.smoothers_lowess import lowess
+
+from utils import sort_chroms
 
 
 def correct_readcount_lowess(
@@ -30,13 +43,13 @@ def correct_readcount_lowess(
     Parameters
     ----------
     reads : np.ndarray
-        Raw read counts per window (1-D).
+        Raw read counts per fixed bin (1-D).
     gc : np.ndarray
-        Per-window GC fraction in [0, 1].
+        Per-bin GC fraction in [0, 1].
     mappability : np.ndarray or None
-        Per-window mappability values in [0, 1]. If None, stage 2 is skipped.
+        Per-bin mappability values in [0, 1]. If None, stage 2 is skipped.
     repliseq : np.ndarray or None
-        Per-window consensus replication timing score. If None, stage 3 is
+        Per-bin consensus replication timing score. If None, stage 3 is
         skipped.  Higher values = earlier replication = higher expected
         coverage in cycling cells.
     samplesize : int
@@ -59,7 +72,7 @@ def correct_readcount_lowess(
     Returns
     -------
     np.ndarray
-        Corrected read counts (same length as *reads*).  NaN where
+        Corrected read counts (same length as *reads*). Zero depth stays 0.0; NaN where
         correction is not possible.
     float
         RMSE from the GC LOWESS fit (root mean squared error between raw
@@ -87,7 +100,12 @@ def correct_readcount_lowess(
         return uy, ux
 
     def _fit_lowess_interp(y, x, grid):
-        """Tight LOWESS -> grid smooth -> final interpolator."""
+        """Tight LOWESS -> grid smooth -> final interpolator, no extrapolation.
+
+        Neither stage predicts outside the fitted covariate range: R's ``predict.loess``
+        returns NA there, and the grid spans the whole covariate domain, so extrapolating
+        would smooth a fabricated tail back into the data edge.
+        """
         y, x = _dedup_input(y, x)
         if len(x) < 2:
             return None
@@ -100,9 +118,18 @@ def correct_readcount_lowess(
             s1[:, 1],
             kind="linear",
             bounds_error=False,
-            fill_value="extrapolate",
+            fill_value=np.nan,
         )
-        s2 = lowess(s1_fn(grid), grid, frac=lowess_frac_smooth, return_sorted=True)
+        on_grid = s1_fn(grid)
+        in_support = np.isfinite(on_grid)
+        if in_support.sum() < 2:
+            return None
+        s2 = lowess(
+            on_grid[in_support],
+            grid[in_support],
+            frac=lowess_frac_smooth,
+            return_sorted=True,
+        )
         s2 = _dedup_sorted(s2)
         if len(s2) < 2:
             return None
@@ -111,7 +138,7 @@ def correct_readcount_lowess(
             s2[:, 1],
             kind="linear",
             bounds_error=False,
-            fill_value="extrapolate",
+            fill_value=np.nan,
         )
 
     def _apply_stage(
@@ -159,15 +186,11 @@ def correct_readcount_lowess(
         )
 
         with np.errstate(invalid="ignore", divide="ignore"):
-            corrected = np.where(
-                (predicted > 0) & (prev > 0),
-                prev / predicted,
-                np.nan,
-            )
-        valid_corr = (predicted > 0) & (prev > 0)
-        if valid_corr.any():
-            scale = np.median(prev[valid_corr]) / np.median(corrected[valid_corr])
-            corrected[valid_corr] *= scale
+            corrected = np.where(predicted > 0, prev / predicted, np.nan)
+        positive = (predicted > 0) & (prev > 0)
+        if positive.any():
+            scale = np.median(prev[positive]) / np.median(corrected[positive])
+            corrected[np.isfinite(corrected)] *= scale
 
         n_valid = int(valid.sum())
         n_ideal = ideal_idx.size
@@ -245,13 +268,11 @@ def correct_readcount_quadreg(
     Returns
     -------
     np.ndarray
-        Corrected read counts. NaN where correction is not possible.
+        Corrected read counts, 0.0 where depth is 0. NaN where the correction is
+        undefined; the mappability floor is applied by the caller.
     float
         RMSE from the GC fit.
     """
-    import pandas as pd
-    import statsmodels.formula.api as smf
-
     reads = reads.astype(np.float64)
     n = len(reads)
 
@@ -302,17 +323,180 @@ def correct_readcount_quadreg(
     den = np.clip(np.nan_to_num(predicted, nan=eps), eps, None)
 
     with np.errstate(invalid="ignore", divide="ignore"):
-        corrected = np.where(reads > 0, reads / den, np.nan)
+        corrected = reads / den
 
+    positive = np.isfinite(corrected) & (reads > 0)
     if mappability is not None:
-        corrected[mappability < min_mappability] = np.nan
-
-    valid_corr = np.isfinite(corrected) & (reads > 0)
-    if valid_corr.any():
-        scale = np.median(reads[valid_corr]) / np.median(corrected[valid_corr])
-        corrected[valid_corr] *= scale
+        positive &= mappability >= min_mappability
+    if positive.any():
+        scale = np.median(reads[positive]) / np.median(corrected[positive])
+        corrected[np.isfinite(corrected)] *= scale
 
     n_nan = int(np.isnan(corrected).sum())
     logging.info(f"    MEDIAN  {n_nan:>8d}/{n} ({n_nan / max(n, 1) * 100:5.1f}%) NaN")
 
     return corrected.astype(np.float32), rmse
+
+
+def correct_readcount_by_target_sites(correct_fn, reads, gc, target_sites, **kwargs):
+    """Fit and apply *correct_fn* on- and off-target separately.
+
+    Capture makes depth bimodal, and exons are GC-rich, so a pooled fit reads the capture
+    split as a GC effect and divides it out. It does so asymmetrically between tumor and
+    normal, which have different sets of non-zero windows to fit on. Fitting the two apart
+    removes the confounding; each keeps its own depth scale, since every corrector
+    rescales to the median of the bins it fit.
+
+    Args:
+        correct_fn: ``correct_readcount_lowess`` or ``correct_readcount_quadreg``.
+        reads: Raw per-window depth, 1-D.
+        gc: Per-window GC fraction, aligned to *reads*.
+        target_sites: Bool per window, True where the window overlaps a capture target.
+        **kwargs: Passed through; any array-valued entry the length of *reads* is sliced
+            to the windows being fit, everything else is passed whole.
+
+    Returns:
+        ``(corrected, rmse)``: the corrected depth over every window, and the
+        window-count-weighted mean of the two GC RMSEs.
+    """
+    out = np.full(len(reads), np.nan, dtype=np.float32)
+    rmses, weights = [], []
+    for label, keep in (("off-target", ~target_sites), ("on-target", target_sites)):
+        sub = {
+            k: (v[keep] if isinstance(v, np.ndarray) and v.shape == reads.shape else v)
+            for k, v in kwargs.items()
+        }
+        logging.info(f"    {label}: {int(keep.sum())} windows")
+        out[keep], rmse = correct_fn(reads[keep], gc[keep], **sub)
+        rmses.append(rmse)
+        weights.append(int(keep.sum()))
+    return out, float(np.average(rmses, weights=weights))
+
+
+def normalize_library_by_target(mat, target_sites, bin_lengths):
+    """Rescale every dataset to a common depth level inside each capture group.
+
+    Hybrid capture gives a library two depth scales, on- and off-target, and their ratio
+    is that library's own capture efficiency. A single library-size factor per dataset
+    cannot centre both groups at once, so whichever one it centres, the other sits off by
+    the efficiency difference; a bb's tumor/normal ratio then slides with its own
+    on-target composition. Writing the expected depth of window ``w`` in dataset ``s`` as
+    ``alpha_s * kappa_s(g) * c(w) * C_s(w)`` - the dataset's depth scale, its capture
+    efficiency in group ``g``, the window-intrinsic efficiency, the copy number -
+    rescaling each group to the across-dataset mean of that group divides
+    ``alpha_s * kappa_s(g)`` out of every pairwise ratio, leaving ``c(w)`` to cancel as it
+    already does. Total sequenced bases does not stand in for ``alpha_s * kappa_s(g)``: it
+    says how much was sequenced, not how it split between captured and uncaptured
+    sequence, which is the whole quantity at issue.
+
+    What the rescale cannot separate is copy number from capture density: the estimated
+    level of group ``g`` carries the genome-average copy number seen through that group's
+    windows. The result is a copy-number ratio up to one global constant only while that
+    average is the same for both groups, i.e. while copy number is uncorrelated with
+    capture-target density genome-wide. Estimating the on-minus-off level gap once
+    genome-wide and once over regions believed diploid bounds the departure: the two agree
+    when the gap is efficiency rather than copy number.
+
+    Rescales every column, not only the ``bulkWES`` ones: the efficiency term cancels in a
+    ratio only when numerator and denominator are both rescaled, so a WES tumor whose RDR
+    base is a WGS normal needs the normal rescaled too. A dataset with no capture has the
+    same expected level in both groups, so its factors come out near 1. The caller decides
+    whether any capture is present at all.
+
+    Args:
+        mat: ``(n_bins, n_datasets)`` corrected depth, NaN where undefined.
+        target_sites: Bool per bin, True where the bin overlaps a capture target.
+        bin_lengths: Per-bin length, aligned to the rows of *mat*.
+
+    Returns:
+        ``(scaled, factors)``: the rescaled depth, and ``{group label: (n_datasets,)
+        factor}``. A group with no finite bin in a column leaves that column untouched and
+        its factor NaN.
+    """
+    scaled = mat.copy()
+    factors = {}
+    for label, keep in (("off-target", ~target_sites), ("on-target", target_sites)):
+        levels = np.full(mat.shape[1], np.nan, dtype=np.float64)
+        for s in range(mat.shape[1]):
+            finite = keep & np.isfinite(mat[:, s])
+            span = bin_lengths[finite].sum()
+            if span > 0:
+                levels[s] = float(mat[finite, s] @ bin_lengths[finite] / span)
+        ref = np.nanmean(levels) if np.isfinite(levels).any() else np.nan
+        with np.errstate(invalid="ignore", divide="ignore"):
+            fac = np.where(np.isfinite(levels) & (levels > 0), ref / levels, np.nan)
+        for s in np.flatnonzero(np.isfinite(fac)):
+            scaled[keep, s] = mat[keep, s] * fac[s]
+        factors[label] = fac
+    return scaled, factors
+
+
+def compute_gc_rd_stats(mat, gc_vals, labels, n_gc_bins=100):
+    """Compute per-label Pearson/Spearman corr(RD, GC) and std of binned median RD.
+
+    Parameters
+    ----------
+    mat : np.ndarray
+        (n_bins, n_samples) depth matrix.
+    gc_vals : np.ndarray
+        Per-bin GC fraction (same length as mat rows).
+    labels : list[str]
+        Column labels (sample/dataset_id IDs).
+    n_gc_bins : int
+        Number of equal-width GC bins in [0, 1].
+
+    Returns
+    -------
+    gc_corr : dict[str, tuple[float, float]]
+        {label: (pearson_r, spearman_r)}
+    gc_bin_median_std : dict[str, float]
+        {label: std of per-GC-bin median RD (A_GC)}
+    """
+    gc_bins = np.linspace(0, 1, n_gc_bins + 1)
+    gc_corr = {}
+    gc_bin_median_std = {}
+
+    for i, label in enumerate(labels):
+        v = mat[:, i] if mat.ndim == 2 else mat
+        valid = np.isfinite(v) & np.isfinite(gc_vals)
+
+        if valid.sum() > 2:
+            pr_val, _ = pearsonr(gc_vals[valid], v[valid])
+            sr_val, _ = spearmanr(gc_vals[valid], v[valid])
+            gc_corr[label] = (pr_val, sr_val)
+        else:
+            gc_corr[label] = (np.nan, np.nan)
+
+        gc_bin_idx = np.digitize(gc_vals, gc_bins) - 1
+        gc_bin_idx = np.clip(gc_bin_idx, 0, n_gc_bins - 1)
+        medians = []
+        for b in range(n_gc_bins):
+            mask = (gc_bin_idx == b) & np.isfinite(v)
+            if mask.any():
+                medians.append(np.median(v[mask]))
+        gc_bin_median_std[label] = float(np.std(medians)) if medians else np.nan
+
+    return gc_corr, gc_bin_median_std
+
+
+def compute_depth_statistics(dp_raw, win_df, sample_ids):
+    """Compute per-chromosome and whole-genome mean/median depth per sample.
+
+    Returns a DataFrame with columns: SAMPLE, #CHR, mean_depth, median_depth.
+    """
+    chroms = win_df["#CHR"].to_numpy()
+    sorted_chroms = sort_chroms(win_df["#CHR"].unique().tolist())
+    rows = []
+    for chrom in sorted_chroms:
+        mask = chroms == chrom
+        for s in range(len(sample_ids)):
+            vals = dp_raw[mask, s]
+            rows.append(
+                [sample_ids[s], chrom, float(np.mean(vals)), float(np.median(vals))]
+            )
+    for s in range(len(sample_ids)):
+        vals = dp_raw[:, s]
+        rows.append(
+            [sample_ids[s], "TOTAL", float(np.mean(vals)), float(np.median(vals))]
+        )
+    return pd.DataFrame(rows, columns=["SAMPLE", "#CHR", "mean_depth", "median_depth"])

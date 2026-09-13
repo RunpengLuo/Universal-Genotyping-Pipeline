@@ -1,20 +1,14 @@
 """Shared fixtures: a stub workspace the DAG can be built against.
 
-Runpeng Luo (2026-07-12)
+Last update: 2026-08-06
 
-Dry-run tests only build the DAG, so every reference asset and input file can be
-an empty stub; nothing is read. Sample files are written in both formats from one
-description, so the JSON and legacy TSV paths are compared on identical data.
-
-Dependencies:
-  pytest; snakemake on PATH.
-
-Inputs
-  none: every fixture is generated under pytest's tmp_path_factory
-Outputs:
-  workspace: paths of the stub reference assets and sample files
-Notes/References:
-  Sample-file format: docs/sample_sheet.md
+Fixtures:
+- workspace: empty stub inputs plus one sample sheet per format
+- dryrun: run `snakemake -n` for one mode and sheet
+- job_counts: parse the planned job table out of stdout
+Notes:
+- stubs: dry runs only build the DAG, so nothing is read
+- both formats: JSON and TSV are written from one description
 """
 
 import gzip
@@ -23,6 +17,7 @@ import os
 import subprocess
 
 import pytest
+import yaml
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SNAKEFILE = os.path.join(REPO, "workflow", "Snakefile")
@@ -33,11 +28,14 @@ REF_FILES = (
     "genome.fa",
     "genome_size.txt",
     "region.bed",
+    "extremity.tsv",
     "window.bed",
     "genes.gtf",
     "gmap.txt.gz",
     "snp_panel.vcf.gz",
+    "snp_panel.vcf.gz.tbi",
     "bb.tsv.gz",
+    "targets.bed",
 )
 
 VCF_HEADER = (
@@ -50,6 +48,8 @@ RANGER_FILES = (
     "gex_possorted_bam.bam.bai",
     "atac_possorted_bam.bam",
     "atac_possorted_bam.bam.bai",
+    "scdna_possorted_bam.bam",
+    "scdna_possorted_bam.bam.bai",
     "possorted_genome_bam.bam",
     "possorted_genome_bam.bam.bai",
     "atac_fragments.tsv.gz",
@@ -70,11 +70,20 @@ def _touch(path):
 
 @pytest.fixture(scope="session")
 def workspace(tmp_path_factory):
-    """Stub reference assets plus one bulk and one single-cell sample file per format."""
+    """Stub reference assets plus one bulk and one single-cell sample file per format.
+
+    The session config turns rt_correct off, so no dry run resolves the 17 UCSC Repli-seq
+    URLs; ``test_repliseq_is_fetched_when_rt_correct`` covers that DAG behind the
+    ``network`` marker.
+    """
     root = tmp_path_factory.mktemp("ws")
     ref = root / "ref"
     for name in REF_FILES:
         _touch(str(ref / name))
+
+    (ref / "genome_size.txt").write_text(
+        "".join(f"chr{c}\t50818468\n" for c in list(range(1, 23)) + ["X", "Y"])
+    )
 
     rows = "".join(
         f"chr22\t{pos}\t.\tA\tG\t60\tPASS\t.\tGT\t0|1\n" for pos in (1000, 2000, 3000)
@@ -82,7 +91,6 @@ def workspace(tmp_path_factory):
     with gzip.open(str(ref / "het_snps.vcf.gz"), "wt") as fh:
         fh.write(VCF_HEADER + rows)
     for chrom in ("22",):
-        _touch(str(ref / "targets" / f"target.chr{chrom}.pos.gz"))
         _touch(str(ref / "panel" / f"chr{chrom}.genotypes.bcf"))
 
     outs = root / "outs"
@@ -92,11 +100,6 @@ def workspace(tmp_path_factory):
         _touch(str(ref / name))
         _touch(str(ref / f"{name}.bai"))
 
-    # SV breakpoints BEDPE (0-based, like BED): two junctions on chr22
-    (ref / "sv.bedpe").write_text(
-        "chr22\t16000000\t16000001\tchr22\t16500000\t16500001\tsv1\t60\t+\t-\n"
-        "chr22\t20000000\t20000001\tchr22\t30000000\t30000001\tsv2\t42\t-\t+\n"
-    )
     barcodes = str(outs / "filtered_feature_bc_matrix" / "barcodes.tsv.gz")
     bulk_json = {
         "version": 1,
@@ -106,6 +109,7 @@ def workspace(tmp_path_factory):
                 "dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "normal",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(ref / "normal.bam"),
                     "alignment_index": str(ref / "normal.bam.bai"),
@@ -117,36 +121,10 @@ def workspace(tmp_path_factory):
                 "rdr_base_dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "tumor",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(ref / "tumor.bam"),
                     "alignment_index": str(ref / "tumor.bam.bai"),
-                },
-            },
-        ],
-    }
-    # bulk with an SV BEDPE on the tumor -> breakpoint-aware pre-segmentation
-    bulk_bedpe_json = {
-        "version": 1,
-        "samples": [
-            {
-                "sample_id": "B1",
-                "dataset_id": "N1",
-                "assay_type": "bulkWGS",
-                "sample_type": "normal",
-                "files": {
-                    "alignment": str(ref / "normal.bam"),
-                    "alignment_index": str(ref / "normal.bam.bai"),
-                },
-            },
-            {
-                "sample_id": "B1",
-                "dataset_id": "D1",
-                "assay_type": "bulkWGS",
-                "sample_type": "tumor",
-                "files": {
-                    "alignment": str(ref / "tumor.bam"),
-                    "alignment_index": str(ref / "tumor.bam.bai"),
-                    "breakpoint_bedpe": str(ref / "sv.bedpe"),
                 },
             },
         ],
@@ -160,6 +138,7 @@ def workspace(tmp_path_factory):
                 "dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "normal",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(ref / "normal.bam"),
                     "alignment_index": str(ref / "normal.bam.bai"),
@@ -171,6 +150,7 @@ def workspace(tmp_path_factory):
                 "rdr_base_dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "tumor",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(ref / "tumor.bam"),
                     "alignment_index": str(ref / "tumor.bam.bai"),
@@ -181,9 +161,39 @@ def workspace(tmp_path_factory):
                 "dataset_id": "E1",
                 "assay_type": "bulkWES",
                 "sample_type": "tumor",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(ref / "tumor.bam"),
                     "alignment_index": str(ref / "tumor.bam.bai"),
+                },
+            },
+        ],
+    }
+    # scDNA runs only through the bulk path, pooled over every barcode
+    bulk_scdna_json = {
+        "version": 1,
+        "samples": [
+            {
+                "sample_id": "SD",
+                "dataset_id": "N1",
+                "assay_type": "bulkWGS",
+                "sample_type": "normal",
+                "reference_version": "chm13v2",
+                "files": {
+                    "alignment": str(ref / "normal.bam"),
+                    "alignment_index": str(ref / "normal.bam.bai"),
+                },
+            },
+            {
+                "sample_id": "SD",
+                "dataset_id": "C1",
+                "rdr_base_dataset_id": "N1",
+                "assay_type": "scDNA",
+                "sample_type": "tumor",
+                "reference_version": "chm13v2",
+                "files": {
+                    "alignment": str(outs / "scdna_possorted_bam.bam"),
+                    "alignment_index": str(outs / "scdna_possorted_bam.bam.bai"),
                 },
             },
         ],
@@ -196,6 +206,7 @@ def workspace(tmp_path_factory):
                 "dataset_id": "U1",
                 "assay_type": "scRNA",
                 "sample_type": "tumor",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(outs / "gex_possorted_bam.bam"),
                     "alignment_index": str(outs / "gex_possorted_bam.bam.bai"),
@@ -208,6 +219,7 @@ def workspace(tmp_path_factory):
                 "dataset_id": "U1",
                 "assay_type": "scATAC",
                 "sample_type": "tumor",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(outs / "atac_possorted_bam.bam"),
                     "alignment_index": str(outs / "atac_possorted_bam.bam.bai"),
@@ -220,6 +232,7 @@ def workspace(tmp_path_factory):
                 "dataset_id": "W1",
                 "assay_type": "VISIUM",
                 "sample_type": "tumor",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": str(outs / "possorted_genome_bam.bam"),
                     "alignment_index": str(outs / "possorted_genome_bam.bam.bai"),
@@ -234,24 +247,37 @@ def workspace(tmp_path_factory):
         ],
     }
 
-    # legacy TSV of the same datasets; single-cell files come from PATH_to_10x_ranger
     bulk_tsv = [
-        "SAMPLE\tREP_ID\tRDR_BASE_REP_ID\tassay_type\tsample_type\tPATH_to_bam",
-        f"T1\tN1\t\tbulkWGS\tnormal\t{ref / 'normal.bam'}",
-        f"T1\tD1\tN1\tbulkWGS\ttumor\t{ref / 'tumor.bam'}",
+        "sample_id\tdataset_id\trdr_base_dataset_id\tassay_type\tsample_type"
+        "\treference_version\tfiles.alignment\tfiles.alignment_index",
+        f"T1\tN1\t\tbulkWGS\tnormal\tchm13v2\t{ref / 'normal.bam'}\t{ref / 'normal.bam.bai'}",
+        f"T1\tD1\tN1\tbulkWGS\ttumor\tchm13v2\t{ref / 'tumor.bam'}\t{ref / 'tumor.bam.bai'}",
     ]
     sc_tsv = [
-        "SAMPLE\tREP_ID\tassay_type\tsample_type\tPATH_to_bam\tPATH_to_barcodes\tPATH_to_10x_ranger",
-        f"S1\tU1\tscRNA\ttumor\t{outs / 'gex_possorted_bam.bam'}\t{barcodes}\t{outs}",
-        f"S1\tU1\tscATAC\ttumor\t{outs / 'atac_possorted_bam.bam'}\t{barcodes}\t{outs}",
-        f"V1\tW1\tVISIUM\ttumor\t{outs / 'possorted_genome_bam.bam'}\t{barcodes}\t{outs}",
+        "sample_id\tdataset_id\tassay_type\tsample_type\treference_version"
+        "\tfiles.alignment\tfiles.alignment_index\tfiles.barcodes\tfiles.fragments"
+        "\tfiles.matrix_h5\tfiles.tissue_positions\tfiles.scalefactors"
+        "\tfiles.image_hires\tfiles.image_lowres",
+        f"S1\tU1\tscRNA\ttumor\tchm13v2\t{outs / 'gex_possorted_bam.bam'}"
+        f"\t{outs / 'gex_possorted_bam.bam.bai'}\t{barcodes}\t"
+        f"\t{outs / 'filtered_feature_bc_matrix.h5'}\t\t\t\t",
+        f"S1\tU1\tscATAC\ttumor\tchm13v2\t{outs / 'atac_possorted_bam.bam'}"
+        f"\t{outs / 'atac_possorted_bam.bam.bai'}\t{barcodes}"
+        f"\t{outs / 'atac_fragments.tsv.gz'}\t\t\t\t\t",
+        f"V1\tW1\tVISIUM\ttumor\tchm13v2\t{outs / 'possorted_genome_bam.bam'}"
+        f"\t{outs / 'possorted_genome_bam.bam.bai'}\t{barcodes}\t"
+        f"\t{outs / 'filtered_feature_bc_matrix.h5'}"
+        f"\t{outs / 'spatial' / 'tissue_positions.csv'}"
+        f"\t{outs / 'spatial' / 'scalefactors_json.json'}"
+        f"\t{outs / 'spatial' / 'tissue_hires_image.png'}"
+        f"\t{outs / 'spatial' / 'tissue_lowres_image.png'}",
     ]
 
     paths = {}
     for name, doc in (
         ("bulk", bulk_json),
-        ("bulk_bedpe", bulk_bedpe_json),
         ("bulk_mixed", bulk_mixed_json),
+        ("bulk_scdna", bulk_scdna_json),
         ("sc", sc_json),
     ):
         p = root / f"{name}.json"
@@ -262,6 +288,10 @@ def workspace(tmp_path_factory):
         p.write_text("\n".join(lines) + "\n")
         paths[f"{name}_tsv"] = str(p)
 
+    test_config = yaml.safe_load(open(CONFIGFILE))
+    test_config["params_count_reads"]["rt_correct"] = False
+    (root / "config.test.yaml").write_text(yaml.safe_dump(test_config))
+    paths["configfile"] = str(root / "config.test.yaml")
     paths["root"] = str(root)
     paths["ref"] = str(ref)
     paths["outs"] = str(outs)
@@ -282,7 +312,7 @@ def dryrun(workspace, sample_file, sample_id, workflow_mode, assay_types, extra=
         "-s",
         SNAKEFILE,
         "--configfile",
-        CONFIGFILE,
+        workspace["configfile"],
         "--directory",
         out,
         "--config",
@@ -291,13 +321,13 @@ def dryrun(workspace, sample_file, sample_id, workflow_mode, assay_types, extra=
         f"workflow_mode={workflow_mode}",
         f"assay_types={json.dumps(assay_types)}",
         "chromosomes=[22]",
+        "reference_version=chm13v2",
         f"reference={ref}/genome.fa",
         f"genome_size={ref}/genome_size.txt",
         f"region_bed={ref}/region.bed",
         f"gtf_file={ref}/genes.gtf",
         f"gmap_path={ref}/gmap.txt.gz",
         f"snp_panel={ref}/snp_panel.vcf.gz",
-        f"snp_targets={ref}/targets",
         f"phasing_panel={ref}/panel",
         *extra,
     ]

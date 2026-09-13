@@ -1,21 +1,13 @@
 #!/usr/bin/env python3
-"""Remote sample-file inputs: URLs are wrapped in storage() and fetched with their index.
+"""URL inputs are wrapped in storage() and retrieved.
 
-Runpeng Luo (2026-07-12)
+Last update: 2026-08-06
 
-The local test serves a stub alignment over http://127.0.0.1 and dry-runs against
-it, so no network is needed. The GIAB test resolves real URLs and is marked
-`network`; it is deselected unless `-m network` is given.
-
-Dependencies:
-  pytest; snakemake with snakemake-storage-plugin-http.
-
-Usage:
-  pytest tests/test_remote.py                # local http server only
-  pytest tests/test_remote.py -m network     # also hit the GIAB FTP host
-
-Notes/References:
-  Remote inputs: docs/sample_sheet.md
+Covers:
+- local stub: an http URL is fetched through storage()
+- mixed sheet: local paths and URLs in one run
+- TSV: the flattened sheet accepts URLs too
+- network: a real GIAB URL resolves, deselected by default
 """
 
 import functools
@@ -60,6 +52,7 @@ def _remote_sheet(path, alignment, index):
                 "dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "normal",
+                "reference_version": "chm13v2",
                 "files": {"alignment": alignment, "alignment_index": index},
             }
         ],
@@ -94,6 +87,7 @@ def test_local_and_remote_mix(workspace, http_server):
                 "dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "normal",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": f"{http_server}/remote.bam",
                     "alignment_index": f"{http_server}/remote.bam.bai",
@@ -105,6 +99,7 @@ def test_local_and_remote_mix(workspace, http_server):
                 "rdr_base_dataset_id": "N1",
                 "assay_type": "bulkWGS",
                 "sample_type": "tumor",
+                "reference_version": "chm13v2",
                 "files": {
                     "alignment": f"{ref}/tumor.bam",
                     "alignment_index": f"{ref}/tumor.bam.bai",
@@ -119,6 +114,21 @@ def test_local_and_remote_mix(workspace, http_server):
     assert proc.returncode == 0, proc.stderr[-2000:]
     assert "retrieve from storage" in proc.stdout
     assert f"{ref}/tumor.bam" in proc.stdout
+
+
+def test_tsv_sheet_accepts_urls(workspace, http_server):
+    """The TSV encoding names every input, so it can carry remote URLs like the JSON."""
+    sheet = os.path.join(workspace["root"], "remote.tsv")
+    with open(sheet, "w") as fh:
+        fh.write(
+            "sample_id\tdataset_id\tassay_type\tsample_type\treference_version"
+            "\tfiles.alignment\tfiles.alignment_index\n"
+            f"T1\tN1\tbulkWGS\tnormal\tchm13v2"
+            f"\t{http_server}/remote.bam\t{http_server}/remote.bam.bai\n"
+        )
+    proc = dryrun(workspace, sheet, "T1", "bulk_genotyping", ["bulkWGS"])
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert proc.stdout.count("retrieve from storage") >= 2
 
 
 @pytest.mark.network
