@@ -5,6 +5,7 @@ Last update: 2026-08-13
 Functions:
 - observation_cluster_ids: map each matrix column to its roster row
 - tumor_observation_indices: the columns min_snp_reads is thresholded against
+- summarize_observation_counts: per-dataset unit-level QC rows for a single-cell assay
 - summarize_read_depth_bb: length-weighted fixed-bin depth aggregated per bb
 - summarize_rdr_bb: per-bb RDR, matched-normal or median-centered
 """
@@ -68,6 +69,97 @@ def tumor_observation_indices(roster: pd.DataFrame):
             "to threshold and binning falls back to min_snp_per_bin alone"
         )
     return idx
+
+
+##################################################
+# single-cell unit-level QC
+
+
+def summarize_observation_counts(
+    sample_df, sample_id, observation_ids, snp_mtx, unit_mtx
+):
+    """Per-dataset unit-level QC over one assay's cells/spots.
+
+    Both matrices are ``(n_features, n_observations)`` on the same observation axis:
+    *snp_mtx* the SNP-covered counts over the shared SNP grid and *unit_mtx* the native
+    counts over the assay's own unit - genes for RNA, windows for scATAC.
+
+    ``#SNP`` and ``#feature`` are the rows this dataset actually detects, not the grid
+    size: a locus or feature with at least one read in at least one of its cells. The
+    grid size is the same for every row and is logged instead. The two sparsities are
+    the zero fraction over those detected rows only, so an undetected locus does not
+    count twice - once by lowering ``#SNP`` and again by inflating the sparsity.
+    ``mean_*_reads`` and ``median_*_reads`` are over that dataset's per-cell/spot
+    totals.
+
+    Args:
+        sample_df: ``sample_ids.tsv`` for this assay, one row per dataset.
+        sample_id: Patient/sample id, stamped on every row.
+        observation_ids: Length-n_observations index of each column into *sample_df*.
+        snp_mtx: (n_snps, n_observations) SNP-covered counts, sparse or dense.
+        unit_mtx: (n_features, n_observations) native counts, sparse or dense.
+
+    Returns:
+        ``(stats_df, snp_totals, unit_totals)``. *stats_df* has one row per *sample_df*
+        row; the totals are per-observation column sums of each matrix, float64.
+    """
+    snp_totals = _observation_totals(snp_mtx)
+    unit_totals = _observation_totals(unit_mtx)
+    observation_ids = np.asarray(observation_ids)
+    logging.info(
+        f"unit-level QC grid: {snp_mtx.shape[0]} SNPs, {unit_mtx.shape[0]} features "
+        f"over {len(observation_ids)} observations"
+    )
+    rows = []
+    for i, row in enumerate(sample_df.itertuples(index=False)):
+        cols = np.flatnonzero(observation_ids == i)
+        n_snp, snp_sparsity = _detected_and_sparsity(snp_mtx, cols)
+        n_feature, feature_sparsity = _detected_and_sparsity(unit_mtx, cols)
+        rows.append(
+            {
+                "sample_id": sample_id,
+                "dataset_id": row.dataset_id,
+                "sample_type": row.sample_type,
+                "assay_type": row.assay_type,
+                "#observation": len(cols),
+                "#SNP": n_snp,
+                "#feature": n_feature,
+                "snp_sparsity": snp_sparsity,
+                "feature_sparsity": feature_sparsity,
+                "mean_snp_reads": _stat(np.mean, snp_totals, cols),
+                "median_snp_reads": _stat(np.median, snp_totals, cols),
+                "mean_feature_reads": _stat(np.mean, unit_totals, cols),
+                "median_feature_reads": _stat(np.median, unit_totals, cols),
+            }
+        )
+    return pd.DataFrame(rows), snp_totals, unit_totals
+
+
+def _observation_totals(mtx):
+    """Per-observation column sums as a float64 1-D array."""
+    total = mtx.sum(axis=0)
+    return np.asarray(total, dtype=np.float64).ravel()
+
+
+def _detected_and_sparsity(mtx, cols):
+    """Rows of ``mtx[:, cols]`` carrying a read, and the zero fraction among them.
+
+    Rows this dataset never covers are excluded from both, so the sparsity measures how
+    thinly the detected rows are populated across its observations.
+    """
+    if len(cols) == 0:
+        return 0, 1.0
+    sub = mtx[:, cols]
+    per_row = sub.getnnz(axis=1) if hasattr(sub, "getnnz") else np.count_nonzero(sub, 1)
+    n_detected = int(np.count_nonzero(per_row))
+    if n_detected == 0:
+        return 0, 1.0
+    return n_detected, float(1.0 - int(per_row.sum()) / (n_detected * len(cols)))
+
+
+def _stat(fn, totals, cols):
+    """*fn* over this dataset's per-observation totals; 0.0 when it owns no column."""
+    return float(fn(totals[cols])) if len(cols) else 0.0
 
 
 ##################################################

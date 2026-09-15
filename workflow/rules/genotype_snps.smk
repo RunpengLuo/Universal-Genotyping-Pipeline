@@ -126,7 +126,7 @@ if workflow_mode == "bulk_genotyping" and run_genotyping:
                 chrname=nochr_chromosomes,
             ),
             qc_pdf=report(
-                qc_dir + "/post_genotype_snps.bulk.pdf",
+                qc_dir + "/genotype_snps.pdf",
                 category="QC plots",
                 subcategory="genotyping",
                 labels={"plot": "genotype allele frequency"},
@@ -223,7 +223,7 @@ if workflow_mode == "single_cell_genotyping" and run_genotyping:
                 chrname=nochr_chromosomes,
             ),
             qc_pdf=report(
-                qc_dir + "/post_genotype_snps.nonbulk.pdf",
+                qc_dir + "/genotype_snps.pdf",
                 category="QC plots",
                 subcategory="genotyping",
                 labels={"plot": "genotype allele frequency"},

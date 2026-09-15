@@ -421,6 +421,9 @@ whole to the bb it overlaps most.
 > - `PHASE`: 0 = the B-allele is ALT, 1 = the B-allele is REF.
 > - `feature_id`: `;`-joined overlapping GTF genes, `intergenic` if none.
 > - `sample_ids.tsv` is column-aligned in bulk only; single-cell columns are cells.
+> - `#SNP`/`#feature` are the rows that dataset detects (>= 1 read), not the grid size.
+> - `*_sparsity` is the zero fraction over those detected rows only.
+> - `mean_*_reads`/`median_*_reads` are over its per-cell/spot totals.
 > - `SAMPLE` is `{sample_id}_{dataset_id}`, plus `_{assay_type}` for a multiome pair.
 
 ### QC (`qc_dir/`)
@@ -429,9 +432,13 @@ One multi-page PDF per rule, flat:
 
 | File | Contents |
 |---|---|
-| `post_genotype_snps.{bulk_or_nonbulk}.pdf` | SNP allele frequency by genotype. |
-| `detect_loh.bulk.pdf` | Het-SNP density per tile against the two fitted rates, coloured by the decoded state (`detect_loh_tumor_cell_line` only). |
+| `genotype_snps.pdf` | SNP allele frequency by genotype. |
+| `detect_loh.pdf` | Het-SNP density per tile against the two fitted rates, coloured by the decoded state (`detect_loh_tumor_cell_line` only). |
 | `phase_and_concat.{bulk_or_assay}.pdf` | SNP allele frequency and depth. |
-| `rd_correction.bulk.pdf` | Depth before/after correction, GC/MAP/RT diagnostics. |
-| `combine_counts.{bulk_or_assay}.MSR{msr}.pdf` | Binning QC, one per `min_snp_reads`. |
-| `combine_counts_fixed_bins.{assay_type}.pdf` | Per dataset: a SNP BAF page, then a bb page of pseudobulk RDR over BAF. |
+| `rd_correction.pdf` | Depth before/after correction, GC/MAP/RT diagnostics. |
+| `combine_counts.stats.bulk.MSR{msr}.pdf` | Bulk bb-length histogram, then one page of raw-count histograms per dataset; stacked by LOH state under `detect_loh_tumor_cell_line`. One PDF per `min_snp_reads`. |
+| `combine_counts.1d2d.bulk.MSR{msr}.pdf` | Bulk genome-wide RDR/BAF tracks and the RDR-vs-BAF 2D cloud, one per `min_snp_reads`. |
+| `combine_counts.{assay}.MSR{msr}.pdf` | Single-cell bb-level pseudobulk RDR over BAF, one page per dataset, one PDF per `min_snp_reads`. |
+| `combine_counts.stats.{assay}.pdf` | Unit level, so binning-independent: one page per dataset, total and SNP-covered counts per cell/spot. |
+| `combine_counts.stats.{assay}.tsv` | The same, one row per dataset: `sample_id dataset_id sample_type assay_type #observation #SNP #feature snp_sparsity feature_sparsity mean_snp_reads median_snp_reads mean_feature_reads median_feature_reads`. |
+| `combine_counts.{assay}.pdf` | Copytyping bb-level pseudobulk RDR over BAF, one page per dataset. |

@@ -27,9 +27,10 @@ Outputs:
 - bb_dir/MSR{msr}/bulk/bb.rdcount.npz: per-bb read starts per dataset
 - bb_dir/MSR{msr}/bulk/sample_ids.tsv: one row per matrix column
 - bb_dir/multi_snp/bulk/: the same seven files over nsnp_multi-SNP groups, binning-independent
-- [detect_loh_tumor_cell_line] qc_dir/detect_loh.bulk.pdf: het density and the regions
+- [detect_loh_tumor_cell_line] qc_dir/detect_loh.pdf: het density and the regions
   called from it
-- qc_dir/combine_counts.bulk.MSR{msr}.pdf: segmentation, RDR/BAF and 2D QC
+- qc_dir/combine_counts.stats.bulk.MSR{msr}.pdf: bb length and raw-count histograms
+- qc_dir/combine_counts.1d2d.bulk.MSR{msr}.pdf: genome-wide RDR/BAF and RDR-vs-BAF 2D
 
 Read starts are additive, so every level sums them from the windows; depth, a per-base
 mean, is length-weighted instead. Both cover every dataset, in sample_ids.tsv order.
@@ -157,7 +158,8 @@ out_multi_dp_mtx = snakemake_handle.output["multi_dp_mtx"]
 out_multi_rdr_mtx = snakemake_handle.output["multi_rdr_mtx"]
 out_multi_rdcount_mtx = snakemake_handle.output["multi_rdcount_mtx"]
 out_multi_sample_file = snakemake_handle.output["multi_sample_file"]
-out_qc_pdf = list(snakemake_handle.output["qc_pdf"])
+out_qc_stats_pdf = list(snakemake_handle.output["qc_stats_pdf"])
+out_qc_1d2d_pdf = list(snakemake_handle.output["qc_1d2d_pdf"])
 out_loh_pdf = snakemake_handle.output["loh_pdf"] if detect_loh_tumor_cell_line else None
 
 ##################################################
@@ -560,7 +562,8 @@ for (
     out_rdr,
     out_rdcount,
     out_samp,
-    out_pdf,
+    out_stats_pdf,
+    out_1d2d_pdf,
 ) in zip(
     msr_list,
     out_bb_file,
@@ -571,7 +574,8 @@ for (
     out_rdr_mtx_bb,
     out_rdcount_mtx_bb,
     out_sample_file,
-    out_qc_pdf,
+    out_qc_stats_pdf,
+    out_qc_1d2d_pdf,
 ):
     min_snp_reads_vec = np.full(len(tumor_dataset_indices), msr, dtype=np.float64)
     bbs, snps_bb = build_adaptive_bins(
@@ -752,7 +756,7 @@ for (
 
     baf_tumor = baf_mtx_bb[:, tumor_dataset_indices]
 
-    with PdfPages(out_pdf) as pdf:
+    with PdfPages(out_stats_pdf) as pdf:
         plot_segmentation_qc(
             bbs,
             sample_df,
@@ -764,6 +768,9 @@ for (
             sample_id=sample_id,
             is_loh=bbs["is_loh"].to_numpy() if detect_loh_tumor_cell_line else None,
         )
+    logging.info(f"saved bb-statistics QC PDF to {out_stats_pdf}")
+
+    with PdfPages(out_1d2d_pdf) as pdf:
         plot_rdr_baf(
             bbs,
             bb_rdr,
@@ -775,7 +782,7 @@ for (
             tumor_assays,
             tumor_base_dataset_ids,
             genome_size,
-            out_pdf,
+            out_1d2d_pdf,
             feature_label="bb",
             region_bed=region_bed,
             blacklist_bed=blacklist_bed,
@@ -790,7 +797,7 @@ for (
             tumor_assays,
             pdf=pdf,
         )
-    logging.info(f"saved QC PDF to {out_pdf}")
+    logging.info(f"saved genome-wide QC PDF to {out_1d2d_pdf}")
 
     write_bb_file(
         bbs if detect_loh_tumor_cell_line else bbs.drop(columns="is_loh"), out_bb

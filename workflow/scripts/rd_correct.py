@@ -15,7 +15,7 @@ Outputs:
 - pileup_dir/bulk/window.dp.npz: corrected depth, windows x all bulk datasets,
   0.0 where depth is 0 and NaN below min_mappability or where the fit is undefined
 - pileup_dir/bulk/depth_statistics.tsv: per-dataset depth summary
-- qc_dir/rd_correction.bulk.pdf: depth scatter before/after plus covariate KDE
+- qc_dir/rd_correction.pdf: depth scatter before/after plus covariate KDE
 
 Both matrices are float32, row-aligned to the window BED filtered to `chroms`, and
 column-ordered as `params.dataset_ids`, which is the `SAMPLE` order of

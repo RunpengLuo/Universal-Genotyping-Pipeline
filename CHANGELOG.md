@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- QC PDF names: `post_genotype_snps.{bulk,nonbulk}.pdf` -> `genotype_snps.pdf`,
+  `detect_loh.bulk.pdf` -> `detect_loh.pdf`, `rd_correction.bulk.pdf` -> `rd_correction.pdf`.
+- The bulk binning QC PDF splits in two: `combine_counts.stats.bulk.MSR{msr}.pdf` holds the
+  histogram pages, `combine_counts.1d2d.bulk.MSR{msr}.pdf` the genome-wide RDR/BAF and
+  RDR-vs-BAF pages.
+- The bb-length histogram is one axes stacked by LOH state, and the raw-count histograms
+  move to one 2 x 2 page per dataset.
+- The single-cell and copytyping binning QC PDFs drop their SNP/multi-SNP page set and keep
+  the bb level only, both drawn as pseudobulk RDR over BAF tracks.
+- `combine_counts_fixed_bins.{assay}.pdf` becomes `combine_counts.{assay}.pdf`.
+
+### Added
+- `combine_counts.stats.{assay}.pdf` and `combine_counts.stats.{assay}.tsv` in both
+  non-bulk modes: total and SNP-covered counts per cell/spot, with the SNP loci and
+  features each dataset detects and how sparsely they are populated. Unit level, so
+  independent of `min_snp_reads`.
+
 ## [0.1.0b2] - 2026-09-13
 
 One explicit segmentation and one shared bin grid in every mode, references without a

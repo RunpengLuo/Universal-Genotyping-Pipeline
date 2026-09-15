@@ -26,7 +26,11 @@ Outputs:
 - bb_dir/MSR{msr}/{assay}/sample_ids.tsv: this assay's datasets
 - bb_dir/multi_snp/{assay}/bb.tsv.gz: multi-SNP diagnostic groups, MSR-independent
 - bb_dir/multi_snp/{assay}/bb.{T,A,B}allele.npz: per-group allele counts
-- qc_dir/combine_counts.{assay}.MSR{msr}.pdf: allele-frequency QC per assay
+- qc_dir/combine_counts.{assay}.MSR{msr}.pdf: per assay, one bb page per dataset
+  carrying pseudobulk RDR over BAF
+- qc_dir/combine_counts.stats.{assay}.pdf: per assay, one unit-level page per
+  dataset, native and SNP-covered counts per cell/spot
+- qc_dir/combine_counts.stats.{assay}.tsv: the same, one row per dataset
 """
 
 import logging
@@ -50,7 +54,11 @@ from io_utils import (
     read_window_bed,
     write_bb_file,
 )
-from combine_counts_utils import observation_cluster_ids, tumor_observation_indices
+from combine_counts_utils import (
+    observation_cluster_ids,
+    summarize_observation_counts,
+    tumor_observation_indices,
+)
 from phasing_utils import (
     estimate_switchprobs_PS,
     estimate_switchprobs_cM,
@@ -69,7 +77,13 @@ from feature_utils import (
     sum_umis_to_bins,
 )
 from range_utils import assign_pos_to_range, merge_ranges_to_clusters
-from plot_alleles import plot_allele_freqs
+from plot_alleles import compute_af_by_clusters
+from plot_combine_counts import (
+    RDR_YLABEL,
+    compute_pseudobulk_rdr,
+    plot_observation_count_qc,
+    plot_pseudobulk_tracks,
+)
 from matplotlib.backends.backend_pdf import PdfPages
 
 ##################################################
@@ -88,9 +102,7 @@ window_bed = snakemake_handle.input["window_bed"]
 genome_size = snakemake_handle.input["genome_size"]
 
 # parameters
-qc_dir = snakemake_handle.params["qc_dir"]
 sample_id = snakemake_handle.params["sample_id"]
-run_id = snakemake_handle.params["run_id"]
 assay_types = list(snakemake_handle.params["assay_types"])
 chroms = list(snakemake_handle.params["chroms"])
 nu = float(snakemake_handle.params["nu"])
@@ -117,6 +129,8 @@ out_unit_window_file = list(snakemake_handle.output["unit_window_file"])
 out_unit_window_x = list(snakemake_handle.output["unit_window_x"])
 out_unit_gene_file = list(snakemake_handle.output["unit_gene_file"])
 out_unit_gene_x = list(snakemake_handle.output["unit_gene_x"])
+out_unit_stats_pdf = list(snakemake_handle.output["unit_stats_pdf"])
+out_unit_stats_tsv = list(snakemake_handle.output["unit_stats_tsv"])
 out_multi_snp_file = list(snakemake_handle.output["multi_snp_file"])
 out_tot_mtx_multi = list(snakemake_handle.output["tot_mtx_multi"])
 out_a_mtx_multi = list(snakemake_handle.output["a_mtx_multi"])
@@ -238,26 +252,41 @@ for k, assay in enumerate(assay_types):
             f"frag_files, {len(frag_files)} files for {len(at_sids)} scATAC datasets"
         )
         unit_windows.to_csv(out_unit_window_file[j], sep="\t", index=False)
-        window_x = sum_atac_fragments_to_bins(
+        unit_x = sum_atac_fragments_to_bins(
             frag_files,
             at_sids["dataset_id"].tolist(),
             at_cells,
             window_ranges,
             len(bin_df),
         )
-        save_npz(out_unit_window_x[j], window_x)
-        logging.info(
-            f"{assay}: unit Xcount (fragments): shape={window_x.shape}, nnz={window_x.nnz}"
-        )
-    elif assay in h5ad_by_assay:
+        unit_type = "window"
+        save_npz(out_unit_window_x[j], unit_x)
+    else:
         j = rna_assays.index(assay)
-        genes, gene_x = read_gene_counts(
+        genes, unit_x = read_gene_counts(
             h5ad_by_assay[assay], at_cells["BARCODE"].tolist()
         )
+        unit_type = "gene"
         genes.to_csv(out_unit_gene_file[j], sep="\t", index=False)
-        save_npz(out_unit_gene_x[j], gene_x)
-        logging.info(
-            f"{assay}: unit Xcount (genes): shape={gene_x.shape}, nnz={gene_x.nnz}"
+        save_npz(out_unit_gene_x[j], unit_x)
+    logging.info(
+        f"{assay}: unit Xcount ({unit_type}): shape={unit_x.shape}, nnz={unit_x.nnz}"
+    )
+
+    at_cell_idx = observation_cluster_ids(at_cells, at_sids)
+    stats_df, snp_totals, unit_totals = summarize_observation_counts(
+        at_sids, sample_id, at_cell_idx, tot_mtx_snp[:, cols], unit_x
+    )
+    stats_df.to_csv(out_unit_stats_tsv[k], sep="\t", index=False)
+    with PdfPages(out_unit_stats_pdf[k]) as unit_pdf:
+        plot_observation_count_qc(
+            at_sids,
+            snp_totals,
+            unit_totals,
+            at_cell_idx,
+            unit_type,
+            pdf=unit_pdf,
+            sample_id=sample_id,
         )
 
 ##################################################
@@ -335,7 +364,6 @@ multi_bbs["feature_id"] = (
     .fillna("intergenic")
 )
 
-multi_cache = []
 for k in range(n_assays):
     cols = assay_cols[assay_types[k]]
     tot_multi = sum_features_to_bbs(
@@ -351,7 +379,6 @@ for k in range(n_assays):
         f"{assay_types[k]}: wrote {num_multi} multi-SNP groups over "
         f"{int(keep_multi.sum())} SNPs to {out_multi_snp_file[k]}"
     )
-    multi_cache.append({"tot": tot_multi, "b": b_multi})
 
 ##################################################
 # per-MSR joint segmentation + per-assay outputs
@@ -436,11 +463,8 @@ for j, min_snp_reads in enumerate(msr_list):
                 window_bb_ranges,
                 num_bbs,
             )
-            save_npz(out_x_count[idx], x_count)
-            logging.info(
-                f"{assay} MSR={min_snp_reads} Xcount (fragments): shape={x_count.shape}, nnz={x_count.nnz}"
-            )
-        elif assay in h5ad_by_assay:
+            source = "fragments"
+        else:
             x_count = sum_umis_to_bins(
                 h5ad_by_assay[assay],
                 at_cells["BARCODE"].tolist(),
@@ -448,47 +472,29 @@ for j, min_snp_reads in enumerate(msr_list):
                 num_bbs,
                 assay,
             )
-            save_npz(out_x_count[idx], x_count)
-            logging.info(
-                f"{assay} MSR={min_snp_reads} Xcount (h5ad): shape={x_count.shape}, nnz={x_count.nnz}"
-            )
+            source = "h5ad"
+        save_npz(out_x_count[idx], x_count)
+        logging.info(
+            f"{assay} MSR={min_snp_reads} Xcount ({source}): "
+            f"shape={x_count.shape}, nnz={x_count.nnz}"
+        )
 
+        n_at_datasets = len(at_sids)
+        baf_bb = compute_af_by_clusters(
+            tot_bb, b_bb, at_cell_dataset_idx, n_at_datasets
+        )
+        rdr_bb = compute_pseudobulk_rdr(x_count, at_cell_dataset_idx, n_at_datasets)
         with PdfPages(out_qc_pdf[idx]) as pdf:
-            plot_allele_freqs(
+            plot_pseudobulk_tracks(
                 bbs,
+                [("RDR", rdr_bb, RDR_YLABEL), ("BAF", baf_bb, "BAF")],
+                sample_id,
                 at_sids["dataset_id"].tolist(),
                 at_sids["assay_type"].tolist(),
                 at_sids["sample_type"].tolist(),
-                tot_bb,
-                b_bb,
                 genome_size,
-                qc_dir,
-                apply_pseudobulk=True,
-                cell_dataset_ids=at_cell_dataset_idx,
-                allele="B",
+                out_qc_pdf[idx],
                 feature_label="bb",
-                run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
-                name_prefix="combine_counts",
-                sample_id=sample_id,
-                pdf=pdf,
-            )
-            multi = multi_cache[k]
-            plot_allele_freqs(
-                multi_bbs,
-                at_sids["dataset_id"].tolist(),
-                at_sids["assay_type"].tolist(),
-                at_sids["sample_type"].tolist(),
-                multi["tot"],
-                multi["b"],
-                genome_size,
-                qc_dir,
-                apply_pseudobulk=True,
-                cell_dataset_ids=at_cell_dataset_idx,
-                allele="B",
-                feature_label="multi-snp",
-                run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
-                name_prefix="combine_counts",
-                sample_id=sample_id,
                 pdf=pdf,
             )
 

@@ -103,7 +103,7 @@ snp_panel: /path/to/snps.vcf.gz
 ```
 
 If matched-normal sample does not exists, set `genotype_dataset_ids` to one of the bulk tumor sample with normal cells admixture to distinguish SNPs either homozygous or heterozygous LOH. 
-If only tumor cell-line dataset is available, set `params_combine_counts.detect_loh_tumor_cell_line: true` such that `combine_counts` detects the clonal LOH region based on Het SNP density. See `<qc_dir>/detect_loh.bulk.pdf`.
+If only tumor cell-line dataset is available, set `params_combine_counts.detect_loh_tumor_cell_line: true` such that `combine_counts` detects the clonal LOH region based on Het SNP density. See `<qc_dir>/detect_loh.pdf`.
 
 > [!TIP]
 > - If a set of confident germline (phased) Het SNPs already exist, user may specify the path via `het_snp_vcf` and set `het_snp_vcf_phased` to indicate if the VCF file is phased or not. This will skip the germline SNP genotyping (and haplotype phasing if `het_snp_vcf_phased=true`).
@@ -129,10 +129,10 @@ params_count_reads:
 ```
 
 > [!NOTE]
-> user should inspect the effects via `<qc_dir>/rd_correction.bulk.pdf`.
+> user should inspect the effects via `<qc_dir>/rd_correction.pdf`.
 > Repli-seq covariate is only applicable to `hg19`, `hg38`, or `chm13v2`.
 
-6. The final step performs adaptive binning over the fixed bins jointly across all tumor datasets and obtain genomic bin by dataset read-depth ratio (RDR), phased B-allele counts, and total-allele counts. Each value in the minimum-SNP-covering reads parameter (`min_snp_reads`) gives one binning result. We recommend user to set `min_snp_reads` to a list of values and inspect the QC plots at `<qc_dir>/combine_counts.bulk.MSR{msr}.pdf` for varying `min_snp_reads`, then pick the lowest value that gives reliable BAF and RDR signals.
+6. The final step performs adaptive binning over the fixed bins jointly across all tumor datasets and obtain genomic bin by dataset read-depth ratio (RDR), phased B-allele counts, and total-allele counts. Each value in the minimum-SNP-covering reads parameter (`min_snp_reads`) gives one binning result. We recommend user to set `min_snp_reads` to a list of values and inspect the QC plots at `<qc_dir>/combine_counts.{stats,1d2d}.bulk.MSR{msr}.pdf` for varying `min_snp_reads`, then pick the lowest value that gives reliable BAF and RDR signals.
 ```yaml
 params_combine_counts:
   min_snp_reads: [100, 500, 1000, 2000, 3000, 5000, 7500, 10000]
@@ -194,9 +194,10 @@ Refer to [Final bins](reference.md#final-bins) for the full specification of eac
     multi_snp/
       bulk/                            # multi-SNP diagnostic groups, MSR-independent, bb schema
   qc/
-    post_genotype_snps.bulk.pdf        # SNP allele frequency by called genotype
-    detect_loh.bulk.pdf                # clonal-LOH decode (detect_loh_tumor_cell_line only)
-    phase_and_concat.bulk.pdf          # SNP allele frequency + per-dataset depth (phase_and_concat)
-    rd_correction.bulk.pdf             # read-depth bias correction, one panel per dataset
-    combine_counts.bulk.MSR{msr}.pdf   # binning QC (segmentation, genome-wide RDR/BAF, RDR-vs-BAF 2D), one per min_snp_reads value
+    genotype_snps.pdf                          # SNP allele frequency by called genotype
+    detect_loh.pdf                             # clonal-LOH decode (detect_loh_tumor_cell_line only)
+    phase_and_concat.bulk.pdf                  # SNP allele frequency + per-dataset depth (phase_and_concat)
+    rd_correction.pdf                          # read-depth bias correction, one panel per dataset
+    combine_counts.stats.bulk.MSR{msr}.pdf     # bb-length histogram + one raw-count page per dataset, one per min_snp_reads value
+    combine_counts.1d2d.bulk.MSR{msr}.pdf      # genome-wide RDR/BAF + RDR-vs-BAF 2D, one per min_snp_reads value
 ```

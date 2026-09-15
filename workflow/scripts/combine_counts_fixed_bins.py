@@ -23,8 +23,10 @@ Outputs:
 - bb_dir/{assay}/bb.{Xcount,Tallele,Aallele,Ballele}.npz: per-bb count matrices
 - bb_dir/{assay}/barcodes.tsv.gz: this assay's cells, matrix column order
 - bb_dir/{assay}/sample_ids.tsv: this assay's datasets
-- qc_dir/combine_counts_fixed_bins.{assay}.pdf: per dataset, one SNP BAF page then one
-  bb page carrying pseudobulk RDR over BAF
+- qc_dir/combine_counts.{assay}.pdf: one bb page per dataset, pseudobulk RDR over BAF
+- qc_dir/combine_counts.stats.{assay}.pdf: one unit-level page per dataset,
+  native and SNP-covered counts per cell/spot
+- qc_dir/combine_counts.stats.{assay}.tsv: the same, one row per dataset
 """
 
 import logging
@@ -48,7 +50,10 @@ from io_utils import (
     read_window_bed,
     write_bb_file,
 )
-from combine_counts_utils import observation_cluster_ids
+from combine_counts_utils import (
+    observation_cluster_ids,
+    summarize_observation_counts,
+)
 from segmentation_utils import sum_features_to_bbs
 from range_utils import assign_pos_to_range, assign_range_to_range
 from feature_utils import (
@@ -59,11 +64,14 @@ from feature_utils import (
 )
 from matplotlib.backends.backend_pdf import PdfPages
 from plot_alleles import compute_af_by_clusters
-from plot_combine_counts import compute_pseudobulk_rdr, plot_pseudobulk_tracks
+from plot_combine_counts import (
+    RDR_YLABEL,
+    compute_pseudobulk_rdr,
+    plot_observation_count_qc,
+    plot_pseudobulk_tracks,
+)
 
 COUNT_DTYPE = np.int32
-# the pseudobulk RDR is a share of library size, not a ratio to a reference column
-RDR_YLABEL = r"$\sum_i X_{i,g}/\sum_i T_i$"
 
 # inputs
 snp_info = snakemake_handle.input["snp_info"]
@@ -98,6 +106,8 @@ out_unit_b_mtx = snakemake_handle.output["unit_b_mtx"]
 out_unit_barcodes = snakemake_handle.output["unit_barcodes"]
 out_unit_sample_file = snakemake_handle.output["unit_sample_file"]
 out_qc_pdf = snakemake_handle.output["qc_pdf"]
+out_unit_stats_pdf = snakemake_handle.output["unit_stats_pdf"]
+out_unit_stats_tsv = snakemake_handle.output["unit_stats_tsv"]
 
 
 # the allele inputs are the union over every non-bulk assay, so slice to this one
@@ -144,23 +154,39 @@ snps = snps_binned.drop(columns=["bin_id"])
 tot_mtx, a_mtx, b_mtx = tot_mtx[keep_snps], a_mtx[keep_snps], b_mtx[keep_snps]
 
 if is_rna_assay:
-    genes, gene_x = read_gene_counts(h5ad_file, cells["BARCODE"].tolist())
+    unit_type = "gene"
+    genes, unit_x = read_gene_counts(h5ad_file, cells["BARCODE"].tolist())
     genes.to_csv(snakemake_handle.output["unit_gene_file"], sep="\t", index=False)
-    save_npz(snakemake_handle.output["unit_gene_x"], gene_x)
-    logging.info(f"unit Xcount (genes): shape={gene_x.shape}, nnz={gene_x.nnz}")
+    save_npz(snakemake_handle.output["unit_gene_x"], unit_x)
 else:
+    unit_type = "window"
     bin_df.drop(columns=["bin_id"]).to_csv(
         snakemake_handle.output["unit_window_file"], sep="\t", index=False
     )
-    window_x = sum_atac_fragments_to_bins(
+    unit_x = sum_atac_fragments_to_bins(
         frag_files,
         dataset_ids,
         cells,
         bin_df[["#CHR", "START", "END", "bin_id"]].rename(columns={"bin_id": "bb_id"}),
         len(bin_df),
     )
-    save_npz(snakemake_handle.output["unit_window_x"], window_x)
-    logging.info(f"unit Xcount (fragments): shape={window_x.shape}, nnz={window_x.nnz}")
+    save_npz(snakemake_handle.output["unit_window_x"], unit_x)
+logging.info(f"unit Xcount ({unit_type}): shape={unit_x.shape}, nnz={unit_x.nnz}")
+
+stats_df, snp_totals, unit_totals = summarize_observation_counts(
+    sample_df, sample_id, cell_dataset_ids, tot_mtx, unit_x
+)
+stats_df.to_csv(out_unit_stats_tsv, sep="\t", index=False)
+with PdfPages(out_unit_stats_pdf) as unit_pdf:
+    plot_observation_count_qc(
+        sample_df,
+        snp_totals,
+        unit_totals,
+        cell_dataset_ids,
+        unit_type,
+        pdf=unit_pdf,
+        sample_id=sample_id,
+    )
 
 ##################################################
 bb_df = pd.read_table(bb_file, sep="\t")
@@ -237,23 +263,10 @@ else:
 logging.info(f"bb-level X matrix: shape={x_count.shape}, nnz={x_count.nnz}")
 
 num_datasets = len(dataset_ids)
-baf_snp = compute_af_by_clusters(tot_mtx, b_mtx, cell_dataset_ids, num_datasets)
 baf_bb = compute_af_by_clusters(tot_mtx_bb, b_mtx_bb, cell_dataset_ids, num_datasets)
 rdr_bb = compute_pseudobulk_rdr(x_count, cell_dataset_ids, num_datasets)
 
 with PdfPages(out_qc_pdf) as pdf:
-    plot_pseudobulk_tracks(
-        snps,
-        [("BAF", baf_snp, "BAF")],
-        sample_id,
-        dataset_ids,
-        dataset_assays,
-        sample_types,
-        genome_size,
-        out_qc_pdf,
-        feature_label="SNP",
-        pdf=pdf,
-    )
     plot_pseudobulk_tracks(
         bb_df,
         [("RDR", rdr_bb, RDR_YLABEL), ("BAF", baf_bb, "BAF")],

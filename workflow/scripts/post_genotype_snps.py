@@ -19,7 +19,7 @@ Inputs:
 Outputs:
 - snp_dir/chr{chrname}.vcf.gz: bi-allelic het or hom-alt SNPs
 - snp_dir/chr{chrname}.vcf.gz.tbi: tabix index of the above
-- qc_dir/post_genotype_snps.{bulk,nonbulk}.pdf: SNP allele frequency by genotype
+- qc_dir/genotype_snps.pdf: SNP allele frequency by genotype
 Notes:
 - both sources report depth as cellsnp-lite does, ``REF + ALT`` with the other-allele
   reads held apart in OTH (cellsnp-lite ``src/csp.h``: DP is "total counts for ALT and

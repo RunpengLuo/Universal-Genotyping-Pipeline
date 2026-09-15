@@ -43,7 +43,7 @@ def test_detect_loh_is_independent_of_what_is_genotyped(workspace):
     proc = bulk(workspace, [DETECT_LOH])
     assert proc.returncode == 0, proc.stderr[-1500:]
     assert "tumor_genotyping_mode=none" in proc.stdout
-    assert "detect_loh.bulk.pdf" in proc.stdout
+    assert "detect_loh.pdf" in proc.stdout
 
 
 def test_only_a_detect_loh_run_declares_the_qc_page(workspace):
@@ -51,8 +51,8 @@ def test_only_a_detect_loh_run_declares_the_qc_page(workspace):
     off = bulk(workspace)
     on = bulk(workspace, [DETECT_LOH])
     assert off.returncode == 0 and on.returncode == 0
-    assert "detect_loh.bulk.pdf" not in off.stdout
-    assert "detect_loh.bulk.pdf" in on.stdout
+    assert "detect_loh.pdf" not in off.stdout
+    assert "detect_loh.pdf" in on.stdout
 
 
 def test_panel_alleles_are_constrained_by_default(workspace):

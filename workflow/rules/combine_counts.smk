@@ -13,7 +13,7 @@ Outputs:
 - bb_dir/MSR{msr}/{assay}/: the single-cell bbs, sliced per assay
 - bb_dir/{assay}/: the copytyping bbs, no binning so no MSR level
 - bb_dir/unit/{bulk,assay}/: the un-binned SNP, window and gene levels binning consumes
-- qc_dir/detect_loh.bulk.pdf: the het-density decode; only a detect_loh_tumor_cell_line
+- qc_dir/detect_loh.pdf: the het-density decode; only a detect_loh_tumor_cell_line
   run declares it. The regions are the is_loh column of the window and bb tables
 """
 
@@ -24,7 +24,7 @@ if workflow_mode == "bulk_genotyping":
     _loh_out = (
         {
             "loh_pdf": report(
-                qc_dir + "/detect_loh.bulk.pdf",
+                qc_dir + "/detect_loh.pdf",
                 category="QC plots",
                 subcategory="bulk binning",
                 labels={"plot": "clonal-LOH density"},
@@ -99,13 +99,23 @@ if workflow_mode == "bulk_genotyping":
             multi_rdr_mtx=bb_dir + "/multi_snp/bulk/bb.rdr.npz",
             multi_rdcount_mtx=bb_dir + "/multi_snp/bulk/bb.rdcount.npz",
             multi_sample_file=bb_dir + "/multi_snp/bulk/sample_ids.tsv",
-            qc_pdf=report(
+            qc_stats_pdf=report(
                 expand(
-                    qc_dir + f"/combine_counts.bulk.MSR{{msr}}.pdf",
+                    qc_dir + f"/combine_counts.stats.bulk.MSR{{msr}}.pdf",
                     msr=msr_list,
                 ),
                 category="QC plots",
                 subcategory="bulk binning",
+                labels={"plot": "bb statistics"},
+            ),
+            qc_1d2d_pdf=report(
+                expand(
+                    qc_dir + f"/combine_counts.1d2d.bulk.MSR{{msr}}.pdf",
+                    msr=msr_list,
+                ),
+                category="QC plots",
+                subcategory="bulk binning",
+                labels={"plot": "genome-wide RDR/BAF"},
             ),
         log:
             log_dir + f"/combine_counts.bulk.{_run_id}.log",
@@ -247,6 +257,18 @@ elif workflow_mode == "single_cell_genotyping":
                 category="QC plots",
                 subcategory="single-cell binning",
             ),
+            unit_stats_pdf=report(
+                [qc_dir + f"/combine_counts.stats.{at}.pdf" for at in assay_types],
+                category="QC plots",
+                subcategory="single-cell binning",
+                labels={"plot": "unit-level counts"},
+            ),
+            unit_stats_tsv=report(
+                [qc_dir + f"/combine_counts.stats.{at}.tsv" for at in assay_types],
+                category="QC stats",
+                subcategory="single-cell binning",
+                labels={"table": "unit-level counts"},
+            ),
         log:
             log_dir + f"/combine_counts_nonbulk.{_run_id}.log",
         benchmark:
@@ -313,10 +335,22 @@ elif workflow_mode == "copytyping_preprocess":
             unit_window_file=bb_dir + "/unit/{assay_type}/window.tsv.gz",
             unit_window_x=bb_dir + "/unit/{assay_type}/window.Xcount.npz",
             qc_pdf=report(
-                qc_dir + "/combine_counts_fixed_bins.{assay_type}.pdf",
+                qc_dir + "/combine_counts.{assay_type}.pdf",
                 category="QC plots",
                 subcategory="fixed-bin aggregation",
                 labels={"assay": "{assay_type}"},
+            ),
+            unit_stats_pdf=report(
+                qc_dir + "/combine_counts.stats.{assay_type}.pdf",
+                category="QC plots",
+                subcategory="fixed-bin aggregation",
+                labels={"assay": "{assay_type}", "plot": "unit-level counts"},
+            ),
+            unit_stats_tsv=report(
+                qc_dir + "/combine_counts.stats.{assay_type}.tsv",
+                category="QC stats",
+                subcategory="fixed-bin aggregation",
+                labels={"assay": "{assay_type}", "table": "unit-level counts"},
             ),
         log:
             log_dir
@@ -357,10 +391,22 @@ elif workflow_mode == "copytyping_preprocess":
             unit_gene_file=bb_dir + "/unit/{assay_type}/gene.tsv.gz",
             unit_gene_x=bb_dir + "/unit/{assay_type}/gene.Xcount.npz",
             qc_pdf=report(
-                qc_dir + "/combine_counts_fixed_bins.{assay_type}.pdf",
+                qc_dir + "/combine_counts.{assay_type}.pdf",
                 category="QC plots",
                 subcategory="fixed-bin aggregation",
                 labels={"assay": "{assay_type}"},
+            ),
+            unit_stats_pdf=report(
+                qc_dir + "/combine_counts.stats.{assay_type}.pdf",
+                category="QC plots",
+                subcategory="fixed-bin aggregation",
+                labels={"assay": "{assay_type}", "plot": "unit-level counts"},
+            ),
+            unit_stats_tsv=report(
+                qc_dir + "/combine_counts.stats.{assay_type}.tsv",
+                category="QC stats",
+                subcategory="fixed-bin aggregation",
+                labels={"assay": "{assay_type}", "table": "unit-level counts"},
             ),
         wildcard_constraints:
             assay_type="(scRNA|VISIUM|VISIUM3prime)",
