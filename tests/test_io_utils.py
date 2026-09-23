@@ -202,3 +202,30 @@ def test_concat_rna_adatas_keeps_everything_when_references_agree(caplog):
         got = io_utils.concat_rna_adatas({"d0": a0, "d1": a1}, "gene_ids")
     assert got.n_vars == 2
     assert "absent from another dataset's reference" not in caplog.text
+
+
+def test_concat_rna_adatas_result_writes_to_h5ad(tmp_path):
+    """The result must survive write_h5ad: repeated symbols are the failing case.
+
+    ``write_h5ad`` rejects a var index whose name is also a column holding different
+    values, which is what assigning the named ``gene_symbol`` Series to ``var_names``
+    produces once ``var_names_make_unique`` suffixes the repeats.
+    """
+    anndata = pytest.importorskip("anndata")
+    np = pytest.importorskip("numpy")
+    a0 = anndata.AnnData(np.ones((2, 2)), var=_var(["g1", "g2"], ["DUP", "DUP"]))
+    a1 = anndata.AnnData(
+        np.ones((3, 3)), var=_var(["g1", "g2", "g3"], ["DUP", "DUP", "C"])
+    )
+    a0.obs_names = ["c0_d0", "c1_d0"]
+    a1.obs_names = ["c0_d1", "c1_d1", "c2_d1"]
+    a0.var_names = ["DUP", "DUP-1"]
+    a1.var_names = ["DUP", "DUP-1", "C"]
+
+    got = io_utils.concat_rna_adatas({"d0": a0, "d1": a1}, "gene_ids")
+    assert got.var.index.name is None
+    path = tmp_path / "concat.h5ad"
+    got.write_h5ad(path, compression="gzip")
+    back = anndata.read_h5ad(path)
+    assert back.var_names.is_unique
+    assert list(back.var["gene_ids"]) == ["g1", "g2", "g3"]

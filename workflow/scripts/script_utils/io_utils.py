@@ -812,7 +812,10 @@ def concat_rna_adatas(adatas: dict, gene_id_colname: str, label: str = "dataset_
     and the UMI share are logged per dataset at WARNING.
 
     ``var`` is rebuilt by ``combine_var_frames`` rather than by a ``merge=`` strategy,
-    so the GTF join key survives references that annotate different gene sets.
+    so the GTF join key survives references that annotate different gene sets. Both
+    ``var_names`` assignments pass values, not the named Series: the index would take
+    the column's name, and ``write_h5ad`` rejects an index whose name is a column
+    holding different values once the symbols are suffixed.
 
     Args:
         adatas: ``{dataset_id: AnnData}``, var_names being gene symbols, each var
@@ -840,7 +843,7 @@ def concat_rna_adatas(adatas: dict, gene_id_colname: str, label: str = "dataset_
             "probe-barcode (Flex) matrix maps several probes to one gene and cannot "
             "be concatenated on the gene id"
         )
-        adata.var_names = gene_ids
+        adata.var_names = gene_ids.to_numpy()
 
     shared = set.intersection(*(set(a.var_names) for a in adatas.values()))
     for dataset_id, adata in adatas.items():
@@ -866,7 +869,7 @@ def concat_rna_adatas(adatas: dict, gene_id_colname: str, label: str = "dataset_
     adata.var = combine_var_frames(
         {d: a.var for d, a in adatas.items()}, adata.var_names
     )
-    adata.var_names = adata.var["gene_symbol"].astype(str)
+    adata.var_names = adata.var["gene_symbol"].astype(str).to_numpy()
     return uniquify_var_names(adata, "+".join(adatas))
 
 
