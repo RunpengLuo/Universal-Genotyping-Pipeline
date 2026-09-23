@@ -10,8 +10,8 @@ Grouped by format, each block reading before writing:
   read_extremity_tsv
 - Pipeline: read_bcftools_pileup_counts, read_allele_mat, read_snp_mats, read_barcodes,
   read_barcodes_by_dataset, read_chunks_from_atac_fragments, uniquify_var_names,
-  read_10x_ranger_scRNA, read_10x_ranger_spatial, write_snp_info, write_bb_file,
-  write_sample_ids
+  read_10x_ranger_scRNA, read_10x_ranger_spatial, combine_var_frames,
+  concat_rna_adatas, write_snp_info, write_bb_file, write_sample_ids
 """
 
 import logging
@@ -600,8 +600,9 @@ def read_barcodes(bc_file: str):
 def read_barcodes_by_dataset(bc_file: str):
     """Read ``barcodes.tsv.gz`` and split each key back into its three fields.
 
-    The parse is positional: no assay_type holds ``_`` and no raw barcode does either
-    (asserted at write), so the last and first ``_`` bound the dataset_id.
+    The parse is positional: none of the three fields holds ``_`` - the assay types are
+    literals, dataset_id is barred one at load (``RECORD_ID_PATTERN``) and no raw
+    barcode carries one - so the last and first ``_`` bound the dataset_id.
 
     Args:
         bc_file: One ``{raw}_{dataset_id}_{assay_type}`` per line, no header, in
@@ -762,6 +763,111 @@ def read_10x_ranger_spatial(
                 tmp_dir, load_images=load_images, library_id=library_id
             )
     return uniquify_var_names(adata, library_id)
+
+
+def combine_var_frames(var_frames: dict, index):
+    """Union per-dataset gene annotation onto one gene-id index.
+
+    The frames are indexed by gene id, so a gene shared by two references contributes
+    one row and the first dataset carrying it supplies the values. A column survives
+    however much the datasets disagree, which no ``anndata.concat(merge=...)`` strategy
+    offers: ``merge="same"`` drops a column outright once any gene disagrees, and
+    ``"unique"`` once any value does.
+
+    A gene id whose ``gene_symbol`` differs between datasets is logged, not resolved:
+    the id is the join key everywhere downstream, the symbol only labels it.
+
+    Args:
+        var_frames: ``{dataset_id: var}``, each indexed by gene id and carrying
+            ``gene_symbol``.
+        index: Gene ids of the concatenated object, the output row order.
+
+    Returns:
+        DataFrame reindexed to *index*, one row per gene id.
+    """
+    var = pd.concat(var_frames.values())
+    conflict = var.groupby(level=0)["gene_symbol"].nunique() > 1
+    if conflict.any():
+        examples = conflict.index[conflict][:5].tolist()
+        logging.warning(
+            f"#gene ids whose symbol differs between datasets={int(conflict.sum())}"
+            f"/{conflict.size}, e.g. {examples}"
+        )
+    return var[~var.index.duplicated()].reindex(index)
+
+
+def concat_rna_adatas(adatas: dict, gene_id_colname: str, label: str = "dataset_id"):
+    """Concatenate one assay's per-dataset AnnData on the gene id.
+
+    The gene id is the only identifier stable across Cell Ranger references, so it is
+    the concatenation key. ``var_names`` are gene symbols suffixed by
+    ``var_names_make_unique`` in file order, so the same locus can be ``TBCE`` in one
+    reference and ``TBCE-1`` in another; keying on them splits one gene into two rows.
+    Symbols are restored as ``var_names`` afterwards, re-suffixed over the result.
+
+    The join is the union, so no dataset loses a gene its own reference annotates. A
+    gene another reference lacks is zero-filled for that reference's cells; the zero is
+    an absent annotation, not an absent transcript, and it survives the zero-count
+    filter, so every bb holding such a gene reads low for those cells alone. The count
+    and the UMI share are logged per dataset at WARNING.
+
+    ``var`` is rebuilt by ``combine_var_frames`` rather than by a ``merge=`` strategy,
+    so the GTF join key survives references that annotate different gene sets.
+
+    Args:
+        adatas: ``{dataset_id: AnnData}``, var_names being gene symbols, each var
+            carrying *gene_id_colname* and ``gene_symbol``.
+        gene_id_colname: var column holding the gene id.
+        label: obs column stamped with the dataset id.
+
+    Returns:
+        One AnnData over the union of genes, var_names unique gene symbols.
+
+    Raises:
+        AssertionError: a dataset lacks *gene_id_colname*, or repeats a gene id.
+    """
+    import anndata
+
+    for dataset_id, adata in adatas.items():
+        assert gene_id_colname in adata.var.columns, (
+            f"{dataset_id}, var has no {gene_id_colname!r}; "
+            f"columns={list(adata.var.columns)}"
+        )
+        gene_ids = adata.var[gene_id_colname].astype(str)
+        assert gene_ids.is_unique, (
+            f"{dataset_id}, {gene_id_colname!r} repeats "
+            f"{int(gene_ids.duplicated().sum())}/{len(gene_ids)} values; a "
+            "probe-barcode (Flex) matrix maps several probes to one gene and cannot "
+            "be concatenated on the gene id"
+        )
+        adata.var_names = gene_ids
+
+    shared = set.intersection(*(set(a.var_names) for a in adatas.values()))
+    for dataset_id, adata in adatas.items():
+        unshared = ~adata.var_names.isin(shared)
+        if not unshared.any():
+            continue
+        umis = np.asarray(adata.X.sum(axis=0)).ravel()
+        logging.warning(
+            f"{dataset_id}, #genes absent from another dataset's reference="
+            f"{int(unshared.sum())}/{adata.n_vars} holding "
+            f"{100.0 * umis[unshared].sum() / umis.sum():.3f}% of its UMIs; "
+            "zero-filled for the cells of the datasets that lack them"
+        )
+
+    adata = anndata.concat(
+        adatas,
+        join="outer",
+        label=label,
+        merge=None,
+        uns_merge="unique",
+        fill_value=0,
+    )
+    adata.var = combine_var_frames(
+        {d: a.var for d, a in adatas.items()}, adata.var_names
+    )
+    adata.var_names = adata.var["gene_symbol"].astype(str)
+    return uniquify_var_names(adata, "+".join(adatas))
 
 
 def write_snp_info(

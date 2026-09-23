@@ -5,7 +5,7 @@ Last update: 2026-08-13
 
 Covers:
 - ids: sample_id and dataset_id must match RECORD_ID_PATTERN, both encodings
-- rejection: whitespace, path and shell separators, non-ASCII letters
+- rejection: whitespace, path and shell separators, non-ASCII letters, `_` in either id
 - timing: the charset is checked at load, before any selection
 """
 
@@ -50,12 +50,22 @@ def write_sheet(tmp_path, record, ext):
 
 
 @pytest.mark.parametrize("ext", [".json", ".tsv"])
-@pytest.mark.parametrize("dataset_id", ["N1", "N_1", "N-1", "N_1-a", "0"])
-def test_id_charset_accepts_alnum_underscore_dash(tmp_path, ext, dataset_id):
-    """Letters, digits, underscore and dash pass in either encoding."""
-    record = {**RECORD, "dataset_id": dataset_id, "sample_id": "HT_001-p2"}
+@pytest.mark.parametrize("dataset_id", ["N1", "N-1", "N-1a", "0"])
+def test_id_charset_accepts_alnum_dash(tmp_path, ext, dataset_id):
+    """Letters, digits and dash pass in either encoding."""
+    record = {**RECORD, "dataset_id": dataset_id, "sample_id": "HT001-p2"}
     records = parse_workflow_args.read_sample_sheet(write_sheet(tmp_path, record, ext))
     assert records[0]["dataset_id"] == dataset_id
+
+
+@pytest.mark.parametrize("ext", [".json", ".tsv"])
+@pytest.mark.parametrize("key", const.RECORD_ID_KEYS)
+@pytest.mark.parametrize("bad", ["N_1", "N_1-a", "_N1", "N1_"])
+def test_ids_reject_underscore(tmp_path, ext, key, bad):
+    """Both ids are fields of a `_`-joined key, so neither may hold one."""
+    record = {**RECORD, key: bad}
+    with pytest.raises(AssertionError, match=key):
+        parse_workflow_args.read_sample_sheet(write_sheet(tmp_path, record, ext))
 
 
 @pytest.mark.parametrize("key", const.RECORD_ID_KEYS)

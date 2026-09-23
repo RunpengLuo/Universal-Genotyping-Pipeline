@@ -25,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   features each dataset detects and how sparsely they are populated. Unit level, so
   independent of `min_snp_reads`.
 
+### Changed
+- `sample_id` and `dataset_id` no longer accept `_`: both are fields of `_`-joined
+  keys the pipeline splits positionally.
+
+### Fixed
+- `process_rna_anndata` concatenates several RNA datasets on the gene id and carries
+  `var` explicitly, so datasets built against different Cell Ranger references keep the
+  GTF join key and a shared gene no longer splits on its symbol suffix. Genes one
+  dataset's reference lacks are reported with their UMI share.
+
 ## [0.1.0b2] - 2026-09-13
 
 One explicit segmentation and one shared bin grid in every mode, references without a

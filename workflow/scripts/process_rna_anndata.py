@@ -27,10 +27,10 @@ setup_logging(snakemake_handle.log[0])
 
 import numpy as np
 import pandas as pd
-import anndata
 
 from const import SPATIAL_ASSAYS
 from io_utils import (
+    concat_rna_adatas,
     read_10x_ranger_scRNA,
     read_10x_ranger_spatial,
     read_BED,
@@ -96,14 +96,7 @@ for idx, dataset_id in enumerate(dataset_ids):
     logging.info(f"#barcodes={adata.n_obs}, #features={adata.n_vars}")
 
 if len(adatas) > 1:
-    adata = anndata.concat(
-        adatas,
-        join="outer",  # union of var (genes)
-        label="dataset_id",
-        merge="same",
-        uns_merge="unique",
-        fill_value=0,
-    )
+    adata = concat_rna_adatas(adatas, gene_id_colname)
 else:
     adata = adatas[dataset_ids[0]]
 adata.X = adata.X.tocsr()

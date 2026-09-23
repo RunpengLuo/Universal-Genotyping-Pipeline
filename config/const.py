@@ -45,7 +45,7 @@ SNP_PANEL_EXTS = (".vcf.gz",)
 SAMPLE_FILE_EXTS = (".json", ".tsv", ".txt")
 SAMPLE_TYPES = ("normal", "tumor")
 RECORD_ID_KEYS = ("sample_id", "dataset_id")
-RECORD_ID_PATTERN = r"[A-Za-z0-9_-]+"
+RECORD_ID_PATTERN = r"[A-Za-z0-9-]+"
 REQUIRED_RECORD_KEYS = (
     "sample_id",
     "dataset_id",

@@ -79,3 +79,126 @@ def test_add_chr_prefix_is_per_row():
     pd = pytest.importorskip("pandas")
     got = utils.add_chr_prefix(pd.Series(["GL000009.2", "chr1", "2"]))
     assert got.tolist() == ["chrGL000009.2", "chr1", "chr2"]
+
+
+##################################################
+# RNA AnnData concatenation
+
+
+def _var(gene_ids, symbols, genome="ref"):
+    """A per-dataset ``var`` as the 10x readers leave it: gene-id index, symbols kept."""
+    pd = pytest.importorskip("pandas")
+    return pd.DataFrame(
+        {"gene_ids": gene_ids, "gene_symbol": symbols, "genome": genome},
+        index=pd.Index(gene_ids, name=None),
+    )
+
+
+def test_combine_var_frames_keeps_columns_across_disjoint_references():
+    """A gene missing from one reference must not delete the GTF join key."""
+    pd = pytest.importorskip("pandas")
+    frames = {
+        "d0": _var(["g1", "g2"], ["A", "B"]),
+        "d1": _var(["g2", "g3"], ["B", "C"]),
+    }
+    got = io_utils.combine_var_frames(frames, pd.Index(["g1", "g2", "g3"]))
+    assert list(got.columns) == ["gene_ids", "gene_symbol", "genome"]
+    assert got["gene_ids"].tolist() == ["g1", "g2", "g3"]
+    assert got["gene_symbol"].tolist() == ["A", "B", "C"]
+
+
+def test_combine_var_frames_first_dataset_wins_on_conflict(caplog):
+    """A symbol disagreement is reported, not resolved; the id stays the key."""
+    pd = pytest.importorskip("pandas")
+    frames = {
+        "d0": _var(["g1"], ["A"]),
+        "d1": _var(["g1"], ["A_alias"]),
+    }
+    with caplog.at_level("WARNING"):
+        got = io_utils.combine_var_frames(frames, pd.Index(["g1"]))
+    assert got["gene_symbol"].tolist() == ["A"]
+    assert "symbol differs between datasets" in caplog.text
+
+
+def test_combine_var_frames_reindexes_to_the_given_order():
+    """The output row order is the concatenated object's, not the frames'."""
+    pd = pytest.importorskip("pandas")
+    frames = {"d0": _var(["g2", "g1"], ["B", "A"])}
+    got = io_utils.combine_var_frames(frames, pd.Index(["g1", "g2"]))
+    assert got["gene_symbol"].tolist() == ["A", "B"]
+
+
+def test_concat_rna_adatas_joins_on_gene_id_not_symbol():
+    """Suffixing is per file, so symbols cannot key the join; gene ids can."""
+    anndata = pytest.importorskip("anndata")
+    np = pytest.importorskip("numpy")
+    # the same locus is the first 'DUP' copy in d0 and the second in d1
+    a0 = anndata.AnnData(np.ones((2, 2)), var=_var(["g1", "g2"], ["DUP", "X"]))
+    a1 = anndata.AnnData(np.ones((3, 2)), var=_var(["g2", "g1"], ["X", "DUP"]))
+    a0.obs_names = ["c0_d0", "c1_d0"]
+    a1.obs_names = ["c0_d1", "c1_d1", "c2_d1"]
+    a0.var_names = ["DUP", "X"]
+    a1.var_names = ["X", "DUP"]
+    got = io_utils.concat_rna_adatas({"d0": a0, "d1": a1}, "gene_ids")
+    assert got.n_obs == 5
+    assert got.n_vars == 2, "a shared gene must not split on its symbol suffix"
+    assert set(got.var["gene_ids"]) == {"g1", "g2"}
+    assert got.var_names.is_unique
+
+
+def test_concat_rna_adatas_rejects_repeated_gene_ids():
+    """A probe-barcode matrix repeats the gene id, so it cannot key the join."""
+    anndata = pytest.importorskip("anndata")
+    np = pytest.importorskip("numpy")
+    var = _var(["g1", "g1"], ["A", "A"])
+    var.index = ["A", "A-1"]
+    a0 = anndata.AnnData(np.ones((2, 2)), var=var)
+    a1 = anndata.AnnData(np.ones((2, 1)), var=_var(["g2"], ["B"]))
+    a1.var_names = ["B"]
+    with pytest.raises(AssertionError, match="probe-barcode"):
+        io_utils.concat_rna_adatas({"d0": a0, "d1": a1}, "gene_ids")
+
+
+def test_concat_rna_adatas_requires_the_id_column():
+    """A missing id column fails naming the dataset, not with a bare KeyError."""
+    anndata = pytest.importorskip("anndata")
+    np = pytest.importorskip("numpy")
+    pd = pytest.importorskip("pandas")
+    a0 = anndata.AnnData(np.ones((2, 1)), var=pd.DataFrame(index=["A"]))
+    a1 = anndata.AnnData(np.ones((2, 1)), var=_var(["g2"], ["B"]))
+    with pytest.raises(AssertionError, match="d0, var has no 'gene_ids'"):
+        io_utils.concat_rna_adatas({"d0": a0, "d1": a1}, "gene_ids")
+
+
+def test_concat_rna_adatas_keeps_the_union_and_reports_the_gap(caplog):
+    """A gene one reference lacks is kept, zero-filled there, and reported."""
+    anndata = pytest.importorskip("anndata")
+    np = pytest.importorskip("numpy")
+    a0 = anndata.AnnData(np.ones((2, 2)), var=_var(["g1", "g2"], ["A", "B"]))
+    a1 = anndata.AnnData(np.ones((2, 3)), var=_var(["g1", "g2", "g3"], ["A", "B", "C"]))
+    a0.obs_names = ["c0_d0", "c1_d0"]
+    a1.obs_names = ["c0_d1", "c1_d1"]
+    a0.var_names = ["A", "B"]
+    a1.var_names = ["A", "B", "C"]
+    with caplog.at_level("WARNING"):
+        got = io_utils.concat_rna_adatas({"d0": a0, "d1": a1}, "gene_ids")
+    assert set(got.var["gene_ids"]) == {"g1", "g2", "g3"}
+    assert got.n_obs == 4
+    assert got[["c0_d0", "c1_d0"], got.var["gene_ids"] == "g3"].X.sum() == 0
+    assert "d1, #genes absent from another dataset's reference=1/3" in caplog.text
+
+
+def test_concat_rna_adatas_keeps_everything_when_references_agree(caplog):
+    """Identical gene sets make the intersection the whole set and log nothing."""
+    anndata = pytest.importorskip("anndata")
+    np = pytest.importorskip("numpy")
+    a0 = anndata.AnnData(np.ones((2, 2)), var=_var(["g1", "g2"], ["A", "B"]))
+    a1 = anndata.AnnData(np.ones((2, 2)), var=_var(["g2", "g1"], ["B", "A"]))
+    a0.obs_names = ["c0_d0", "c1_d0"]
+    a1.obs_names = ["c0_d1", "c1_d1"]
+    a0.var_names = ["A", "B"]
+    a1.var_names = ["B", "A"]
+    with caplog.at_level("WARNING"):
+        got = io_utils.concat_rna_adatas({"d0": a0, "d1": a1}, "gene_ids")
+    assert got.n_vars == 2
+    assert "absent from another dataset's reference" not in caplog.text
