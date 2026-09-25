@@ -2,35 +2,7 @@
 
 Last update: 2026-08-13
 
-Inputs:
-- allele_dir/snps.tsv.gz: the union SNP set, matrix rows
-- allele_dir/snp.{T,A,B}allele.npz: one matrix over every assay's cells
-- allele_dir/barcodes.tsv.gz: the matrix column axis
-- allele_dir/sample_ids.tsv: dataset x assay roster, one pseudobulk each
-- aux_dir/windows.bed.gz: the fixed bins, shared with bulk
-- atac_fragments.tsv.gz: scATAC Xcount source, counted through the windows
-- bb_dir/{assay}.h5ad: RNA Xcount source, genes assigned to bb hulls
-- phase_dir/genetic_map.tsv.gz: optional, for cM-based switch probabilities
-- genome_size: chrom sizes TSV
-Outputs:
-- bb_dir/unit/{assay}/snp.tsv.gz: the SNPs that landed in a window, matrix rows
-- bb_dir/unit/{assay}/snp.{T,A,B}allele.npz: this assay's slice of their allele counts
-- bb_dir/unit/{assay}/barcodes.tsv.gz: this assay's cells, matrix column order
-- bb_dir/unit/{assay}/sample_ids.tsv: this assay's datasets
-- bb_dir/unit/scATAC/window.{tsv.gz,Xcount.npz}: fragments counted per window per cell
-- bb_dir/unit/{rna_assay}/gene.{tsv.gz,Xcount.npz}: UMIs per gene per cell, un-binned
-- bb_dir/MSR{msr}/{assay}/bb.tsv.gz: shared bb definitions, duplicated per assay
-- bb_dir/MSR{msr}/{assay}/bb.{T,A,B}allele.npz: this assay's per-bb allele counts
-- bb_dir/MSR{msr}/{assay}/bb.Xcount.npz: this assay's per-bb native counts
-- bb_dir/MSR{msr}/{assay}/barcodes.tsv.gz: this assay's cells, matrix column order
-- bb_dir/MSR{msr}/{assay}/sample_ids.tsv: this assay's datasets
-- bb_dir/multi_snp/{assay}/bb.tsv.gz: multi-SNP diagnostic groups, MSR-independent
-- bb_dir/multi_snp/{assay}/bb.{T,A,B}allele.npz: per-group allele counts
-- qc_dir/combine_counts.{assay}.MSR{msr}.pdf: per assay, one bb page per dataset
-  carrying pseudobulk RDR over BAF
-- qc_dir/combine_counts.stats.{assay}.pdf: per assay, one unit-level page per
-  dataset, native and SNP-covered counts per cell/spot
-- qc_dir/combine_counts.stats.{assay}.tsv: the same, one row per dataset
+Inputs and outputs: see docs/reference.md#unit-level and docs/reference.md#final-bins.
 """
 
 import logging

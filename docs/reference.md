@@ -402,6 +402,7 @@ whole to the bb it overlaps most.
 | `bb_dir/{assay_type}.h5ad` | Gene x cell AnnData (scRNA / spatial). |
 | `aux_dir/segment.bed` | Arms cut at the SV extremities, blacklist subtracted. |
 | `aux_dir/windows.bed.gz` | The shared window BED. |
+| `aux_dir/window.target.npz` | Per-window on-target bp fraction, row-aligned to the window BED; written only with `target_bed` set. |
 | `aux_dir/repliseq/` | Repli-seq tracks, lifted from hg19 when the run is not hg19. |
 
 ### TSV columns

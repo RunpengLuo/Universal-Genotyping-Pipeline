@@ -1,36 +1,8 @@
 """Bulk: SNP-informed adaptive binning over all bulk assays, plus depth, RDR and reads.
 
-Last update: 2026-08-28
+Last update: 2026-09-25
 
-Inputs:
-- allele_dir/snps.tsv.gz: the shared SNP set, matrix rows
-- allele_dir/snp.{T,A,B}allele.npz: joint allele counts, samples as columns
-- allele_dir/sample_ids.tsv: one row per matrix column
-- aux_dir/windows.bed.gz: the shared fixed bins, matrix rows of the depth
-- pileup_dir/bulk/window.dp.npz: bias-corrected depth, windows x bulk datasets
-- pileup_dir/{assay}/{dataset_id}.rdcount.bed.gz: per-window read starts, one per dataset
-- aux_dir/segment.bed: region_id and seg_id cluster keys
-- phase_dir/genetic_map.tsv.gz: optional, for cM-based switch probabilities
-- blacklist_bed, genome_size: QC plot shading and axis
-Outputs:
-- bb_dir/unit/bulk/snp.tsv.gz: the SNPs that landed in a window, matrix rows
-- bb_dir/unit/bulk/snp.{T,A,B}allele.npz: their allele counts
-- bb_dir/unit/bulk/window.tsv.gz: the windows on the run's chromosomes, matrix rows;
-  carries is_loh under detect_loh_tumor_cell_line
-- bb_dir/unit/bulk/window.depth.npz: bias-corrected depth, windows x datasets
-- bb_dir/unit/bulk/window.rdcount.npz: read starts, windows x datasets
-- bb_dir/unit/bulk/sample_ids.tsv: one row per matrix column
-- bb_dir/MSR{msr}/bulk/bb.tsv.gz: bb definitions, one row each
-- bb_dir/MSR{msr}/bulk/bb.{T,A,B}allele.npz: per-bb phased allele counts
-- bb_dir/MSR{msr}/bulk/bb.depth.npz: per-bb mean depth per dataset
-- bb_dir/MSR{msr}/bulk/bb.rdr.npz: per-bb RDR per tumor
-- bb_dir/MSR{msr}/bulk/bb.rdcount.npz: per-bb read starts per dataset
-- bb_dir/MSR{msr}/bulk/sample_ids.tsv: one row per matrix column
-- bb_dir/multi_snp/bulk/: the same seven files over nsnp_multi-SNP groups, binning-independent
-- [detect_loh_tumor_cell_line] qc_dir/detect_loh.pdf: het density and the regions
-  called from it
-- qc_dir/combine_counts.stats.bulk.MSR{msr}.pdf: bb length and raw-count histograms
-- qc_dir/combine_counts.1d2d.bulk.MSR{msr}.pdf: genome-wide RDR/BAF and RDR-vs-BAF 2D
+Inputs and outputs: see docs/reference.md#unit-level and docs/reference.md#final-bins.
 
 Read starts are additive, so every level sums them from the windows; depth, a per-base
 mean, is length-weighted instead. Both cover every dataset, in sample_ids.tsv order.

@@ -2,18 +2,7 @@
 
 Last update: 2026-09-02
 
-Inputs:
-- barcodes: per-dataset cell barcodes from the sample file
-- matrix_h5: per-dataset 10x Ranger feature-barcode matrix
-- tissue_positions.csv: spatial spot coordinates
-- scalefactors_json.json: spatial scale factors
-- tissue_hires_image.png: spatial tissue image, hires
-- tissue_lowres_image.png: spatial tissue image, lowres
-- gtf_file: gene coordinates, joined on gene_id_colname
-- gene_blacklist_file: optional, one gene symbol or id per line
-- aux_dir/segment.bed: a gene outside every region is dropped
-Outputs:
-- bb_dir/{assay}.h5ad: cells x genes, obs_names {raw}_{dataset_id}_{assay_type}
+Inputs and outputs: see docs/reference.md#intermediates.
 """
 
 import logging

@@ -2,31 +2,7 @@
 
 Last update: 2026-08-29
 
-Inputs:
-- bb_file: pre-computed bbs, the feature axis of every output
-- allele_dir/snps.tsv.gz: the union SNP set, matrix rows
-- allele_dir/snp.{T,A,B}allele.npz: union allele counts, sliced to this assay
-- allele_dir/barcodes.tsv.gz: union column axis, sliced to this assay
-- allele_dir/sample_ids.tsv: dataset roster, sliced to this assay
-- bb_dir/{assay}.h5ad: RNA UMI source for Xcount
-- atac_fragments.tsv.gz: scATAC fragment source for Xcount
-- aux_dir/windows.bed.gz: the window grid; scATAC fragments are counted through it
-- genome_size: chrom sizes TSV
-Outputs:
-- bb_dir/unit/{assay}/snp.tsv.gz: the SNPs that landed in a window, matrix rows
-- bb_dir/unit/{assay}/snp.{T,A,B}allele.npz: this assay's slice of their allele counts
-- bb_dir/unit/{assay}/barcodes.tsv.gz: this assay's cells, matrix column order
-- bb_dir/unit/{assay}/sample_ids.tsv: this assay's datasets
-- bb_dir/unit/scATAC/window.{tsv.gz,Xcount.npz}: fragments counted per window per cell
-- bb_dir/unit/{rna_assay}/gene.{tsv.gz,Xcount.npz}: UMIs per gene per cell, un-binned
-- bb_dir/{assay}/bb.tsv.gz: the given bbs, re-stamped for this assay
-- bb_dir/{assay}/bb.{Xcount,Tallele,Aallele,Ballele}.npz: per-bb count matrices
-- bb_dir/{assay}/barcodes.tsv.gz: this assay's cells, matrix column order
-- bb_dir/{assay}/sample_ids.tsv: this assay's datasets
-- qc_dir/combine_counts.{assay}.pdf: one bb page per dataset, pseudobulk RDR over BAF
-- qc_dir/combine_counts.stats.{assay}.pdf: one unit-level page per dataset,
-  native and SNP-covered counts per cell/spot
-- qc_dir/combine_counts.stats.{assay}.tsv: the same, one row per dataset
+Inputs and outputs: see docs/reference.md#unit-level and docs/reference.md#final-bins.
 """
 
 import logging

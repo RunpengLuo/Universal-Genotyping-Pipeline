@@ -2,16 +2,7 @@
 
 Last update: 2026-08-11
 
-Inputs:
-- phase_dir/phased_het_snps.vcf.gz: the parent SNP set every replicate maps onto
-- pileup_dir/{assay}_{dataset_id}/bcftools.counts.tsv.gz: per-replicate REF/ALT depths
-- aux_dir/segment.bed: region and segment bounds for filtering
-- blacklist_bed, gtf_file, genome_size: SNP filters and QC shading
-Outputs:
-- allele_dir/snps.tsv.gz: kept SNPs, het-balanced and covered everywhere
-- allele_dir/snp.{T,A,B}allele.npz: one dense matrix, one column per replicate
-- allele_dir/sample_ids.tsv: one row per matrix column
-- qc_dir/phase_and_concat.bulk.pdf: SNP depth and allele-frequency QC
+Inputs and outputs: see docs/reference.md#intermediates.
 """
 
 import logging

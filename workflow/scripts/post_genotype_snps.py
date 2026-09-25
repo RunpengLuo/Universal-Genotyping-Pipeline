@@ -12,14 +12,8 @@ Two independent axes. ``params.source`` says which VCFs hold the counts:
 
 Last update: 2026-08-28
 
-Inputs:
-- [bulk] snp_dir/raw/chr{chrname}.vcf.gz: the bcftools calls, every chromosome
-- [pseudobulk] snp_dir/pseudobulk_{modality}/cellSNP.base.vcf.gz: cellsnp-lite base calls
-- genome_size: chrom sizes TSV, for the ##contig header
-Outputs:
-- snp_dir/chr{chrname}.vcf.gz: bi-allelic het or hom-alt SNPs
-- snp_dir/chr{chrname}.vcf.gz.tbi: tabix index of the above
-- qc_dir/genotype_snps.pdf: SNP allele frequency by genotype
+Inputs and outputs: see docs/reference.md#intermediates.
+
 Notes:
 - both sources report depth as cellsnp-lite does, ``REF + ALT`` with the other-allele
   reads held apart in OTH (cellsnp-lite ``src/csp.h``: DP is "total counts for ALT and

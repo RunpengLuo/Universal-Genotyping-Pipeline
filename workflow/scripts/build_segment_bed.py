@@ -2,12 +2,7 @@
 
 Last update: 2026-08-17
 
-Inputs:
-- region_bed: chromosome arms BED4, 4th column is region_id
-- extremity_tsv: optional headered TSV of SV breakpoints, `#CHR` and `POS0`
-- blacklist_bed: optional BED3, subtracted from every segment
-Outputs:
-- aux_dir/segment.bed: BED5 carrying region_id and seg_id
+Inputs and outputs: see docs/reference.md#intermediates.
 
 Notes/References:
 - An extremity at POS0=p cuts its arm into [START, p) and [p, END), so no bin and no bb

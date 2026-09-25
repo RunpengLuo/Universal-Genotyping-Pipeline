@@ -2,20 +2,7 @@
 
 Last update: 2026-08-12
 
-Inputs:
-- pileup_dir/{assay}/out_mosdepth/{dataset_id}.regions.bed.gz: per-dataset per-bin depth
-- aux_dir/windows.bed.gz: the shared fixed bins with GC, MAP, REPLI, region_id
-- aux_dir/window.target.npz: optional per-window capture-target fraction; when present,
-  a bulkWES dataset is corrected on- and off-target separately and every dataset is then
-  rescaled to a common depth level within each group
-- genome_size, region_bed, blacklist_bed: QC plot axis and shading
-Outputs:
-- pileup_dir/bulk/window.raw.dp.npz: raw mosdepth depth, windows x all bulk datasets,
-  unmasked and uncorrected
-- pileup_dir/bulk/window.dp.npz: corrected depth, windows x all bulk datasets,
-  0.0 where depth is 0 and NaN below min_mappability or where the fit is undefined
-- pileup_dir/bulk/depth_statistics.tsv: per-dataset depth summary
-- qc_dir/rd_correction.pdf: depth scatter before/after plus covariate KDE
+Inputs and outputs: see docs/reference.md#intermediates.
 
 Both matrices are float32, row-aligned to the window BED filtered to `chroms`, and
 column-ordered as `params.dataset_ids`, which is the `SAMPLE` order of
