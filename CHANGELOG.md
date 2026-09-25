@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `params_combine_counts.phase_em` (bulk): re-orients SNP phases inside each bb before its
+  allele counts are summed, so a bb spanning a phaser switch error no longer sums two
+  anti-phased halves and averages its BAF toward 0.5. Set by `phase_em_tau`,
+  `phase_em_min_llr` and the EM's solver keys.
+- `phased_het_snps.phase_em.vcf.gz{,.tbi}` in each `MSR{msr}/bulk/` under `phase_em`: that
+  level's re-oriented genotypes, for a downstream mode that consumes a phased VCF.
+- `combine_counts.stats.{assay}.pdf` and `combine_counts.stats.{assay}.tsv` in both
+  non-bulk modes: total and SNP-covered counts per cell/spot, with the SNP loci and
+  features each dataset detects and how sparsely they are populated. Unit level, so
+  independent of `min_snp_reads`.
+
 ### Changed
 - QC PDF names: `post_genotype_snps.{bulk,nonbulk}.pdf` -> `genotype_snps.pdf`,
   `detect_loh.bulk.pdf` -> `detect_loh.pdf`, `rd_correction.bulk.pdf` -> `rd_correction.pdf`.
@@ -18,16 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The single-cell and copytyping binning QC PDFs drop their SNP/multi-SNP page set and keep
   the bb level only, both drawn as pseudobulk RDR over BAF tracks.
 - `combine_counts_fixed_bins.{assay}.pdf` becomes `combine_counts.{assay}.pdf`.
-
-### Added
-- `combine_counts.stats.{assay}.pdf` and `combine_counts.stats.{assay}.tsv` in both
-  non-bulk modes: total and SNP-covered counts per cell/spot, with the SNP loci and
-  features each dataset detects and how sparsely they are populated. Unit level, so
-  independent of `min_snp_reads`.
-
-### Changed
 - `sample_id` and `dataset_id` no longer accept `_`: both are fields of `_`-joined
   keys the pipeline splits positionally.
+
+### Removed
+- `params_combine_counts.phase_flip_test`, `phase_flip_epsilon` and `phase_flip_alpha`,
+  with the phase-cluster split they drove: that boundary closes a bb whether or not it has
+  met `min_snp_reads` and `min_total_reads`, which `phase_em` does not need.
 
 ### Fixed
 - `process_rna_anndata` concatenates several RNA datasets on the gene id and carries

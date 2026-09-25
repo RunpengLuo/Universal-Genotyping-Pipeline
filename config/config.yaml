@@ -142,9 +142,19 @@ params_combine_counts:
   min_switchprob: 1e-6
   nu: 1
   switchprob_ps: 5e-2
-  phase_flip_test: true
-  phase_flip_epsilon: 0.05
-  phase_flip_alpha: 0.05
+  # re-orient SNP phases within each bb before the allele counts are summed
+  phase_em: true
+  # beta-binomial dispersion of that EM; fixed, not fitted
+  phase_em_tau: 30
+  # imbalance a bb must show before it is re-oriented, as a log likelihood ratio in nats
+  phase_em_min_llr: 3
+  # solver: theta grid (n_grid must be odd so 0.5 is on it), restarts, iteration budget
+  phase_em_n_grid: 101
+  phase_em_grid_eps: 0.005
+  phase_em_n_restarts: 5
+  phase_em_max_iter: 40
+  phase_em_tol: 1.0e-4
+  phase_em_min_snps: 2
 
   nsnp_multi: 2
 

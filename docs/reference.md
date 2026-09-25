@@ -233,22 +233,25 @@ Used by `combine_counts` (bulk) and `combine_counts_nonbulk` (single-cell).
 | `switchprob_ps` | Switch probability within one phase set (`PS`); ~0.5 across sets. |
 | `nsnp_multi` | SNPs per multi-SNP diagnostic group. |
 | `rdr_normalization` | Bulk RDR denominator: `auto` (base else median), `median`, `normal` (base required). |
-| `phase_flip_test` | Split a phase cluster failing the haplotype-flip test (bulk). |
-| `phase_flip_epsilon` | Effect size of that test (bulk). |
-| `phase_flip_alpha` | Significance level of that test (bulk). |
+| `phase_em` | Re-orient SNP phases inside each bb before its allele counts are summed (bulk), by a naive-Bayes EM over the tumor observations. Without it a bb spanning a phaser switch error averages its BAF toward 0.5. |
+| `phase_em_tau` | Beta-binomial dispersion of that EM, `BetaBinom(t; tau*theta, tau*(1-theta))`; one number for the whole genome, fixed. Smaller re-orients fewer SNPs. |
+| `phase_em_min_llr` | Evidence a bb must show of having any allelic imbalance before it is re-oriented, as `loglik - loglik at BAF 0.5`, a log likelihood ratio in nats: a floor of `L` demands odds of `exp(L)`. A balanced bb has no orientation to find, so without a floor the EM fits noise there and inflates the spread of BAF around 0.5. `0` re-orients every bb. |
+| `phase_em_n_grid` | Points on the `theta` grid that EM maximizes each bb's BAF over. Must be odd, so the grid contains 0.5: that is the null `phase_em_min_llr` scores against, and the point the flipped orientation is mirrored about. Checked at parse time. |
+| `phase_em_grid_eps` | Distance of that grid's ends from 0 and 1, so it spans `[eps, 1 - eps]`. |
+| `phase_em_n_restarts` | Initial `theta` values the EM is run from, besides the null at 0.5. The null is always among them, which is what keeps the reported log likelihood ratio non-negative. |
+| `phase_em_max_iter` | EM iterations per restart. |
+| `phase_em_tol` | Per-bb log-likelihood gain below which a restart stops. |
+| `phase_em_min_snps` | SNPs a bb needs before it is fitted at all; below it the bb keeps the phaser's orientation. |
 
 > [!NOTE]
-> Adaptive binning merges consecutive windows left to right and closes a bb when BOTH
-> hold, the rule HATCHet2 uses (`adaptive_bins_arm`,
-> [combine_counts.py](https://github.com/raphael-group/hatchet/blob/master/src/hatchet/utils/combine_counts.py)):
+> Adaptive binning merges consecutive windows left to right and closes a bb when BOTH hold:
 > - every tumor column has `min_snp_reads` SNP reads and the bb holds `min_snp_per_bin` SNPs;
 > - `[bulk]` every column has `min_total_reads` read starts.
 >
 > There is no span cap: a cap can only fire by cutting a bb that has not met these, so
 > the two criteria would contradict each other. What bounds a bb instead:
 > - a bb never spans two `region_id`, `seg_id`, `loh_id` or `PS` clusters;
-> - `[bulk]` nor two `phase_cluster` clusters, under `phase_flip_test`;
-> - the next window starts a new gene, under `gene_aware_binning`;
+> - if `gene_aware_binning`, a bb never spans a partial gene.
 > - a trailing run below threshold merges into the previous bb, and a cluster that never
 >   meets the thresholds stays one bb (logged).
 >
@@ -326,6 +329,7 @@ A `min_snp_reads` list writes one `MSR{msr}/` per value.
 | `bb.{depth,rdr}.npz` | Depth, and RDR for the tumor columns only. |
 | `bb.rdcount.npz` | Read starts summed from the windows, int32, every column. |
 | `sample_ids.tsv` | One row per matrix column. |
+| `phased_het_snps.phase_em.vcf.gz{,.tbi}` | `phase_em` only: `phased_snp_vcf` with this level's re-oriented genotypes swapped, so a downstream mode reading a phased VCF sees the orientation these bbs were summed in. Pair it with the `bb.tsv.gz` beside it. |
 | `multi_snp/bulk/` | Multi-SNP diagnostic groups, bb schema, outside `MSR{msr}/`. |
 
 **`single_cell_genotyping`** - one bb set over every assay, copied into each subdir;

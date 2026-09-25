@@ -50,8 +50,9 @@ from combine_counts_utils import (
     summarize_rdr_bb,
     tumor_observation_indices,
 )
+from phase_em import correct_bin_phases
 from phasing_utils import (
-    detect_phase_flips,
+    apply_phase_to_mat,
     estimate_switchprobs_PS,
     estimate_switchprobs_cM,
     interp_cM_between_bbs,
@@ -87,9 +88,15 @@ dp_dataset_ids = list(snakemake_handle.params["dataset_ids"])
 dp_dataset_assays = list(snakemake_handle.params["dataset_assays"])
 chroms = list(snakemake_handle.params["chroms"])
 
-phase_flip_test = bool(snakemake_handle.params["phase_flip_test"])
-phase_flip_epsilon = float(snakemake_handle.params["phase_flip_epsilon"])
-phase_flip_alpha = float(snakemake_handle.params["phase_flip_alpha"])
+phase_em = bool(snakemake_handle.params["phase_em"])
+phase_em_tau = float(snakemake_handle.params["phase_em_tau"])
+phase_em_min_llr = float(snakemake_handle.params["phase_em_min_llr"])
+phase_em_n_grid = int(snakemake_handle.params["phase_em_n_grid"])
+phase_em_grid_eps = float(snakemake_handle.params["phase_em_grid_eps"])
+phase_em_n_restarts = int(snakemake_handle.params["phase_em_n_restarts"])
+phase_em_max_iter = int(snakemake_handle.params["phase_em_max_iter"])
+phase_em_tol = float(snakemake_handle.params["phase_em_tol"])
+phase_em_min_snps = int(snakemake_handle.params["phase_em_min_snps"])
 
 gene_aware_binning = bool(snakemake_handle.params["gene_aware_binning"])
 msr_list = [int(m) for m in snakemake_handle.params["min_snp_reads"]]
@@ -132,6 +139,7 @@ out_multi_rdcount_mtx = snakemake_handle.output["multi_rdcount_mtx"]
 out_multi_sample_file = snakemake_handle.output["multi_sample_file"]
 out_qc_stats_pdf = list(snakemake_handle.output["qc_stats_pdf"])
 out_qc_1d2d_pdf = list(snakemake_handle.output["qc_1d2d_pdf"])
+out_flip_tsv_bb = list(snakemake_handle.output["flip_tsv_bb"])
 out_loh_pdf = snakemake_handle.output["loh_pdf"] if detect_loh_tumor_cell_line else None
 
 ##################################################
@@ -315,8 +323,7 @@ else:
 # one key per maximal run, so a bb never spans an LOH boundary in either direction
 bin_df["loh_id"] = (bin_df["is_loh"] != bin_df["is_loh"].shift()).cumsum()
 win_is_loh = bin_df["is_loh"].to_numpy()
-# the LOH key is defined on windows; a SNP inherits its window's, so the SNP-side
-# clustering (detect_phase_flips) splits on the same boundary the bins do
+# the LOH key is defined on windows; a SNP inherits its window's
 snps_binned["loh_id"] = bin_df["loh_id"].to_numpy()[snps_binned["bin_id"].to_numpy()]
 snps_binned["is_loh"] = win_is_loh[snps_binned["bin_id"].to_numpy()]
 
@@ -348,21 +355,6 @@ if "PS" in snps.columns:
     cluster_cols.append("PS")
     modal = snps_binned.groupby("bin_id")["PS"].agg(lambda x: x.mode().iloc[0])
     bin_df["PS"] = bin_df["bin_id"].map(modal).ffill().bfill().fillna(1)
-
-if phase_flip_test:
-    snps_binned["phase_cluster"] = detect_phase_flips(
-        snps_binned,
-        a_mtx[:, tumor_dataset_indices],
-        b_mtx[:, tumor_dataset_indices],
-        cluster_cols=cluster_cols,
-        epsilon=phase_flip_epsilon,
-        alpha=phase_flip_alpha,
-    )
-    cluster_cols.append("phase_cluster")
-    modal = snps_binned.groupby("bin_id")["phase_cluster"].agg(
-        lambda x: x.mode().iloc[0]
-    )
-    bin_df["phase_cluster"] = bin_df["bin_id"].map(modal).ffill().bfill().fillna(0)
 
 if gene_aware_binning:
     gene_spans = (
@@ -526,6 +518,7 @@ logging.info(f"wrote {len(multi_bbs)} multi-SNP groups to {out_multi_bb_file}")
 # one adaptive binning per min_snp_reads, on the shared fixed bins
 for (
     msr,
+    out_flip_tsv,
     out_bb,
     out_tot,
     out_a,
@@ -538,6 +531,7 @@ for (
     out_1d2d_pdf,
 ) in zip(
     msr_list,
+    out_flip_tsv_bb,
     out_bb_file,
     out_tot_mtx_bb,
     out_a_mtx_bb,
@@ -570,7 +564,7 @@ for (
     bbs["is_loh"] = loh_bb
     empty_bb = ((bbs["#SNPS"] == 0).to_numpy()) & ~loh_bb
     n_empty = int(empty_bb.sum())
-    logging.info(f"{num_bbs} bbs from {len(bin_df)} bins")
+    logging.info(f"MSR={msr}: {num_bbs} bbs from {len(bin_df)} bins")
     log_ratios(
         "SNP-free bbs (all-zero allele rows, dropped below)",
         n_empty,
@@ -588,9 +582,49 @@ for (
         )
 
     bb_ids = snps_bb["bb_id"].to_numpy()
-    a_mtx_bb = sum_features_to_bbs(a_mtx, bb_ids, num_bbs)
-    b_mtx_bb = sum_features_to_bbs(b_mtx, bb_ids, num_bbs)
+    flips = (
+        correct_bin_phases(
+            snps_bb,
+            a_mtx,
+            b_mtx,
+            tumor_dataset_indices,
+            phase_em_tau,
+            phase_em_min_llr,
+            n_grid=phase_em_n_grid,
+            grid_eps=phase_em_grid_eps,
+            n_restarts=phase_em_n_restarts,
+            max_iter=phase_em_max_iter,
+            tol=phase_em_tol,
+            min_snps=phase_em_min_snps,
+        )
+        if phase_em
+        else np.zeros(len(snps_bb), dtype=np.int8)
+    )
+    a_msr, b_msr = apply_phase_to_mat(tot_mtx, b_mtx, a_mtx, 1 - flips.astype(np.int64))
+    a_mtx_bb = sum_features_to_bbs(a_msr, bb_ids, num_bbs)
+    b_mtx_bb = sum_features_to_bbs(b_msr, bb_ids, num_bbs)
     tot_mtx_bb = sum_features_to_bbs(tot_mtx, bb_ids, num_bbs)
+    # the sites a downstream re-phasing of the SNP VCF has to swap
+    snps_binned.loc[flips == 1, ["#CHR", "POS"]].to_csv(
+        out_flip_tsv, sep="\t", index=False, header=False
+    )
+    if phase_em:
+        bb_flipped = np.zeros(num_bbs, dtype=bool)
+        bb_flipped[bb_ids[flips == 1]] = True
+        log_ratios(
+            f"MSR={msr}: bbs re-oriented by phase_em",
+            int(bb_flipped.sum()),
+            num_bbs,
+            bb_spans[bb_flipped],
+            "bb",
+        )
+        log_ratios(
+            "SNPs re-oriented inside their bb",
+            int(flips.sum()),
+            len(flips),
+            np.zeros(int(flips.sum())),
+            "snp",
+        )
 
     logging.info("aggregating corrected fixed-bin depth into bbs")
     bb_dp, bb_bases = summarize_read_depth_bb(

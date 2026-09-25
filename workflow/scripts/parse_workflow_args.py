@@ -25,6 +25,7 @@ from const import (
     BULK_ASSAYS,
     BULK_LR_ASSAYS,
     BULK_TARGETS,
+    PHASE_EM_TARGETS,
     COPYTYPING_TARGETS,
     FILES_COLUMN_PREFIX,
     LONGREAD_PHASER,
@@ -654,6 +655,18 @@ def parse_workflow(config):
     )
     do_repliseq = False
     if workflow_mode == "bulk_genotyping":
+        for _gone in ("phase_flip_test", "phase_flip_epsilon", "phase_flip_alpha"):
+            assert _gone not in config["params_combine_counts"], (
+                f"params_combine_counts.{_gone} was removed with the phase-flip split; "
+                "set phase_em instead, which re-orients SNPs inside each bb rather than "
+                "cutting the binning at a detected flip"
+            )
+        _n_grid = int(config["params_combine_counts"]["phase_em_n_grid"])
+        assert _n_grid >= 3 and _n_grid % 2 == 1, (
+            "params_combine_counts.phase_em_n_grid must be an odd integer >= 3, got "
+            f"{_n_grid}: the theta grid has to contain 0.5, which is both the EM's null "
+            "and the point the flipped orientation is mirrored about"
+        )
         rdr_normalization = config["params_combine_counts"]["rdr_normalization"]
         assert rdr_normalization in RDR_NORMALIZATIONS, (
             f"rdr_normalization must be one of {list(RDR_NORMALIZATIONS)}, "
@@ -711,8 +724,11 @@ def parse_workflow(config):
 
     # === final targets  ===
     if workflow_mode == "bulk_genotyping":
+        bulk_targets = list(BULK_TARGETS)
+        if config["params_combine_counts"]["phase_em"]:
+            bulk_targets += list(PHASE_EM_TARGETS)
         final_targets = [
-            f"{bb_dir}/MSR{m}/bulk/{f}" for m in msr_list for f in BULK_TARGETS
+            f"{bb_dir}/MSR{m}/bulk/{f}" for m in msr_list for f in bulk_targets
         ]
     elif workflow_mode == "single_cell_genotyping":
         final_targets = [
