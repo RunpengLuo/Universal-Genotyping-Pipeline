@@ -1,6 +1,6 @@
 """Within-bb re-orientation of SNP phases by a naive-Bayes EM over the observations.
 
-Last update: 2026-09-25
+Last update: 2026-09-26
 
 Functions:
 - correct_bin_phases: per-SNP flip vector from a within-bb EM over the tumor observations
@@ -9,40 +9,53 @@ Functions:
 
 import logging
 
+import numba
 import numpy as np
 import pandas as pd
 from scipy.sparse import issparse
-from scipy.special import betaln, expit, logsumexp
+from scipy.special import betaln, gammaln
 
 from segmentation_utils import sum_observations_to_pseudobulk
 from utils import log_hist
 
-
-def _bb_logpmf(b, a, theta, tau):
-    """Beta-binomial log-likelihood of *b* successes, up to a term constant in theta."""
-    alpha, beta = theta * tau, (1.0 - theta) * tau
-    return betaln(b + alpha, a + beta) - betaln(alpha, beta)
+_LOG2 = np.log(2.0)
 
 
-def _emission_table(b, t, thetas, tau):
-    """(n_snps, n_obs, n_grid) float32 log-likelihood of the observed B count.
+def _emission_lookup(b, a, thetas, tau):
+    """Factor the beta-binomial emission into a (n_value, n_grid) lgamma table.
 
-    Terms constant in *thetas* are dropped: the E-step uses a ratio between the two
-    orientations and the M-step compares grid points, so the binomial coefficient
-    cancels in both. *thetas* must be symmetric about 0.5, which lets the flipped
-    orientation be read off the same table in reverse (``BetaBinom(t - b; t, theta) ==
-    BetaBinom(b; t, 1 - theta)``) instead of stored twice.
+    ``BetaBinom(b; t, tau*theta, tau*(1-theta))`` expands to ``lgamma(b + tau*theta) +
+    lgamma(a + tau*(1-theta)) - lgamma(t + tau) - betaln(tau*theta, tau*(1-theta))``.
+    Only the first two terms depend on the count, and both are the same function of one
+    integer, so the emission of every (SNP, observation, grid point) is two lookups into
+    ``lgamma(v + tau*theta)`` over the distinct counts. The grid is symmetric about 0.5,
+    so ``tau*(1-theta_g) == tau*theta_rev[g]`` and one table serves both arguments.
 
-    The cancellation inside :func:`_bb_logpmf` happens in float64 before the cast, so a
-    large *tau* - where the two ``betaln`` terms are individually huge and nearly equal -
-    still lands on the binomial limit to about nine digits.
+    Args:
+        b, a: (n_snps, n_obs) B- and A-allele counts, integer-valued.
+        thetas: The theta grid, symmetric about 0.5.
+        tau: Beta-binomial dispersion.
+
+    Returns:
+        ``(bcode, acode, lgam, const, dsnp)``. *bcode* and *acode* index *lgam*'s rows;
+        *const* is the per-grid-point ``-betaln`` term, symmetric under reversal; *dsnp*
+        is ``-lgamma(t + tau)`` summed over observations, which is constant in theta.
     """
-    n_snp, n_obs = b.shape
-    out = np.empty((n_snp, n_obs, len(thetas)), dtype=np.float32)
-    a = t - b
-    for g, th in enumerate(thetas):
-        out[:, :, g] = _bb_logpmf(b, a, th, tau)
-    return out
+    bi = b.astype(np.int64)
+    ai = a.astype(np.int64)
+    assert np.array_equal(bi, b) and np.array_equal(ai, a), (
+        "within-bb EM: allele counts must be integers"
+    )
+    seen = np.zeros(int(max(bi.max(), ai.max())) + 1, dtype=bool)
+    seen[bi.ravel()] = True
+    seen[ai.ravel()] = True
+    vals = np.flatnonzero(seen)
+    remap = np.empty(len(seen), dtype=np.int32)
+    remap[vals] = np.arange(len(vals), dtype=np.int32)
+    lgam = gammaln(vals[:, None] + tau * thetas[None, :])
+    const = -betaln(tau * thetas, tau * (1.0 - thetas))
+    dsnp = -gammaln(bi + ai + tau).sum(axis=1)
+    return remap[bi], remap[ai], lgam, const, dsnp
 
 
 def _bb_reduce(indptr, weighted):
@@ -50,13 +63,77 @@ def _bb_reduce(indptr, weighted):
     return np.add.reduceat(weighted, indptr[:-1], axis=0)
 
 
+@numba.njit(parallel=True)
+def _em_sweep(bcode, acode, indptr, lgam, const, dsnp, k, post, ll, prev, active, tol):
+    """One EM iteration over the bbs still moving; returns how many still are.
+
+    A bb whose grid point comes back unchanged sits on an exact fixed point: its next
+    E-step, and so every later M-step, would repeat itself. Its posterior and
+    log-likelihood are final, and it is dropped from later sweeps. *k*, *post*, *ll*,
+    *prev* and *active* are updated in place.
+
+    The bbs are independent, so they are swept in parallel; every write is indexed by
+    the bb or by a row inside it, and the thread count is whatever ``set_omp_threads``
+    put in ``NUMBA_NUM_THREADS``, i.e. the rule's ``threads``.
+    """
+    n_seg = len(indptr) - 1
+    n_grid = lgam.shape[1]
+    n_obs = bcode.shape[1]
+    n_live = 0
+    for q in numba.prange(n_seg):
+        if not active[q]:
+            continue
+        keep = np.zeros((n_obs, n_grid))
+        flip = np.zeros((n_obs, n_grid))
+        ll_q = 0.0
+        for s in range(indptr[q], indptr[q + 1]):
+            lk = dsnp[s]
+            lf = dsnp[s]
+            for o in range(n_obs):
+                g = k[q, o]
+                r = n_grid - 1 - g
+                lk += lgam[bcode[s, o], g] + lgam[acode[s, o], r] + const[g]
+                lf += lgam[bcode[s, o], r] + lgam[acode[s, o], g] + const[g]
+            d = lk - lf
+            w = 1.0 / (1.0 + np.exp(-d))
+            post[s] = w
+            ll_q += (lk if lk > lf else lf) + np.log1p(np.exp(-abs(d))) - _LOG2
+            for o in range(n_obs):
+                brow = lgam[bcode[s, o]]
+                arow = lgam[acode[s, o]]
+                for g in range(n_grid):
+                    keep[o, g] += w * brow[g] + (1.0 - w) * arow[g]
+                    flip[o, g] += w * arow[g] + (1.0 - w) * brow[g]
+        ll[q] = ll_q
+        n_snp = indptr[q + 1] - indptr[q]
+        moved = False
+        for o in range(n_obs):
+            best = -np.inf
+            arg = 0
+            for g in range(n_grid):
+                v = keep[o, g] + flip[o, n_grid - 1 - g] + n_snp * const[g]
+                if v > best:
+                    best = v
+                    arg = g
+            if arg != k[q, o]:
+                moved = True
+            k[q, o] = arg
+        if moved and ll_q - prev[q] >= tol:
+            n_live += 1
+        else:
+            active[q] = False
+        prev[q] = ll_q
+    return n_live
+
+
 def _em_bins(b, t, bb_ids, tau, n_grid, grid_eps, n_restarts, max_iter, tol):
     """Run the naive-Bayes EM on every bb at once.
 
-    All bbs share the iteration structure, so the E-step is one pass over the SNP axis
-    and the M-step is one segment-sum per (observation, theta grid point). The emission
-    table is built once and reused across restarts, which is what makes the restarts
-    cheap. ``tau`` is fixed, not fitted: see :func:`correct_bin_phases`.
+    All bbs share the iteration structure, so one sweep of :func:`_em_sweep` carries the
+    E- and M-step of every bb that has not yet reached its fixed point. The emission is
+    never materialized per SNP: :func:`_emission_lookup` reduces it to a table over the
+    distinct allele counts, which the sweep indexes. ``tau`` is fixed, not fitted: see
+    :func:`correct_bin_phases`.
 
     Returns:
         ``(post, llr, n_bb)``: *post* is the per-SNP posterior that the SNP keeps its
@@ -64,57 +141,68 @@ def _em_bins(b, t, bb_ids, tau, n_grid, grid_eps, n_restarts, max_iter, tol):
         null.
     """
     n_grid = int(n_grid)
-    thetas = np.linspace(float(grid_eps), 1.0 - float(grid_eps), n_grid)
     if n_grid % 2 == 0:
         raise ValueError("n_grid must be odd so the grid contains 0.5")
-    rev = n_grid - 1 - np.arange(n_grid)
+    thetas = np.linspace(float(grid_eps), 1.0 - float(grid_eps), n_grid)
     mid = n_grid // 2
 
     order = np.argsort(bb_ids, kind="stable")
     b, t, bb_sorted = b[order], t[order], bb_ids[order]
     n_bb = int(bb_sorted.max()) + 1 if len(bb_sorted) else 0
-    indptr = np.r_[0, np.flatnonzero(np.diff(bb_sorted)) + 1, len(bb_sorted)]
+    indptr = np.r_[0, np.flatnonzero(np.diff(bb_sorted)) + 1, len(bb_sorted)].astype(
+        np.int64
+    )
     seg_bb = bb_sorted[indptr[:-1]]
-    seg_of_snp = np.searchsorted(seg_bb, bb_sorted)
     n_seg, n_obs = len(seg_bb), b.shape[1]
 
     tau = float(tau)
+    bcode, acode, lgam, const, dsnp = _emission_lookup(b, t - b, thetas, tau)
     logging.info(
         f"within-bb EM: {len(b)} SNPs, {n_seg} non-empty bbs of {n_bb}, {n_obs} "
-        f"observations, tau={tau:g}, theta grid={n_grid}, restarts={n_restarts}"
+        f"observations, tau={tau:g}, theta grid={n_grid}, restarts={n_restarts}, "
+        f"{lgam.shape[0]} distinct allele counts"
     )
 
-    table = _emission_table(b, t, thetas, tau)
-    null_ll = _bb_reduce(indptr, table[:, :, mid].astype(np.float64)).sum(axis=1)
+    null_ll = _bb_reduce(
+        indptr, dsnp + (lgam[bcode, mid] + lgam[acode, mid] + const[mid]).sum(axis=1)
+    )
     best_ll = np.full(n_seg, -np.inf)
     best_post = np.zeros(len(b))
+    post = np.zeros(len(b))
+    ll = np.zeros(n_seg)
+    seg_size = np.diff(indptr)
+    n_sweep = 0
     # the null theta=0.5 is a fixed point of the EM and is always one of the restarts,
     # so the fit can never score below it and the reported llr stays non-negative
     for init in np.r_[np.linspace(0.05, 0.45, int(n_restarts)), 0.5]:
-        k = np.full((n_seg, n_obs), int(np.argmin(np.abs(thetas - init))))
+        k = np.full(
+            (n_seg, n_obs), int(np.argmin(np.abs(thetas - init))), dtype=np.int64
+        )
         prev = np.full(n_seg, -np.inf)
+        active = np.ones(n_seg, dtype=np.bool_)
         for _ in range(int(max_iter)):
-            ks = k[seg_of_snp]
-            lk = np.take_along_axis(table, ks[:, :, None], axis=2)[:, :, 0].sum(axis=1)
-            lf = np.take_along_axis(table, rev[ks][:, :, None], axis=2)[:, :, 0].sum(
-                axis=1
+            n_sweep += 1
+            n_live = _em_sweep(
+                bcode,
+                acode,
+                indptr,
+                lgam,
+                const,
+                dsnp,
+                k,
+                post,
+                ll,
+                prev,
+                active,
+                float(tol),
             )
-            post = expit(lk - lf)
-            ll = _bb_reduce(
-                indptr, logsumexp(np.c_[lk, lf], axis=1)[:, None] - np.log(2.0)
-            ).ravel()
-            w32 = post.astype(np.float32)
-            keep_sum = _bb_reduce(indptr, w32[:, None, None] * table)
-            flip_sum = _bb_reduce(indptr, (1.0 - w32)[:, None, None] * table)
-            k = np.argmax(keep_sum + flip_sum[:, :, rev], axis=2)
-            if np.all(ll - prev < float(tol)):
-                prev = ll
+            if n_live == 0:
                 break
-            prev = ll
         better = prev > best_ll
         best_ll = np.where(better, prev, best_ll)
-        take = better[seg_of_snp]
+        take = np.repeat(better, seg_size)
         best_post[take] = post[take]
+    logging.info(f"within-bb EM: {n_sweep} sweeps over {int(n_restarts) + 1} restarts")
 
     llr = np.zeros(n_bb)
     llr[seg_bb] = best_ll - null_ll

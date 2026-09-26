@@ -129,7 +129,7 @@ if workflow_mode == "bulk_genotyping":
             bench_dir + f"/combine_counts.bulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
-        threads: 1
+        threads: config["threads"]["combine_counts"]
         params:
             qc_dir=qc_dir,
             sample_id=sample_id,

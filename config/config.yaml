@@ -183,3 +183,4 @@ threads:
   phase: 4
   pileup: 2
   mosdepth: 4
+  combine_counts: 4

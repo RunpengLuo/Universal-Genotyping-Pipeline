@@ -276,6 +276,7 @@ Used by all multi-thread rules.
 | `phase` | Threads for phasing. |
 | `pileup` | Threads for the pileup step (bulk: the `bgzip` writing the counts; single-cell: cellsnp-lite, which is genuinely parallel). |
 | `mosdepth` | Threads for the bulk read-counting rules: `mosdepth -t`, and `samtools view -@` in `count_read_starts_chrom`. |
+| `combine_counts` | Threads for the bulk `combine_counts` rule. Sizes numba's pool, which the `phase_em` within-bb EM sweeps its bbs over. |
 
 > [!NOTE]
 > `bcftools` applies `--threads` to the output handle only, never to the BAM/CRAM
