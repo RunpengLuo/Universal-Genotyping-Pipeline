@@ -228,6 +228,7 @@ Used by `combine_counts` (bulk) and `combine_counts_nonbulk` (single-cell).
 | `loh_rate_ratio` | LOH-state het rate as a fraction of the fitted neutral rate. |
 | `loh_breakpoint_rate` | Poisson breakpoints per bp for that chain; its reciprocal is the mean segment length (`1e-8` -> 100 Mb). The only thing resisting a one-tile flip, so it sets the reported region count. |
 | `gene_aware_binning` | Grow bbs by whole genes; never cut inside one. |
+| `phaseset_aware_binning` | Split bbs at every phase-set (`PS`) bound, so a bb never pools SNPs the phaser did not phase together. `false` lets a bb span a bound, leaving `phase_em` to re-orient across it and making a `PS`-derived `switchprobs` read the bb's first phase set only. Inert when the SNP frame carries no `PS`. |
 | `nu` | Haldane scale turning cM distance into a switch probability. |
 | `min_switchprob` | Floor on that switch probability. |
 | `switchprob_ps` | Switch probability within one phase set (`PS`); ~0.5 across sets. |
@@ -243,6 +244,37 @@ Used by `combine_counts` (bulk) and `combine_counts_nonbulk` (single-cell).
 | `phase_em_tol` | Per-bb log-likelihood gain below which a restart stops. |
 | `phase_em_min_snps` | SNPs a bb needs before it is fitted at all; below it the bb keeps the phaser's orientation. |
 
+Stage order in `combine_counts` (bulk). The SNP grid and the window grid enter separately
+and are joined by assigning each SNP to the window holding it; a SNP in no window is
+dropped from the frame and from the allele matrices. Everything after that merges windows
+into bbs, and nothing splits a window.
+
+```
+SNP grid (allele_dir/) -----+
+                            +-> assign SNPs to windows -> [clonal-LOH pre-pass] -> unit/bulk/
+window grid (aux/windows) --+
+                                  |
+                                  +-> multi-SNP groups (nsnp_multi) ------------> multi_snp/bulk/
+                                  |     cluster keys: region_id, seg_id
+                                  |
+                                  +-> one pass per min_snp_reads:
+                                        cluster keys: region_id, seg_id, loh_id
+                                                      [, PS] [, gene_cluster]
+                                                      (the last two are config-gated)
+                                        merge windows until min_snp_reads and
+                                          min_snp_per_bin hold in every tumor column and
+                                          min_total_reads holds in every column
+                                        -> phase_em re-orients the SNPs inside each bb
+                                        -> swap A/B at the flipped SNPs, sum SNPs -> bb
+                                        -> depth (length-weighted), read starts (sum), RDR
+                                        -> clonal-LOH stamp -> NaN filter -> switchprobs
+                                        -> MSR{msr}/bulk/
+```
+
+`phase_em` conditions on the bb boundaries, so it runs inside the sweep and its flip
+vector differs between `min_snp_reads` levels. `unit/bulk/` and `multi_snp/bulk/` are
+written before it and carry the phaser's orientation.
+
 > [!NOTE]
 > Adaptive binning merges consecutive windows left to right and closes a bb when BOTH hold:
 > - every tumor column has `min_snp_reads` SNP reads and the bb holds `min_snp_per_bin` SNPs;
@@ -250,7 +282,8 @@ Used by `combine_counts` (bulk) and `combine_counts_nonbulk` (single-cell).
 >
 > There is no span cap: a cap can only fire by cutting a bb that has not met these, so
 > the two criteria would contradict each other. What bounds a bb instead:
-> - a bb never spans two `region_id`, `seg_id`, `loh_id` or `PS` clusters;
+> - a bb never spans two `region_id` or `seg_id` clusters, nor two `loh_id` runs;
+> - if `phaseset_aware_binning`, a bb never spans two `PS` clusters;
 > - if `gene_aware_binning`, a bb never spans a partial gene.
 > - a trailing run below threshold merges into the previous bb, and a cluster that never
 >   meets the thresholds stays one bb (logged).

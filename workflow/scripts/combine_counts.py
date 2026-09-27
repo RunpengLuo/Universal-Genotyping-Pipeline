@@ -99,6 +99,7 @@ phase_em_tol = float(snakemake_handle.params["phase_em_tol"])
 phase_em_min_snps = int(snakemake_handle.params["phase_em_min_snps"])
 
 gene_aware_binning = bool(snakemake_handle.params["gene_aware_binning"])
+phaseset_aware_binning = bool(snakemake_handle.params["phaseset_aware_binning"])
 msr_list = [int(m) for m in snakemake_handle.params["min_snp_reads"]]
 min_total_reads = int(snakemake_handle.params["min_total_reads"])
 
@@ -350,7 +351,7 @@ logging.info(
 # adaptive segmentation bounderies
 cluster_cols = ["region_id", "seg_id", "loh_id"]
 
-if "PS" in snps.columns:
+if phaseset_aware_binning and "PS" in snps.columns:
     assert snps["PS"].notna().all(), "SNP file, `PS` column has NaNs"
     cluster_cols.append("PS")
     modal = snps_binned.groupby("bin_id")["PS"].agg(lambda x: x.mode().iloc[0])
@@ -365,6 +366,11 @@ if gene_aware_binning:
     bin_df["gene_cluster"] = merge_ranges_to_clusters(
         len(bin_df), zip(gene_spans["min"].to_numpy(), gene_spans["max"].to_numpy() + 1)
     )
+
+logging.info(
+    f"binning cluster keys={cluster_cols}, gene_aware_binning={gene_aware_binning}, "
+    f"phaseset_aware_binning={phaseset_aware_binning}"
+)
 
 ##################################################
 # multi-SNP groups: nsnp_multi SNPs each, independent of the binning sweep

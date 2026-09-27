@@ -84,6 +84,7 @@ nsnp_multi = int(snakemake_handle.params["nsnp_multi"])
 msr_list = [int(m) for m in snakemake_handle.params["min_snp_reads"]]
 min_snp_per_bin = int(snakemake_handle.params["min_snp_per_bin"])
 gene_aware_binning = bool(snakemake_handle.params["gene_aware_binning"])
+phaseset_aware_binning = bool(snakemake_handle.params["phaseset_aware_binning"])
 
 # outputs
 out_bb_file = list(snakemake_handle.output["bb_file"])
@@ -144,7 +145,10 @@ logging.info(
     f"#datasets={len(joint_sids)}\n"
     f"#tumor_datasets={len(tumor_dataset_indices)}"
 )
-logging.info(f"gene_aware_binning={gene_aware_binning}")
+logging.info(
+    f"gene_aware_binning={gene_aware_binning}, "
+    f"phaseset_aware_binning={phaseset_aware_binning}"
+)
 
 ##################################################
 # one pseudobulk column per (dataset_id x assay_type), in the roster's row order
@@ -265,7 +269,7 @@ for k, assay in enumerate(assay_types):
 # adaptive segmentation bounderies
 cluster_cols = ["region_id", "seg_id"]
 
-if "PS" in snps.columns:
+if phaseset_aware_binning and "PS" in snps.columns:
     assert snps["PS"].notna().all(), "SNP file, `PS` column has NaNs"
     cluster_cols.append("PS")
     modal = snps_binned.groupby("bin_id")["PS"].agg(lambda x: x.mode().iloc[0])

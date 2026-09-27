@@ -164,6 +164,7 @@ params_combine_counts:
   min_total_reads: 5000
 
   gene_aware_binning: true
+  phaseset_aware_binning: true
 
   # clonal-LOH detection (bulk only) for tumor cell-line datasets without matched-normal sample.
   detect_loh_tumor_cell_line: false

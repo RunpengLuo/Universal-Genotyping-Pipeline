@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `phase_em_min_llr` and the EM's solver keys.
 - `phased_het_snps.phase_em.vcf.gz{,.tbi}` in each `MSR{msr}/bulk/` under `phase_em`: that
   level's re-oriented genotypes, for a downstream mode that consumes a phased VCF.
+- `params_combine_counts.phaseset_aware_binning` (default `true`): gates the phase-set
+  (`PS`) bound as a binning cluster key, so a run whose phaser emits many short phase
+  sets can let bbs span them instead of being split at every one.
 - `threads.combine_counts`: threads for the bulk `combine_counts` rule, which the
   `phase_em` EM sweeps its bbs across; a rule's `threads` now caps numba as well as BLAS.
 - `combine_counts.stats.{assay}.pdf` and `combine_counts.stats.{assay}.tsv` in both

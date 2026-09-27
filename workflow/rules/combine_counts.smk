@@ -144,6 +144,9 @@ if workflow_mode == "bulk_genotyping":
             min_snp_per_bin=config["params_combine_counts"]["min_snp_per_bin"],
             nsnp_multi=config["params_combine_counts"]["nsnp_multi"],
             gene_aware_binning=config["params_combine_counts"]["gene_aware_binning"],
+            phaseset_aware_binning=config["params_combine_counts"][
+                "phaseset_aware_binning"
+            ],
             min_total_reads=config["params_combine_counts"]["min_total_reads"],
             detect_loh_tumor_cell_line=_detect_loh_cl,
             loh_tile_size=config["params_combine_counts"]["loh_tile_size"],
@@ -349,6 +352,9 @@ elif workflow_mode == "single_cell_genotyping":
             min_snp_reads=msr_list,
             min_snp_per_bin=config["params_combine_counts"]["min_snp_per_bin"],
             gene_aware_binning=config["params_combine_counts"]["gene_aware_binning"],
+            phaseset_aware_binning=config["params_combine_counts"][
+                "phaseset_aware_binning"
+            ],
             run_id=_run_id,
         script:
             """../scripts/combine_counts_nonbulk.py"""
