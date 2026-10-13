@@ -2,12 +2,7 @@
 
 Last update: 2026-08-26
 
-Inputs:
-- aux_dir/windows.bed.gz (or the configured window_bed): the shared fixed bins
-- target_bed: the capture kit's target intervals (BED3+), e.g. IDT xGen, Agilent SureSelect
-Outputs:
-- aux_dir/window.target.npz: `mat`, float32 on-target bp fraction in [0, 1], one row per
-  window, aligned to `read_window_bed(window_bed, chroms=chroms)`
+Inputs and outputs: see docs/reference.md#intermediates.
 
 A WES library splits its reads into a captured fraction at tens to hundreds of x and an
 off-target background near 0x. That split is a property of the window grid, not of any one

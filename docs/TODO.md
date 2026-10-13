@@ -1,12 +1,12 @@
 # TODO
 
-# MSR vector to support joint whole-genome / targeted segmentation
+## MSR vector to support joint whole-genome / targeted segmentation
 
 Replace the scalar `min_snp_reads` with a per-dataset vector derived from a target BAF standard
 error, so assays of unequal read supply (WGS + WES, WGS + CRISPR-targeted) can share one bb grid.
 Design, model, and implementation steps: `.claude/msr_vector.md`.
 
-# slurm support
+## slurm support
 
 ## Test pipeline
 
@@ -23,6 +23,8 @@ Two layers:
 - [ ] Decide where end-to-end case definitions live (separate repo, or a gitignored
       working dir) and how references are staged.
 - [ ] Cases to cover: `single_cell_genotyping`, `copytyping_preprocess`, spatial.
+- [ ] One bulk WGS+WES case run end to end, inspecting per-bin WES RDR/BAF: the shared
+      bulk grid and the on/off-target depth fit are both verified by DAG tests only.
 
 Harness: if end-to-end returns, gate it behind a manual/scheduled trigger and keep the
 dry-run tests on every push.
@@ -48,50 +50,29 @@ user picks a point off the QC PDFs. The `select_segmentation` script that scored
       and record the pick alongside the outputs (was a TODO comment in `combine_counts.py`,
       pointing at a `docs/combine_counts_pseudocode.md` that is not in the repo).
 
-## Others
-- Streaming remote data (DONE for bulk): `remote_mode: stream` reads remote BAM/CRAM directly
-  with bcftools/mosdepth, fetching only the config `chromosomes` (index jumps); default stays
-  `storage` (whole-file download). Single-cell/copytyping cannot stream (`cellsnp-lite` rejects
-  URLs via its `access(F_OK)` guard). Follow-up: validate `##idx##` remote-index support and
-  numeric parity on a real URL BAM (see plan verification).
+## Within-bb EM phasing
 
-## Skip phasing + within-bb EM phasing
-
-Two linked additions. Full design, integration points, tests and validation:
-`.claude/skip_phasing_and_bb_em.md`.
-
-1. `phaser: "none"` - genotype, skip panel and long-read phasing, carry the unphased het SNPs
-   into pileup. For runs where no phasing prior exists: no panel for the build, no long reads,
-   no external phased VCF.
-2. `params_combine_counts.phase_correction` (`none|flip_split|bin_em`) - re-orient SNPs within
-   each bb after adaptive binning, before allele counts are summed per bb. Subsumes the
-   `phase_flip_test` boolean (`true` -> `flip_split`, `false` -> `none`).
-
-Bulk `combine_counts` collapses CNA/LOH BAF toward 0.5 (seen on `hatchet2_chr22_simulation`
-dbSNP151; panel/phaser ruled out). Two causes: (1) `detect_phase_flips` fragments SNPs into
-thousands of phase-groups, and the per-group bin-count floor in `_merge_bins_to_bbs` makes
-~4-SNP bins so `min_snp_reads` never binds; (2) `apply_phase_to_mat` orients A/B by one
-per-SNP `PHASE` bit with no within-bin re-orientation, so unfolded bin BAF is exactly 0.500.
-HATCHet2 gets ~220 SNPs/bin and BAF ~0.20 in LOH via a per-bin EM.
-
-Model: naive Bayes EM over the tumor samples, in a new helper
-`workflow/scripts/script_utils/phase_em.py`. The per-SNP phase latent is independent across
-position; the coupling is across samples. Ports HATCHet2 `multisample_em`
-(`hatchet/utils/combine_counts.py`, doi:10.1038/s41587-020-0661-6); same shape as Alleloscope
-(doi:10.1038/s41587-021-00911-w).
+Implemented as `params_combine_counts.phase_em`; model and parameters in
+`workflow/scripts/script_utils/phase_em.py` and
+[reference](reference.md#params_combine_counts).
 
 > [!IMPORTANT]
-> The earlier HMM design (`phase_hmm.py`, beta-binomial emission, LD switch/stay transitions,
-> tau calibrated on the matched normal, optional `cross_bin_phasing: dp` layer;
-> `.claude/phase-hmm-within-bin.md`) is superseded. Its problem statement above still
-> holds; its model does not.
+> Two designs are superseded and should not be revived without new evidence: the HMM
+> (`.claude/phase-hmm-within-bin.md`) and the later per-SNP transition prior from the
+> genetic map, with forward-backward and Viterbi. Both were built and measured against the
+> independent per-SNP latent and lost. A run prior makes the flips coherent, and a
+> coherent run of flips manufactures more false imbalance in a balanced bb than the same
+> number of scattered flips.
 
-- [ ] Phase A: `phaser: "none"` (const, the `phased_snp_vcf` resolution in `parse_workflow`,
-      `phase_snps.smk`);
-      `phase_correction` config surface; `correct_bin_phases` as a documented no-op wired into
-      bulk and single-cell `combine_counts`; the `estimate_switchprobs_PS` `KeyError: 'PS'` fix;
-      dry-run tests; docs.
-- [ ] Phase B: implement the EM; A/B comparison vs HATCHet2 `bb`; make `bin_em` default.
+- [ ] `phaser: "none"` - genotype, skip panel and long-read phasing, carry the unphased
+      het SNPs into pileup, for runs where no phasing prior exists. Design in
+      `.claude/skip_phasing_and_bb_em.md` (its Part 2/3, the `phase_correction` enum, is
+      superseded by `phase_em`). Includes the `estimate_switchprobs_PS` `KeyError: 'PS'`
+      fix, which is still live: `build_adaptive_bins` only creates `bbs["PS"]` when the
+      SNP frame has one.
+- [ ] A/B comparison of the EM against HATCHet2 `bb` on a shared input.
+- [ ] Re-derive `phase_em_tau` and `phase_em_min_llr` on a second dataset; both are
+      currently set from one.
 
 ## RD bias correction (potential over-correction)
 
@@ -115,21 +96,15 @@ over CNA-contaminated bins (`rd_correct_utils.py`; highest-CNA sample hurt most)
       bin count makes the quadratic fit unreliable.
 - [ ] Lower-order or regularized model when a covariate's bias is weak.
 
-## Unified bulk grid: WES treated exactly like WGS (IMPLEMENTED)
+## Remote input
 
-Done: `build_segment_bed` (region_id arm + seg_id chunk) + one shared window BED
-(`aux/windows.bed.gz`, tiled from `segment.bed` at `window_size`). Every bulk assay
-(WGS/WGS-lr/WES) bins on that one grid grouped by `seg_id`, with a single read target
-`min_snp_reads` gated behind it; one `bb_dir/MSR{msr}/bulk/`. The
-earlier WES stream (per-record `wes_targets_bed`, 267 bp exon tiling, WES-onto-WGS depth
-projection, `min_snp_reads_wes`) was removed. Verified by DAG tests only. Follow-ups:
+`remote_mode: stream` is implemented for bulk: bcftools/mosdepth/longphase read remote
+BAM/CRAM directly and fetch only the config `chromosomes` via index jumps; the default
+stays `storage` (whole-file download). Single-cell and copytyping cannot stream, since
+`cellsnp-lite` rejects URLs in its `access(F_OK)` guard.
 
-- Real-data validation: no execution-level test exists yet; run a real WGS+WES bulk sample
-  end-to-end and inspect per-bin WES RDR/BAF.
-- WES RD-correction: WES depth carries capture-enrichment structure; confirm the per-sample
-  LOWESS fit + `routlier`/`doutlier` handle it, or flag over-correction (see the RD bias
-  correction section above).
-
-## streaming panel
-`https://ftp.ncbi.nih.gov/snp/organisms/`, `tabix-streams just that region from the remote file — never downloading the ~16 GB whole thing (genotype_snps.py:232): bcftools query -f '%CHROM\t%POS\n' -r chr22 <URL> -> target_chr22.pos.gz.`
-what is usual time cost for tabix snp positions from local/online snp panel -> genotyping?
+- [ ] Validate `##idx##` remote-index support and numeric parity on a real URL BAM.
+- [ ] Stream the SNP panel the same way, rather than fetching the whole file:
+      `bcftools query -f '%CHROM\t%POS\n' -r chr22 <URL>` against
+      `https://ftp.ncbi.nih.gov/snp/organisms/`. Measure what tabix over a remote panel
+      costs against a local one before making it a default.

@@ -13,7 +13,7 @@ Outputs:
 - bb_dir/MSR{msr}/{assay}/: the single-cell bbs, sliced per assay
 - bb_dir/{assay}/: the copytyping bbs, no binning so no MSR level
 - bb_dir/unit/{bulk,assay}/: the un-binned SNP, window and gene levels binning consumes
-- qc_dir/detect_loh.bulk.pdf: the het-density decode; only a detect_loh_tumor_cell_line
+- qc_dir/detect_loh.pdf: the het-density decode; only a detect_loh_tumor_cell_line
   run declares it. The regions are the is_loh column of the window and bb tables
 """
 
@@ -24,7 +24,7 @@ if workflow_mode == "bulk_genotyping":
     _loh_out = (
         {
             "loh_pdf": report(
-                qc_dir + "/detect_loh.bulk.pdf",
+                qc_dir + "/detect_loh.pdf",
                 category="QC plots",
                 subcategory="bulk binning",
                 labels={"plot": "clonal-LOH density"},
@@ -55,6 +55,12 @@ if workflow_mode == "bulk_genotyping":
         output:
             **_loh_out,
             bb_file=expand(bb_dir + f"/MSR{{msr}}/bulk/bb.tsv.gz", msr=msr_list),
+            flip_tsv_bb=temp(
+                expand(
+                    bb_dir + f"/MSR{{msr}}/bulk/snp.flip.tsv",
+                    msr=msr_list,
+                )
+            ),
             tot_mtx_bb=expand(
                 bb_dir + f"/MSR{{msr}}/bulk/bb.Tallele.npz",
                 msr=msr_list,
@@ -99,13 +105,23 @@ if workflow_mode == "bulk_genotyping":
             multi_rdr_mtx=bb_dir + "/multi_snp/bulk/bb.rdr.npz",
             multi_rdcount_mtx=bb_dir + "/multi_snp/bulk/bb.rdcount.npz",
             multi_sample_file=bb_dir + "/multi_snp/bulk/sample_ids.tsv",
-            qc_pdf=report(
+            qc_stats_pdf=report(
                 expand(
-                    qc_dir + f"/combine_counts.bulk.MSR{{msr}}.pdf",
+                    qc_dir + f"/combine_counts.stats.bulk.MSR{{msr}}.pdf",
                     msr=msr_list,
                 ),
                 category="QC plots",
                 subcategory="bulk binning",
+                labels={"plot": "bb statistics"},
+            ),
+            qc_1d2d_pdf=report(
+                expand(
+                    qc_dir + f"/combine_counts.1d2d.bulk.MSR{{msr}}.pdf",
+                    msr=msr_list,
+                ),
+                category="QC plots",
+                subcategory="bulk binning",
+                labels={"plot": "genome-wide RDR/BAF"},
             ),
         log:
             log_dir + f"/combine_counts.bulk.{_run_id}.log",
@@ -113,7 +129,7 @@ if workflow_mode == "bulk_genotyping":
             bench_dir + f"/combine_counts.bulk.{_run_id}.tsv"
         conda:
             "../envs/base.yaml"
-        threads: 1
+        threads: config["threads"]["combine_counts"]
         params:
             qc_dir=qc_dir,
             sample_id=sample_id,
@@ -128,17 +144,75 @@ if workflow_mode == "bulk_genotyping":
             min_snp_per_bin=config["params_combine_counts"]["min_snp_per_bin"],
             nsnp_multi=config["params_combine_counts"]["nsnp_multi"],
             gene_aware_binning=config["params_combine_counts"]["gene_aware_binning"],
+            phaseset_aware_binning=config["params_combine_counts"][
+                "phaseset_aware_binning"
+            ],
             min_total_reads=config["params_combine_counts"]["min_total_reads"],
             detect_loh_tumor_cell_line=_detect_loh_cl,
             loh_tile_size=config["params_combine_counts"]["loh_tile_size"],
             loh_rate_ratio=config["params_combine_counts"]["loh_rate_ratio"],
             loh_breakpoint_rate=config["params_combine_counts"]["loh_breakpoint_rate"],
-            phase_flip_test=config["params_combine_counts"]["phase_flip_test"],
-            phase_flip_epsilon=config["params_combine_counts"]["phase_flip_epsilon"],
-            phase_flip_alpha=config["params_combine_counts"]["phase_flip_alpha"],
+            phase_em=config["params_combine_counts"]["phase_em"],
+            phase_em_tau=config["params_combine_counts"]["phase_em_tau"],
+            phase_em_min_llr=config["params_combine_counts"]["phase_em_min_llr"],
+            phase_em_n_grid=config["params_combine_counts"]["phase_em_n_grid"],
+            phase_em_grid_eps=config["params_combine_counts"]["phase_em_grid_eps"],
+            phase_em_n_restarts=config["params_combine_counts"]["phase_em_n_restarts"],
+            phase_em_max_iter=config["params_combine_counts"]["phase_em_max_iter"],
+            phase_em_tol=config["params_combine_counts"]["phase_em_tol"],
+            phase_em_min_snps=config["params_combine_counts"]["phase_em_min_snps"],
             run_id=_run_id,
         script:
             """../scripts/combine_counts.py"""
+
+    rule apply_snp_em_phase:
+        """Re-phase the het SNP VCF with one bb level's within-bb EM orientation.
+
+        `phase_em` decides each SNP's orientation per bb, so the corrected phasing is a
+        property of the (SNP grid x bb grid) pair and differs between `min_snp_reads`
+        levels. Writing one VCF per level lets a downstream mode that consumes a phased
+        VCF - `copytyping_preprocess`, via `het_snp_vcf` - read the same orientation the
+        bbs were summed in, by being handed the VCF and the `bb.tsv.gz` of one level.
+
+        The GT swap is a text rewrite, so it stays in the shell rather than reaching for
+        `bcftools annotate`, which cannot populate FORMAT/GT from anything but a VCF.
+        That is also why `combine_counts` hands the sites over as a file: this rule cannot
+        read the flip vector out of the EM. The file is `temp()`, so it is removed once
+        this rule has consumed it and does not outlive the run.
+        """
+        input:
+            vcf=phased_snp_vcf,
+            flip_sites=bb_dir + "/MSR{msr}/bulk/snp.flip.tsv",
+        output:
+            vcf=bb_dir + "/MSR{msr}/bulk/phased_het_snps.phase_em.vcf.gz",
+            vcf_tbi=bb_dir + "/MSR{msr}/bulk/phased_het_snps.phase_em.vcf.gz.tbi",
+        log:
+            log_dir + f"/apply_snp_em_phase.MSR{{msr}}.{_run_id}.log",
+        benchmark:
+            bench_dir + f"/apply_snp_em_phase.MSR{{msr}}.{_run_id}.tsv"
+        conda:
+            "../envs/bcftools.yaml"
+        threads: 1
+        shell:
+            r"""
+            exec > >(tee -a "{log}") 2>&1
+            n_flip=$(wc -l < "{input.flip_sites}")
+            echo "re-phasing $(basename {input.vcf}) at $n_flip sites -> {output.vcf}"
+            bcftools view "{input.vcf}" \
+              | awk -F'\t' -v OFS='\t' '
+                  NR==FNR {{ f[$1 FS $2]=1; next }}
+                  /^#/    {{ print; next }}
+                  {{ if (($1 FS $2) in f) {{
+                         n=split($10,a,":")
+                         if (a[1]=="1|0") a[1]="0|1"; else if (a[1]=="0|1") a[1]="1|0"
+                         s=a[1]; for(i=2;i<=n;i++) s=s":"a[i]; $10=s; c++
+                     }}
+                     print }}
+                  END {{ printf("swapped %d genotypes\n", c) > "/dev/stderr" }}
+                ' "{input.flip_sites}" - \
+              | bgzip -c > "{output.vcf}"
+            tabix -f -p vcf "{output.vcf}"
+            """
 
 elif workflow_mode == "single_cell_genotyping":
 
@@ -247,6 +321,18 @@ elif workflow_mode == "single_cell_genotyping":
                 category="QC plots",
                 subcategory="single-cell binning",
             ),
+            unit_stats_pdf=report(
+                [qc_dir + f"/combine_counts.stats.{at}.pdf" for at in assay_types],
+                category="QC plots",
+                subcategory="single-cell binning",
+                labels={"plot": "unit-level counts"},
+            ),
+            unit_stats_tsv=report(
+                [qc_dir + f"/combine_counts.stats.{at}.tsv" for at in assay_types],
+                category="QC stats",
+                subcategory="single-cell binning",
+                labels={"table": "unit-level counts"},
+            ),
         log:
             log_dir + f"/combine_counts_nonbulk.{_run_id}.log",
         benchmark:
@@ -266,6 +352,9 @@ elif workflow_mode == "single_cell_genotyping":
             min_snp_reads=msr_list,
             min_snp_per_bin=config["params_combine_counts"]["min_snp_per_bin"],
             gene_aware_binning=config["params_combine_counts"]["gene_aware_binning"],
+            phaseset_aware_binning=config["params_combine_counts"][
+                "phaseset_aware_binning"
+            ],
             run_id=_run_id,
         script:
             """../scripts/combine_counts_nonbulk.py"""
@@ -313,10 +402,22 @@ elif workflow_mode == "copytyping_preprocess":
             unit_window_file=bb_dir + "/unit/{assay_type}/window.tsv.gz",
             unit_window_x=bb_dir + "/unit/{assay_type}/window.Xcount.npz",
             qc_pdf=report(
-                qc_dir + "/combine_counts_fixed_bins.{assay_type}.pdf",
+                qc_dir + "/combine_counts.{assay_type}.pdf",
                 category="QC plots",
                 subcategory="fixed-bin aggregation",
                 labels={"assay": "{assay_type}"},
+            ),
+            unit_stats_pdf=report(
+                qc_dir + "/combine_counts.stats.{assay_type}.pdf",
+                category="QC plots",
+                subcategory="fixed-bin aggregation",
+                labels={"assay": "{assay_type}", "plot": "unit-level counts"},
+            ),
+            unit_stats_tsv=report(
+                qc_dir + "/combine_counts.stats.{assay_type}.tsv",
+                category="QC stats",
+                subcategory="fixed-bin aggregation",
+                labels={"assay": "{assay_type}", "table": "unit-level counts"},
             ),
         log:
             log_dir
@@ -357,10 +458,22 @@ elif workflow_mode == "copytyping_preprocess":
             unit_gene_file=bb_dir + "/unit/{assay_type}/gene.tsv.gz",
             unit_gene_x=bb_dir + "/unit/{assay_type}/gene.Xcount.npz",
             qc_pdf=report(
-                qc_dir + "/combine_counts_fixed_bins.{assay_type}.pdf",
+                qc_dir + "/combine_counts.{assay_type}.pdf",
                 category="QC plots",
                 subcategory="fixed-bin aggregation",
                 labels={"assay": "{assay_type}"},
+            ),
+            unit_stats_pdf=report(
+                qc_dir + "/combine_counts.stats.{assay_type}.pdf",
+                category="QC plots",
+                subcategory="fixed-bin aggregation",
+                labels={"assay": "{assay_type}", "plot": "unit-level counts"},
+            ),
+            unit_stats_tsv=report(
+                qc_dir + "/combine_counts.stats.{assay_type}.tsv",
+                category="QC stats",
+                subcategory="fixed-bin aggregation",
+                labels={"assay": "{assay_type}", "table": "unit-level counts"},
             ),
         wildcard_constraints:
             assay_type="(scRNA|VISIUM|VISIUM3prime)",

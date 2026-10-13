@@ -143,7 +143,9 @@ Refer to [Final bins](reference.md#final-bins) for the full specification of eac
         barcodes.tsv.gz                        # {BARCODE}_{dataset_id}_{assay_type} per row
         sample_ids.tsv                         # roster: one row per dataset x assay (barcodes.tsv.gz is the column axis)
   qc/
-    post_genotype_snps.nonbulk.pdf             # SNP allele frequency by called genotype
+    genotype_snps.pdf                          # SNP allele frequency by called genotype
     phase_and_concat.{assay_type}.pdf          # SNP allele frequency + depth histogram
-    combine_counts.{assay_type}.MSR{msr}.pdf   # binning QC, one per min_snp_reads value
+    combine_counts.stats.{assay_type}.pdf # per-cell/spot total and SNP-covered counts, one page per dataset
+    combine_counts.stats.{assay_type}.tsv      # the same as a table, one row per dataset
+    combine_counts.{assay_type}.MSR{msr}.pdf   # bb-level pseudobulk RDR over BAF, one page per dataset, one per min_snp_reads value
 ```

@@ -2,10 +2,7 @@
 
 Last update: 2026-08-11
 
-Inputs:
-- gmap_path: eagle single map, or shapeit per-chromosome maps
-Outputs:
-- phase_dir/genetic_map.tsv.gz: #CHR POS cM, chr-prefixed and sorted
+Inputs and outputs: see docs/reference.md#intermediates.
 """
 
 import logging

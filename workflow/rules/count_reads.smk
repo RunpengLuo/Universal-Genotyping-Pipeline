@@ -229,7 +229,7 @@ rule rd_correct:
             labels={"table": "depth statistics"},
         ),
         qc_pdf=report(
-            qc_dir + "/rd_correction.bulk.pdf",
+            qc_dir + "/rd_correction.pdf",
             category="QC plots",
             subcategory="read-depth correction",
         ),

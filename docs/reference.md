@@ -132,8 +132,9 @@ Genotyping from allele counts, in both modes. One rule: threshold the counts.
 
 | Field | Description |
 |---|---|
-| `min_dp` | Depth floor; below it a site is not called. |
-| `min_het_reads` | Minimum reads on *each* allele for a het call. |
+| `min_dp` | Depth floor for every call; below it a site is not called. |
+| `min_hom_dp` | Depth floor for a hom call (hom-alt, hom-ref): such a call needs `max(min_dp, min_hom_dp)`. An all-ALT site below it is a no-call. |
+| `min_het_ad` | Minimum reads on *each* allele for a het call. |
 | `min_vaf_thres` | Het VAF must lie in `[min_vaf_thres, 1 - min_vaf_thres]`. |
 | `filter_nz_OTH` | Drop SNPs with non-zero OTH (non-ref, non-alt) counts. |
 | `filter_hom_ALT` | Drop hom-ALT SNPs. |
@@ -228,32 +229,70 @@ Used by `combine_counts` (bulk) and `combine_counts_nonbulk` (single-cell).
 | `loh_rate_ratio` | LOH-state het rate as a fraction of the fitted neutral rate. |
 | `loh_breakpoint_rate` | Poisson breakpoints per bp for that chain; its reciprocal is the mean segment length (`1e-8` -> 100 Mb). The only thing resisting a one-tile flip, so it sets the reported region count. |
 | `gene_aware_binning` | Grow bbs by whole genes; never cut inside one. |
+| `phaseset_aware_binning` | Split bbs at every phase-set (`PS`) bound, so a bb never pools SNPs the phaser did not phase together. `false` lets a bb span a bound, leaving `phase_em` to re-orient across it and making a `PS`-derived `switchprobs` read the bb's first phase set only. Inert when the SNP frame carries no `PS`. |
 | `nu` | Haldane scale turning cM distance into a switch probability. |
 | `min_switchprob` | Floor on that switch probability. |
 | `switchprob_ps` | Switch probability within one phase set (`PS`); ~0.5 across sets. |
 | `nsnp_multi` | SNPs per multi-SNP diagnostic group. |
 | `rdr_normalization` | Bulk RDR denominator: `auto` (base else median), `median`, `normal` (base required). |
-| `phase_flip_test` | Split a phase cluster failing the haplotype-flip test (bulk). |
-| `phase_flip_epsilon` | Effect size of that test (bulk). |
-| `phase_flip_alpha` | Significance level of that test (bulk). |
+| `phase_em` | Re-orient SNP phases inside each bb before its allele counts are summed (bulk), by a naive-Bayes EM over the tumor observations. Without it a bb spanning a phaser switch error averages its BAF toward 0.5. |
+| `phase_em_tau` | Beta-binomial dispersion of that EM, `BetaBinom(t; tau*theta, tau*(1-theta))`; one number for the whole genome, fixed. Smaller re-orients fewer SNPs. |
+| `phase_em_min_llr` | Evidence a bb must show of having any allelic imbalance before it is re-oriented, as `loglik - loglik at BAF 0.5`, a log likelihood ratio in nats: a floor of `L` demands odds of `exp(L)`. A balanced bb has no orientation to find, so without a floor the EM fits noise there and inflates the spread of BAF around 0.5. `0` re-orients every bb. |
+| `phase_em_n_grid` | Points on the `theta` grid that EM maximizes each bb's BAF over. Must be odd, so the grid contains 0.5: that is the null `phase_em_min_llr` scores against, and the point the flipped orientation is mirrored about. Checked at parse time. |
+| `phase_em_grid_eps` | Distance of that grid's ends from 0 and 1, so it spans `[eps, 1 - eps]`. |
+| `phase_em_n_restarts` | Initial `theta` values the EM is run from, besides the null at 0.5. The null is always among them, which is what keeps the reported log likelihood ratio non-negative. |
+| `phase_em_max_iter` | EM iterations per restart. |
+| `phase_em_tol` | Per-bb log-likelihood gain below which a restart stops. |
+| `phase_em_min_snps` | SNPs a bb needs before it is fitted at all; below it the bb keeps the phaser's orientation. |
+
+Stage order in `combine_counts` (bulk). The SNP grid and the window grid enter separately
+and are joined by assigning each SNP to the window holding it; a SNP in no window is
+dropped from the frame and from the allele matrices. Everything after that merges windows
+into bbs, and nothing splits a window.
+
+```
+SNP grid (allele_dir/) -----+
+                            +-> assign SNPs to windows -> [clonal-LOH pre-pass] -> unit/bulk/
+window grid (aux/windows) --+
+                                  |
+                                  +-> multi-SNP groups (nsnp_multi) ------------> multi_snp/bulk/
+                                  |     cluster keys: region_id, seg_id
+                                  |
+                                  +-> one pass per min_snp_reads:
+                                        cluster keys: region_id, seg_id, loh_id
+                                                      [, PS] [, gene_cluster]
+                                                      (the last two are config-gated)
+                                        merge windows until min_snp_reads and
+                                          min_snp_per_bin hold in every tumor column and
+                                          min_total_reads holds in every column
+                                        -> phase_em re-orients the SNPs inside each bb
+                                        -> swap A/B at the flipped SNPs, sum SNPs -> bb
+                                        -> depth (length-weighted), read starts (sum), RDR
+                                        -> clonal-LOH stamp -> NaN filter -> switchprobs
+                                        -> MSR{msr}/bulk/
+```
+
+`phase_em` conditions on the bb boundaries, so it runs inside the sweep and its flip
+vector differs between `min_snp_reads` levels. `unit/bulk/` and `multi_snp/bulk/` are
+written before it and carry the phaser's orientation.
 
 > [!NOTE]
-> Adaptive binning merges consecutive windows left to right and closes a bb when BOTH
-> hold, the rule HATCHet2 uses (`adaptive_bins_arm`,
-> [combine_counts.py](https://github.com/raphael-group/hatchet/blob/master/src/hatchet/utils/combine_counts.py)):
+> Adaptive binning merges consecutive windows left to right and closes a bb when BOTH hold:
 > - every tumor column has `min_snp_reads` SNP reads and the bb holds `min_snp_per_bin` SNPs;
 > - `[bulk]` every column has `min_total_reads` read starts.
 >
 > There is no span cap: a cap can only fire by cutting a bb that has not met these, so
 > the two criteria would contradict each other. What bounds a bb instead:
-> - a bb never spans two `region_id`, `seg_id`, `loh_id` or `PS` clusters;
-> - `[bulk]` nor two `phase_cluster` clusters, under `phase_flip_test`;
-> - the next window starts a new gene, under `gene_aware_binning`;
+> - a bb never spans two `region_id` or `seg_id` clusters, nor two `loh_id` runs;
+> - if `phaseset_aware_binning`, a bb never spans two `PS` clusters;
+> - if `gene_aware_binning`, a bb never spans a partial gene.
 > - a trailing run below threshold merges into the previous bb, and a cluster that never
 >   meets the thresholds stays one bb (logged).
 >
 > Inside a clonal-LOH region the SNP criterion is dropped, since no germline het survives
 > there; `min_total_reads` alone sizes those bbs and their allele counts are stamped.
+> `phase_em` does not fit those bbs: a stamped bb has no measured orientation, and the
+> calls surviving inside LOH are genotyping error.
 >
 > bbs are then post-filtered:
 > - `[bulk]` drop a bb whose BAF is NaN: no SNP, or a column with no read over them.
@@ -273,6 +312,7 @@ Used by all multi-thread rules.
 | `phase` | Threads for phasing. |
 | `pileup` | Threads for the pileup step (bulk: the `bgzip` writing the counts; single-cell: cellsnp-lite, which is genuinely parallel). |
 | `mosdepth` | Threads for the bulk read-counting rules: `mosdepth -t`, and `samtools view -@` in `count_read_starts_chrom`. |
+| `combine_counts` | Threads for the bulk `combine_counts` rule. Sizes numba's pool, which the `phase_em` within-bb EM sweeps its bbs over. |
 
 > [!NOTE]
 > `bcftools` applies `--threads` to the output handle only, never to the BAM/CRAM
@@ -326,6 +366,7 @@ A `min_snp_reads` list writes one `MSR{msr}/` per value.
 | `bb.{depth,rdr}.npz` | Depth, and RDR for the tumor columns only. |
 | `bb.rdcount.npz` | Read starts summed from the windows, int32, every column. |
 | `sample_ids.tsv` | One row per matrix column. |
+| `phased_het_snps.phase_em.vcf.gz{,.tbi}` | `phase_em` only: `phased_snp_vcf` with this level's re-oriented genotypes swapped, so a downstream mode reading a phased VCF sees the orientation these bbs were summed in. Pair it with the `bb.tsv.gz` beside it. |
 | `multi_snp/bulk/` | Multi-SNP diagnostic groups, bb schema, outside `MSR{msr}/`. |
 
 **`single_cell_genotyping`** - one bb set over every assay, copied into each subdir;
@@ -402,6 +443,7 @@ whole to the bb it overlaps most.
 | `bb_dir/{assay_type}.h5ad` | Gene x cell AnnData (scRNA / spatial). |
 | `aux_dir/segment.bed` | Arms cut at the SV extremities, blacklist subtracted. |
 | `aux_dir/windows.bed.gz` | The shared window BED. |
+| `aux_dir/window.target.npz` | Per-window on-target bp fraction, row-aligned to the window BED; written only with `target_bed` set. |
 | `aux_dir/repliseq/` | Repli-seq tracks, lifted from hg19 when the run is not hg19. |
 
 ### TSV columns
@@ -421,6 +463,9 @@ whole to the bb it overlaps most.
 > - `PHASE`: 0 = the B-allele is ALT, 1 = the B-allele is REF.
 > - `feature_id`: `;`-joined overlapping GTF genes, `intergenic` if none.
 > - `sample_ids.tsv` is column-aligned in bulk only; single-cell columns are cells.
+> - `#SNP`/`#feature` are the rows that dataset detects (>= 1 read), not the grid size.
+> - `*_sparsity` is the zero fraction over those detected rows only.
+> - `mean_*_reads`/`median_*_reads` are over its per-cell/spot totals.
 > - `SAMPLE` is `{sample_id}_{dataset_id}`, plus `_{assay_type}` for a multiome pair.
 
 ### QC (`qc_dir/`)
@@ -429,9 +474,13 @@ One multi-page PDF per rule, flat:
 
 | File | Contents |
 |---|---|
-| `post_genotype_snps.{bulk_or_nonbulk}.pdf` | SNP allele frequency by genotype. |
-| `detect_loh.bulk.pdf` | Het-SNP density per tile against the two fitted rates, coloured by the decoded state (`detect_loh_tumor_cell_line` only). |
+| `genotype_snps.pdf` | SNP allele frequency by genotype. |
+| `detect_loh.pdf` | Het-SNP density per tile against the two fitted rates, coloured by the decoded state (`detect_loh_tumor_cell_line` only). |
 | `phase_and_concat.{bulk_or_assay}.pdf` | SNP allele frequency and depth. |
-| `rd_correction.bulk.pdf` | Depth before/after correction, GC/MAP/RT diagnostics. |
-| `combine_counts.{bulk_or_assay}.MSR{msr}.pdf` | Binning QC, one per `min_snp_reads`. |
-| `combine_counts_fixed_bins.{assay_type}.pdf` | Per dataset: a SNP BAF page, then a bb page of pseudobulk RDR over BAF. |
+| `rd_correction.pdf` | Depth before/after correction, GC/MAP/RT diagnostics. |
+| `combine_counts.stats.bulk.MSR{msr}.pdf` | Bulk bb-length histogram, then one page of raw-count histograms per dataset; stacked by LOH state under `detect_loh_tumor_cell_line`. One PDF per `min_snp_reads`. |
+| `combine_counts.1d2d.bulk.MSR{msr}.pdf` | Bulk genome-wide RDR/BAF tracks and the RDR-vs-BAF 2D cloud, one per `min_snp_reads`. |
+| `combine_counts.{assay}.MSR{msr}.pdf` | Single-cell bb-level pseudobulk RDR over BAF, one page per dataset, one PDF per `min_snp_reads`. |
+| `combine_counts.stats.{assay}.pdf` | Unit level, so binning-independent: one page per dataset, total and SNP-covered counts per cell/spot. |
+| `combine_counts.stats.{assay}.tsv` | The same, one row per dataset: `sample_id dataset_id sample_type assay_type #observation #SNP #feature snp_sparsity feature_sparsity mean_snp_reads median_snp_reads mean_feature_reads median_feature_reads`. |
+| `combine_counts.{assay}.pdf` | Copytyping bb-level pseudobulk RDR over BAF, one page per dataset. |

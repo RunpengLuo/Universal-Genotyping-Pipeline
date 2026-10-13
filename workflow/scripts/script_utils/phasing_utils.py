@@ -4,7 +4,6 @@ Last update: 2026-08-11
 
 Functions:
 - apply_phase_to_mat: turn REF/ALT counts into phased A/B counts
-- detect_phase_flips: split a cluster where the haplotype orientation switches
 - interp_cM_between_bbs: centimorgan distance between consecutive bbs
 - estimate_switchprobs_cM: Haldane switch probability from a cM distance
 - estimate_switchprobs_PS: switch probability from phase-cluster (PS) membership
@@ -15,9 +14,6 @@ import logging
 import numpy as np
 import pandas as pd
 from scipy.sparse import issparse
-from scipy.stats import beta as beta_dist
-
-from utils import log_hist
 
 
 def apply_phase_to_mat(tot_mtx, ref_mtx, alt_mtx, phases):
@@ -48,96 +44,6 @@ def apply_phase_to_mat(tot_mtx, ref_mtx, alt_mtx, phases):
         b_mtx = np.round(b_mtx).astype(np.int32)
     a_mtx = tot_mtx - b_mtx
     return a_mtx, b_mtx
-
-
-def _baf(b, a):
-    """B-allele fraction, NaN where the two counts sum to zero."""
-    tot = a + b
-    return np.divide(b, tot, out=np.full_like(b, np.nan), where=tot > 0)
-
-
-def detect_phase_flips(snps, a_mtx, b_mtx, cluster_cols, epsilon=0.05, alpha=0.05):
-    """Detect phase flips between neighbouring SNPs using Beta credible intervals.
-
-    For each pair of genomically adjacent SNPs within a group, compute a 95%
-    Beta(b+1, a+1) credible interval for the BAF. If any tumor sample shows the two
-    intervals confidently on opposite sides of a dead zone around 0.5, mark a phase
-    boundary. Each group is ordered by ``POS0`` here, so *snps* need not arrive sorted
-    and the matrices are never permuted.
-
-    Parameters
-    ----------
-    snps : pd.DataFrame
-        SNP DataFrame with grouping columns.
-    a_mtx, b_mtx : (N, M) dense ndarray
-        A- and B-allele counts over the M TUMOR observations; the caller slices.
-    cluster_cols : list of str
-        Columns to group SNPs by (e.g. ["region_id", "PS"]).
-    epsilon : float
-        Half-width of dead zone around 0.5. Default 0.05 → dead zone [0.45, 0.55].
-    alpha : float
-        Significance level for credible intervals. Default 0.05 → 95% CI.
-
-    Returns
-    -------
-    pd.Series
-        Globally unique phase-cluster IDs aligned to the snps index.
-    """
-    orig_index = snps.index
-    snps = snps.reset_index(drop=True)  # idx below indexes the matrices positionally
-    pos0 = snps["POS0"].to_numpy()
-
-    a_tumor = np.asarray(a_mtx, dtype=np.float64)
-    b_tumor = np.asarray(b_mtx, dtype=np.float64)
-
-    ci_lo = beta_dist.ppf(alpha / 2, b_tumor + 1, a_tumor + 1)
-    ci_hi = beta_dist.ppf(1 - alpha / 2, b_tumor + 1, a_tumor + 1)
-
-    phase_cluster = np.zeros(len(snps), dtype=np.int64)
-    global_pc = 0
-    n_clusters_split = 0
-    flip_gaps = []
-
-    for _, grp in snps.groupby(cluster_cols, sort=False):
-        idx = grp.index.to_numpy()
-        if len(idx) < 2:
-            phase_cluster[idx] = global_pc
-            global_pc += 1
-            continue
-        # a flip is between genomic neighbours, not between adjacent rows
-        idx = idx[np.argsort(pos0[idx], kind="stable")]
-
-        # Vectorized: check all consecutive pairs × all samples at once
-        hi_prev, lo_curr = ci_hi[idx[:-1]], ci_lo[idx[1:]]
-        lo_prev, hi_curr = ci_lo[idx[:-1]], ci_hi[idx[1:]]
-        is_flip = (
-            ((hi_prev < 0.5 - epsilon) & (lo_curr > 0.5 + epsilon))
-            | ((lo_prev > 0.5 + epsilon) & (hi_curr < 0.5 - epsilon))
-        ).any(axis=1)
-
-        local_pc = np.concatenate([[0], np.cumsum(is_flip)])
-        phase_cluster[idx] = global_pc + local_pc
-
-        flips = np.flatnonzero(is_flip)
-        if len(flips):
-            n_clusters_split += 1
-            prev, curr = idx[flips], idx[flips + 1]
-            gap = np.abs(
-                _baf(b_tumor[prev], a_tumor[prev]) - _baf(b_tumor[curr], a_tumor[curr])
-            )
-            flip_gaps.append(np.nanmean(gap, axis=1))
-
-        global_pc += int(local_pc[-1]) + 1
-
-    gaps = np.concatenate(flip_gaps) if flip_gaps else np.zeros(0)
-    logging.info(
-        f"detect_phase_flips: epsilon={epsilon}, alpha={alpha}, "
-        f"boundaries={len(gaps)}, clusters_split={n_clusters_split}, "
-        f"new_phase_groups={global_pc}"
-    )
-    log_hist(gaps, "|dBAF| across a detected flip")
-
-    return pd.Series(phase_cluster, index=orig_index, dtype=np.int64)
 
 
 def interp_cM_between_bbs(

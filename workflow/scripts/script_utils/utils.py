@@ -30,14 +30,17 @@ _OMP_THREAD_VARS = (
     "MKL_NUM_THREADS",
     "VECLIB_MAXIMUM_THREADS",
     "NUMEXPR_NUM_THREADS",
+    "NUMBA_NUM_THREADS",
 )
 
 
 def set_omp_threads(snakemake_handle):
-    """Cap every BLAS/OpenMP runtime at the rule's thread count.
+    """Cap every BLAS/OpenMP/numba runtime at the rule's thread count.
 
-    Must be called before numpy (or anything importing it) is imported: the
-    runtimes read these variables once, when their shared library loads.
+    Must be called before numpy or numba (or anything importing either) is imported:
+    the runtimes read these variables once, when their shared library loads. A rule
+    running a ``parallel=True`` kernel therefore has to declare ``threads:``, or numba
+    sizes its pool to one.
 
     Args:
         snakemake_handle: The injected ``snakemake`` object.

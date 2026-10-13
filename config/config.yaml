@@ -90,7 +90,8 @@ params_cellsnp_lite:
 
 params_genotype_snps:
   min_dp: 10
-  min_het_reads: 2
+  min_hom_dp: 10
+  min_het_ad: 2
   min_vaf_thres: 0.1
   filter_nz_OTH: false
   filter_hom_ALT: false
@@ -142,9 +143,19 @@ params_combine_counts:
   min_switchprob: 1e-6
   nu: 1
   switchprob_ps: 5e-2
-  phase_flip_test: true
-  phase_flip_epsilon: 0.05
-  phase_flip_alpha: 0.05
+  # re-orient SNP phases within each bb before the allele counts are summed
+  phase_em: true
+  # beta-binomial dispersion of that EM; fixed, not fitted
+  phase_em_tau: 30
+  # imbalance a bb must show before it is re-oriented, as a log likelihood ratio in nats
+  phase_em_min_llr: 3
+  # solver: theta grid (n_grid must be odd so 0.5 is on it), restarts, iteration budget
+  phase_em_n_grid: 101
+  phase_em_grid_eps: 0.005
+  phase_em_n_restarts: 5
+  phase_em_max_iter: 40
+  phase_em_tol: 1.0e-4
+  phase_em_min_snps: 2
 
   nsnp_multi: 2
 
@@ -154,6 +165,7 @@ params_combine_counts:
   min_total_reads: 5000
 
   gene_aware_binning: true
+  phaseset_aware_binning: true
 
   # clonal-LOH detection (bulk only) for tumor cell-line datasets without matched-normal sample.
   detect_loh_tumor_cell_line: false
@@ -173,3 +185,4 @@ threads:
   phase: 4
   pileup: 2
   mosdepth: 4
+  combine_counts: 4

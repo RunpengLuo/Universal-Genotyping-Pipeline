@@ -109,22 +109,6 @@ def test_bulk_stream_mode(workspace):
     assert "--regions chr22" in proc.stdout
 
 
-def test_params_mosdepth_is_rejected(workspace):
-    """The folded-away group is a parse error naming its replacement."""
-    proc = dryrun(
-        workspace,
-        workspace["bulk_json"],
-        "T1",
-        "bulk_genotyping",
-        ["bulkWGS"],
-        extra=('params_mosdepth={"read_quality": 11}',),
-    )
-    assert proc.returncode != 0
-    assert "params_mosdepth was folded into params_count_reads" in (
-        proc.stdout + proc.stderr
-    )
-
-
 def test_read_filters_are_shared_with_mosdepth(workspace):
     """One read_quality/exclude_flags pair reaches both mosdepth and samtools view."""
     proc = dryrun(
@@ -1102,3 +1086,49 @@ def test_unit_level_outputs(workspace):
     # a gene is indivisible, so RNA has no window level and ATAC no gene level
     assert "/unit/scRNA/window.tsv.gz" not in sc.stdout
     assert "/unit/scATAC/gene.tsv.gz" not in sc.stdout
+
+
+def test_qc_pdf_names(workspace):
+    """The QC PDFs each rule declares, and the bulk binning split into two files."""
+    bulk = dryrun(
+        workspace, workspace["bulk_json"], "T1", "bulk_genotyping", ["bulkWGS"]
+    )
+    assert bulk.returncode == 0, bulk.stderr[-2000:]
+    for name in (
+        "qc/genotype_snps.pdf",
+        "qc/rd_correction.pdf",
+        "qc/phase_and_concat.bulk.pdf",
+        "qc/combine_counts.stats.bulk.MSR100.pdf",
+        "qc/combine_counts.1d2d.bulk.MSR100.pdf",
+    ):
+        assert name in bulk.stdout, bulk.stdout[-2000:]
+
+    sc = dryrun(
+        workspace,
+        workspace["sc_json"],
+        "S1",
+        "single_cell_genotyping",
+        ["scRNA", "scATAC"],
+    )
+    assert sc.returncode == 0, sc.stderr[-2000:]
+    assert "qc/genotype_snps.pdf" in sc.stdout, sc.stdout[-2000:]
+    for name in (
+        "qc/combine_counts.scATAC.MSR100.pdf",
+        "qc/combine_counts.stats.scATAC.pdf",
+        "qc/combine_counts.stats.scATAC.tsv",
+        "qc/combine_counts.stats.scRNA.pdf",
+    ):
+        assert name in sc.stdout, sc.stdout[-2000:]
+
+    ct = dryrun(
+        workspace, workspace["sc_json"], "S1", "copytyping_preprocess", ["scATAC"]
+    )
+    assert ct.returncode == 0, ct.stderr[-2000:]
+    # the rule suffix is dropped: the bb page is combine_counts.{assay}.pdf
+    assert "qc/combine_counts.scATAC.pdf" in ct.stdout, ct.stdout[-2000:]
+    assert "qc/combine_counts_fixed_bins." not in ct.stdout
+    for name in (
+        "qc/combine_counts.stats.scATAC.pdf",
+        "qc/combine_counts.stats.scATAC.tsv",
+    ):
+        assert name in ct.stdout, ct.stdout[-2000:]

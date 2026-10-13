@@ -5,6 +5,68 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0b3] - 2026-10-12
+
+SNP phases are re-oriented inside each bulk bb (`phase_em`), replacing the phase-flip
+test, and hom calls take their own depth floor. QC PDFs are renamed and split. Config
+keys and QC paths change; `sample_id` and `dataset_id` no longer accept `_`.
+
+### Added
+- `params_combine_counts.phase_em` (bulk): re-orients SNP phases inside each bb before its
+  allele counts are summed, so a bb spanning a phaser switch error no longer sums two
+  anti-phased halves and averages its BAF toward 0.5. Set by `phase_em_tau`,
+  `phase_em_min_llr` and the EM's solver keys.
+- `phased_het_snps.phase_em.vcf.gz{,.tbi}` in each `MSR{msr}/bulk/` under `phase_em`: that
+  level's re-oriented genotypes, for a downstream mode that consumes a phased VCF.
+- `params_combine_counts.phaseset_aware_binning` (default `true`): gates the phase-set
+  (`PS`) bound as a binning cluster key, so a run whose phaser emits many short phase
+  sets can let bbs span them instead of being split at every one.
+- `threads.combine_counts`: threads for the bulk `combine_counts` rule, which the
+  `phase_em` EM sweeps its bbs across; a rule's `threads` now caps numba as well as BLAS.
+- `combine_counts.stats.{assay}.pdf` and `combine_counts.stats.{assay}.tsv` in both
+  non-bulk modes: total and SNP-covered counts per cell/spot, with the SNP loci and
+  features each dataset detects and how sparsely they are populated. Unit level, so
+  independent of `min_snp_reads`.
+- `params_genotype_snps.min_hom_dp` (default `10`): a separate depth floor for hom-alt and
+  hom-ref calls, which need `max(min_dp, min_hom_dp)`. A het call carries reads of both
+  alleles, while a hom call rests on the other allele being absent, which a het shows by
+  chance at low depth; `min_dp` can now be lowered to keep low-depth hets without
+  admitting low-depth hom-alt calls into phasing.
+
+### Changed
+- `params_genotype_snps.min_het_reads` is renamed `min_het_ad`: it floors each allele's own
+  depth, where `min_dp` and `min_hom_dp` floor the site's.
+- QC PDF names: `post_genotype_snps.{bulk,nonbulk}.pdf` -> `genotype_snps.pdf`,
+  `detect_loh.bulk.pdf` -> `detect_loh.pdf`, `rd_correction.bulk.pdf` -> `rd_correction.pdf`.
+- The bulk binning QC PDF splits in two: `combine_counts.stats.bulk.MSR{msr}.pdf` holds the
+  histogram pages, `combine_counts.1d2d.bulk.MSR{msr}.pdf` the genome-wide RDR/BAF and
+  RDR-vs-BAF pages.
+- The bb-length histogram is one axes stacked by LOH state, and the raw-count histograms
+  move to one 2 x 2 page per dataset.
+- The single-cell and copytyping binning QC PDFs drop their SNP/multi-SNP page set and keep
+  the bb level only, both drawn as pseudobulk RDR over BAF tracks.
+- `combine_counts_fixed_bins.{assay}.pdf` becomes `combine_counts.{assay}.pdf`.
+- `sample_id` and `dataset_id` no longer accept `_`: both are fields of `_`-joined
+  keys the pipeline splits positionally.
+
+### Removed
+- `params_combine_counts.phase_flip_test`, `phase_flip_epsilon` and `phase_flip_alpha`,
+  with the phase-cluster split they drove: that boundary closes a bb whether or not it has
+  met `min_snp_reads` and `min_total_reads`, which `phase_em` does not need.
+- The parse-time rejection of the renamed `params_mosdepth` group and the removed
+  `params_combine_counts.max_blocksize`: a config still carrying either is no longer
+  refused by name.
+
+### Fixed
+- `process_rna_anndata` concatenates several RNA datasets on the gene id and carries
+  `var` explicitly, so datasets built against different Cell Ranger references keep the
+  GTF join key and a shared gene no longer splits on its symbol suffix. Genes one
+  dataset's reference lacks are reported with their UMI share.
+- A raw cell barcode holding `_`, such as Visium HD's `s_{bin}um_{row}_{col}`: the
+  `{raw}_{dataset_id}_{assay_type}` matrix key is split from the right, where
+  `phase_and_concat` rejected the barcode outright and the reader mis-parsed its
+  `raw` field, silently emptying the scATAC fragment join.
+
 ## [0.1.0b2] - 2026-09-13
 
 One explicit segmentation and one shared bin grid in every mode, references without a

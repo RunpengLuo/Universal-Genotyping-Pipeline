@@ -2,31 +2,7 @@
 
 Last update: 2026-08-13
 
-Inputs:
-- allele_dir/snps.tsv.gz: the union SNP set, matrix rows
-- allele_dir/snp.{T,A,B}allele.npz: one matrix over every assay's cells
-- allele_dir/barcodes.tsv.gz: the matrix column axis
-- allele_dir/sample_ids.tsv: dataset x assay roster, one pseudobulk each
-- aux_dir/windows.bed.gz: the fixed bins, shared with bulk
-- atac_fragments.tsv.gz: scATAC Xcount source, counted through the windows
-- bb_dir/{assay}.h5ad: RNA Xcount source, genes assigned to bb hulls
-- phase_dir/genetic_map.tsv.gz: optional, for cM-based switch probabilities
-- genome_size: chrom sizes TSV
-Outputs:
-- bb_dir/unit/{assay}/snp.tsv.gz: the SNPs that landed in a window, matrix rows
-- bb_dir/unit/{assay}/snp.{T,A,B}allele.npz: this assay's slice of their allele counts
-- bb_dir/unit/{assay}/barcodes.tsv.gz: this assay's cells, matrix column order
-- bb_dir/unit/{assay}/sample_ids.tsv: this assay's datasets
-- bb_dir/unit/scATAC/window.{tsv.gz,Xcount.npz}: fragments counted per window per cell
-- bb_dir/unit/{rna_assay}/gene.{tsv.gz,Xcount.npz}: UMIs per gene per cell, un-binned
-- bb_dir/MSR{msr}/{assay}/bb.tsv.gz: shared bb definitions, duplicated per assay
-- bb_dir/MSR{msr}/{assay}/bb.{T,A,B}allele.npz: this assay's per-bb allele counts
-- bb_dir/MSR{msr}/{assay}/bb.Xcount.npz: this assay's per-bb native counts
-- bb_dir/MSR{msr}/{assay}/barcodes.tsv.gz: this assay's cells, matrix column order
-- bb_dir/MSR{msr}/{assay}/sample_ids.tsv: this assay's datasets
-- bb_dir/multi_snp/{assay}/bb.tsv.gz: multi-SNP diagnostic groups, MSR-independent
-- bb_dir/multi_snp/{assay}/bb.{T,A,B}allele.npz: per-group allele counts
-- qc_dir/combine_counts.{assay}.MSR{msr}.pdf: allele-frequency QC per assay
+Inputs and outputs: see docs/reference.md#unit-level and docs/reference.md#final-bins.
 """
 
 import logging
@@ -50,7 +26,11 @@ from io_utils import (
     read_window_bed,
     write_bb_file,
 )
-from combine_counts_utils import observation_cluster_ids, tumor_observation_indices
+from combine_counts_utils import (
+    observation_cluster_ids,
+    summarize_observation_counts,
+    tumor_observation_indices,
+)
 from phasing_utils import (
     estimate_switchprobs_PS,
     estimate_switchprobs_cM,
@@ -69,7 +49,13 @@ from feature_utils import (
     sum_umis_to_bins,
 )
 from range_utils import assign_pos_to_range, merge_ranges_to_clusters
-from plot_alleles import plot_allele_freqs
+from plot_alleles import compute_af_by_clusters
+from plot_combine_counts import (
+    RDR_YLABEL,
+    compute_pseudobulk_rdr,
+    plot_observation_count_qc,
+    plot_pseudobulk_tracks,
+)
 from matplotlib.backends.backend_pdf import PdfPages
 
 ##################################################
@@ -88,9 +74,7 @@ window_bed = snakemake_handle.input["window_bed"]
 genome_size = snakemake_handle.input["genome_size"]
 
 # parameters
-qc_dir = snakemake_handle.params["qc_dir"]
 sample_id = snakemake_handle.params["sample_id"]
-run_id = snakemake_handle.params["run_id"]
 assay_types = list(snakemake_handle.params["assay_types"])
 chroms = list(snakemake_handle.params["chroms"])
 nu = float(snakemake_handle.params["nu"])
@@ -100,6 +84,7 @@ nsnp_multi = int(snakemake_handle.params["nsnp_multi"])
 msr_list = [int(m) for m in snakemake_handle.params["min_snp_reads"]]
 min_snp_per_bin = int(snakemake_handle.params["min_snp_per_bin"])
 gene_aware_binning = bool(snakemake_handle.params["gene_aware_binning"])
+phaseset_aware_binning = bool(snakemake_handle.params["phaseset_aware_binning"])
 
 # outputs
 out_bb_file = list(snakemake_handle.output["bb_file"])
@@ -117,6 +102,8 @@ out_unit_window_file = list(snakemake_handle.output["unit_window_file"])
 out_unit_window_x = list(snakemake_handle.output["unit_window_x"])
 out_unit_gene_file = list(snakemake_handle.output["unit_gene_file"])
 out_unit_gene_x = list(snakemake_handle.output["unit_gene_x"])
+out_unit_stats_pdf = list(snakemake_handle.output["unit_stats_pdf"])
+out_unit_stats_tsv = list(snakemake_handle.output["unit_stats_tsv"])
 out_multi_snp_file = list(snakemake_handle.output["multi_snp_file"])
 out_tot_mtx_multi = list(snakemake_handle.output["tot_mtx_multi"])
 out_a_mtx_multi = list(snakemake_handle.output["a_mtx_multi"])
@@ -158,7 +145,10 @@ logging.info(
     f"#datasets={len(joint_sids)}\n"
     f"#tumor_datasets={len(tumor_dataset_indices)}"
 )
-logging.info(f"gene_aware_binning={gene_aware_binning}")
+logging.info(
+    f"gene_aware_binning={gene_aware_binning}, "
+    f"phaseset_aware_binning={phaseset_aware_binning}"
+)
 
 ##################################################
 # one pseudobulk column per (dataset_id x assay_type), in the roster's row order
@@ -238,33 +228,48 @@ for k, assay in enumerate(assay_types):
             f"frag_files, {len(frag_files)} files for {len(at_sids)} scATAC datasets"
         )
         unit_windows.to_csv(out_unit_window_file[j], sep="\t", index=False)
-        window_x = sum_atac_fragments_to_bins(
+        unit_x = sum_atac_fragments_to_bins(
             frag_files,
             at_sids["dataset_id"].tolist(),
             at_cells,
             window_ranges,
             len(bin_df),
         )
-        save_npz(out_unit_window_x[j], window_x)
-        logging.info(
-            f"{assay}: unit Xcount (fragments): shape={window_x.shape}, nnz={window_x.nnz}"
-        )
-    elif assay in h5ad_by_assay:
+        unit_type = "window"
+        save_npz(out_unit_window_x[j], unit_x)
+    else:
         j = rna_assays.index(assay)
-        genes, gene_x = read_gene_counts(
+        genes, unit_x = read_gene_counts(
             h5ad_by_assay[assay], at_cells["BARCODE"].tolist()
         )
+        unit_type = "gene"
         genes.to_csv(out_unit_gene_file[j], sep="\t", index=False)
-        save_npz(out_unit_gene_x[j], gene_x)
-        logging.info(
-            f"{assay}: unit Xcount (genes): shape={gene_x.shape}, nnz={gene_x.nnz}"
+        save_npz(out_unit_gene_x[j], unit_x)
+    logging.info(
+        f"{assay}: unit Xcount ({unit_type}): shape={unit_x.shape}, nnz={unit_x.nnz}"
+    )
+
+    at_cell_idx = observation_cluster_ids(at_cells, at_sids)
+    stats_df, snp_totals, unit_totals = summarize_observation_counts(
+        at_sids, sample_id, at_cell_idx, tot_mtx_snp[:, cols], unit_x
+    )
+    stats_df.to_csv(out_unit_stats_tsv[k], sep="\t", index=False)
+    with PdfPages(out_unit_stats_pdf[k]) as unit_pdf:
+        plot_observation_count_qc(
+            at_sids,
+            snp_totals,
+            unit_totals,
+            at_cell_idx,
+            unit_type,
+            pdf=unit_pdf,
+            sample_id=sample_id,
         )
 
 ##################################################
 # adaptive segmentation bounderies
 cluster_cols = ["region_id", "seg_id"]
 
-if "PS" in snps.columns:
+if phaseset_aware_binning and "PS" in snps.columns:
     assert snps["PS"].notna().all(), "SNP file, `PS` column has NaNs"
     cluster_cols.append("PS")
     modal = snps_binned.groupby("bin_id")["PS"].agg(lambda x: x.mode().iloc[0])
@@ -335,7 +340,6 @@ multi_bbs["feature_id"] = (
     .fillna("intergenic")
 )
 
-multi_cache = []
 for k in range(n_assays):
     cols = assay_cols[assay_types[k]]
     tot_multi = sum_features_to_bbs(
@@ -351,7 +355,6 @@ for k in range(n_assays):
         f"{assay_types[k]}: wrote {num_multi} multi-SNP groups over "
         f"{int(keep_multi.sum())} SNPs to {out_multi_snp_file[k]}"
     )
-    multi_cache.append({"tot": tot_multi, "b": b_multi})
 
 ##################################################
 # per-MSR joint segmentation + per-assay outputs
@@ -436,11 +439,8 @@ for j, min_snp_reads in enumerate(msr_list):
                 window_bb_ranges,
                 num_bbs,
             )
-            save_npz(out_x_count[idx], x_count)
-            logging.info(
-                f"{assay} MSR={min_snp_reads} Xcount (fragments): shape={x_count.shape}, nnz={x_count.nnz}"
-            )
-        elif assay in h5ad_by_assay:
+            source = "fragments"
+        else:
             x_count = sum_umis_to_bins(
                 h5ad_by_assay[assay],
                 at_cells["BARCODE"].tolist(),
@@ -448,47 +448,29 @@ for j, min_snp_reads in enumerate(msr_list):
                 num_bbs,
                 assay,
             )
-            save_npz(out_x_count[idx], x_count)
-            logging.info(
-                f"{assay} MSR={min_snp_reads} Xcount (h5ad): shape={x_count.shape}, nnz={x_count.nnz}"
-            )
+            source = "h5ad"
+        save_npz(out_x_count[idx], x_count)
+        logging.info(
+            f"{assay} MSR={min_snp_reads} Xcount ({source}): "
+            f"shape={x_count.shape}, nnz={x_count.nnz}"
+        )
 
+        n_at_datasets = len(at_sids)
+        baf_bb = compute_af_by_clusters(
+            tot_bb, b_bb, at_cell_dataset_idx, n_at_datasets
+        )
+        rdr_bb = compute_pseudobulk_rdr(x_count, at_cell_dataset_idx, n_at_datasets)
         with PdfPages(out_qc_pdf[idx]) as pdf:
-            plot_allele_freqs(
+            plot_pseudobulk_tracks(
                 bbs,
+                [("RDR", rdr_bb, RDR_YLABEL), ("BAF", baf_bb, "BAF")],
+                sample_id,
                 at_sids["dataset_id"].tolist(),
                 at_sids["assay_type"].tolist(),
                 at_sids["sample_type"].tolist(),
-                tot_bb,
-                b_bb,
                 genome_size,
-                qc_dir,
-                apply_pseudobulk=True,
-                cell_dataset_ids=at_cell_dataset_idx,
-                allele="B",
+                out_qc_pdf[idx],
                 feature_label="bb",
-                run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
-                name_prefix="combine_counts",
-                sample_id=sample_id,
-                pdf=pdf,
-            )
-            multi = multi_cache[k]
-            plot_allele_freqs(
-                multi_bbs,
-                at_sids["dataset_id"].tolist(),
-                at_sids["assay_type"].tolist(),
-                at_sids["sample_type"].tolist(),
-                multi["tot"],
-                multi["b"],
-                genome_size,
-                qc_dir,
-                apply_pseudobulk=True,
-                cell_dataset_ids=at_cell_dataset_idx,
-                allele="B",
-                feature_label="multi-snp",
-                run_id=f"{assay}.MSR{min_snp_reads}.{run_id}",
-                name_prefix="combine_counts",
-                sample_id=sample_id,
                 pdf=pdf,
             )
 

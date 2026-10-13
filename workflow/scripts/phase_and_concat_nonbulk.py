@@ -2,21 +2,7 @@
 
 Last update: 2026-08-11
 
-Inputs:
-- phase_dir/phased_het_snps.vcf.gz: the parent SNP set every replicate maps onto
-- pileup_dir/{assay}_{dataset_id}/cellSNP.base.vcf.gz: per-replicate cellsnp-lite loci
-- pileup_dir/{assay}_{dataset_id}/cellSNP.samples.tsv: per-replicate cell barcodes
-- pileup_dir/{assay}_{dataset_id}/cellSNP.tag.DP.mtx: per-replicate total depth
-- pileup_dir/{assay}_{dataset_id}/cellSNP.tag.AD.mtx: per-replicate alt depth
-- bb_dir/{assay}.h5ad: per RNA assay; uncovered SNPs are zeroed, not dropped
-- aux_dir/segment.bed: region and segment bounds for filtering
-- blacklist_bed, gtf_file, genome_size: SNP filters and QC shading
-Outputs:
-- allele_dir/snps.tsv.gz: kept SNPs, shared by every assay
-- allele_dir/snp.{T,A,B}allele.npz: one sparse matrix over every assay's cells
-- allele_dir/barcodes.tsv.gz: column axis, {raw}_{dataset_id}_{assay_type}, assay-major
-- allele_dir/sample_ids.tsv: dataset x assay roster; not column-aligned
-- qc_dir/phase_and_concat.{assay}.pdf: one per assay, whose cells differ
+Inputs and outputs: see docs/reference.md#intermediates.
 """
 
 import logging
@@ -117,10 +103,6 @@ ad_by_dataset = [None] * len(dataset_ids)
 for idx, dataset_id in enumerate(dataset_ids):
     barcodes = pd.read_table(sample_tsvs[idx], sep="\t", header=None, names=["BARCODE"])
     barcodes["BARCODE"] = barcodes["BARCODE"].astype(str)
-    # readers split on the FIRST "_" to recover the raw barcode, so it must hold none
-    assert not barcodes["BARCODE"].str.contains("_").any(), (
-        f"{dataset_id}: barcodes must not contain '_'"
-    )
     barcodes["BARCODE"] += f"_{dataset_id}_{dataset_assays[idx]}"
     barcodes_list[idx] = barcodes
     # cellsnp-lite emits one VCF + two MatrixMarket files per replicate

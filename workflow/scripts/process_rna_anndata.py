@@ -2,18 +2,7 @@
 
 Last update: 2026-09-02
 
-Inputs:
-- barcodes: per-dataset cell barcodes from the sample file
-- matrix_h5: per-dataset 10x Ranger feature-barcode matrix
-- tissue_positions.csv: spatial spot coordinates
-- scalefactors_json.json: spatial scale factors
-- tissue_hires_image.png: spatial tissue image, hires
-- tissue_lowres_image.png: spatial tissue image, lowres
-- gtf_file: gene coordinates, joined on gene_id_colname
-- gene_blacklist_file: optional, one gene symbol or id per line
-- aux_dir/segment.bed: a gene outside every region is dropped
-Outputs:
-- bb_dir/{assay}.h5ad: cells x genes, obs_names {raw}_{dataset_id}_{assay_type}
+Inputs and outputs: see docs/reference.md#intermediates.
 """
 
 import logging
@@ -27,10 +16,10 @@ setup_logging(snakemake_handle.log[0])
 
 import numpy as np
 import pandas as pd
-import anndata
 
 from const import SPATIAL_ASSAYS
 from io_utils import (
+    concat_rna_adatas,
     read_10x_ranger_scRNA,
     read_10x_ranger_spatial,
     read_BED,
@@ -96,14 +85,7 @@ for idx, dataset_id in enumerate(dataset_ids):
     logging.info(f"#barcodes={adata.n_obs}, #features={adata.n_vars}")
 
 if len(adatas) > 1:
-    adata = anndata.concat(
-        adatas,
-        join="outer",  # union of var (genes)
-        label="dataset_id",
-        merge="same",
-        uns_merge="unique",
-        fill_value=0,
-    )
+    adata = concat_rna_adatas(adatas, gene_id_colname)
 else:
     adata = adatas[dataset_ids[0]]
 adata.X = adata.X.tocsr()

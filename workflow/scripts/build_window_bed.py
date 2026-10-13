@@ -2,14 +2,7 @@
 
 Last update: 2026-08-11
 
-Inputs:
-- aux_dir/segment.bed: tiled per row, so windows never cross segments
-- reference: genome FASTA, for the GC column
-- mappability_bed: optional BED, for the MAP column
-- aux_dir/repliseq/{name}.{reference_version}.bedGraph: optional, for the REPLI column
-- genome_size: chrom sizes TSV
-Outputs:
-- aux_dir/windows.bed.gz: fixed bins with ids and covariate columns
+Inputs and outputs: see docs/reference.md#intermediates.
 """
 
 import logging

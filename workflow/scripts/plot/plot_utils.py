@@ -187,30 +187,65 @@ def _bold_chrnames(ax):
 
 
 def _hist_with_stats(
-    ax, vals, xlabel, header="", ylabel="# segments", clip_q=0.99, sci_x=False
+    ax,
+    vals,
+    xlabel,
+    header="",
+    ylabel="# segments",
+    clip_q=0.99,
+    sci_x=False,
+    groups=None,
+    group_colors=None,
 ):
     """Histogram of *vals* with a multi-line, mean/median-annotated title.
 
-    *header* is an optional first title line (used for the page-1 panel names); page-2
-    rows leave it empty and carry the sample label as a vertical row label instead.
-    *sci_x* draws the x-axis in scientific notation (matplotlib's offset multiplier)
-    for large-count axes, rather than scaling the values into the label.
+    *header* is an optional first title line; a caller that labels its rows another way
+    leaves it empty. *sci_x* draws the x-axis in scientific notation (matplotlib's
+    offset multiplier) for large-count axes, rather than scaling the values into the
+    label.
+
+    *groups* is an optional length-``len(vals)`` label array. When given the bars are
+    stacked by label over one shared binning and a legend names each stack with its
+    count; the mean, median and title stay over all of *vals*, so the annotated
+    statistics do not depend on the split. *group_colors* maps a label to its colour
+    and fixes the stack order; without it the stacks follow order of appearance.
     """
     prefix = f"{header}\n" if header else ""
     vals = np.asarray(vals, dtype=float)
-    vals = vals[np.isfinite(vals)]
+    finite = np.isfinite(vals)
+    if groups is not None:
+        groups = np.asarray(groups)[finite]
+    vals = vals[finite]
     if len(vals) == 0:
         ax.set_title(f"{prefix}{xlabel}\n(n=0)", fontsize=8, fontweight="bold")
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
         return
     mean, median = float(np.mean(vals)), float(np.median(vals))
-    plot_vals = vals
+    keep = np.ones(len(vals), dtype=bool)
     if clip_q is not None and len(vals) > 1:
         hi = np.quantile(vals, clip_q)
         if hi > 0:
-            plot_vals = vals[vals <= hi]
-    ax.hist(plot_vals, bins=50, alpha=0.7)
+            keep = vals <= hi
+    plot_vals = vals[keep]
+    if groups is None:
+        ax.hist(plot_vals, bins=50, alpha=0.7)
+    else:
+        plot_groups = groups[keep]
+        order = list(group_colors) if group_colors is not None else pd.unique(groups)
+        names = [g for g in order if (plot_groups == g).any()]
+        bins = np.histogram_bin_edges(plot_vals, bins=50)
+        ax.hist(
+            [plot_vals[plot_groups == g] for g in names],
+            bins=bins,
+            stacked=True,
+            alpha=0.7,
+            label=[f"{g} (n={int((groups == g).sum())})" for g in names],
+            color=(
+                [group_colors[g] for g in names] if group_colors is not None else None
+            ),
+        )
+        ax.legend(fontsize=7, frameon=False)
     ax.axvline(mean, color="red", linestyle=":", linewidth=1)
     ax.axvline(median, color="orange", linestyle=":", linewidth=1)
     ax.set_title(

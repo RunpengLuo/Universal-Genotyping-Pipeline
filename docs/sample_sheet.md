@@ -41,8 +41,8 @@ Sample file is a JSON-format configuration file contains dataset records over mu
 
 | Key | Required | Description |
 |-----|----------|-------------|
-| `sample_id` | Yes | Patient ID; `[A-Za-z0-9_-]+`. |
-| `dataset_id` | Yes | Dataset ID, unique with each patient; `[A-Za-z0-9_-]+`. |
+| `sample_id` | Yes | Patient ID; `[A-Za-z0-9-]+`. |
+| `dataset_id` | Yes | Dataset ID, unique with each patient; `[A-Za-z0-9-]+`. Neither id may hold `_`: both are fields of `_`-joined keys the pipeline splits positionally (`{raw}_{dataset_id}_{assay_type}`, `{sample_id}_{dataset_id}`). |
 | `assay_type` | Yes | `bulkWGS` \| `bulkWGS-lr` \| `bulkWES` \| `scDNA` \| `scRNA` \| `scATAC` \| `VISIUM` \| `VISIUM3prime`. `scDNA` runs only under `bulk_genotyping`; see [scDNA](#scdna). |
 | `sample_type` | Yes | `normal` \| `tumor`. |
 | `reference_version` | Yes | reference version, e.g. `GRCh38`; see [Reference version](#reference-version). |

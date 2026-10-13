@@ -45,7 +45,7 @@ SNP_PANEL_EXTS = (".vcf.gz",)
 SAMPLE_FILE_EXTS = (".json", ".tsv", ".txt")
 SAMPLE_TYPES = ("normal", "tumor")
 RECORD_ID_KEYS = ("sample_id", "dataset_id")
-RECORD_ID_PATTERN = r"[A-Za-z0-9_-]+"
+RECORD_ID_PATTERN = r"[A-Za-z0-9-]+"
 REQUIRED_RECORD_KEYS = (
     "sample_id",
     "dataset_id",
@@ -90,6 +90,11 @@ REQUIRED_FILES = {
 BB_ALLELES = ("bb.Tallele.npz", "bb.Aallele.npz", "bb.Ballele.npz")
 BB_GRID = ("bb.tsv.gz", "sample_ids.tsv")
 BULK_TARGETS = BB_GRID + BB_ALLELES + ("bb.depth.npz", "bb.rdr.npz")
+# added under phase_em: that level's SNP orientation, as a re-phased het SNP VCF
+PHASE_EM_TARGETS = (
+    "phased_het_snps.phase_em.vcf.gz",
+    "phased_het_snps.phase_em.vcf.gz.tbi",
+)
 SINGLE_CELL_TARGETS = BB_GRID + BB_ALLELES + ("bb.Xcount.npz", "barcodes.tsv.gz")
 COPYTYPING_TARGETS = BB_ALLELES + ("bb.tsv.gz", "bb.Xcount.npz")
 

@@ -4,10 +4,12 @@ Last update: 2026-08-29
 
 Functions:
 - plot_loh_density: het-SNP density per tile and the clonal-LOH regions called from it
+- plot_observation_count_qc: per-cell/spot native and SNP-covered count histograms
 - plot_segmentation_qc: bb length and per-dataset raw count histograms
 - plot_rdr_baf: one page per tumor, depth then RDR then BAF
 - plot_rdr_baf_2d: RDR-vs-BAF cloud with marginal densities
 - compute_pseudobulk_rdr: per-dataset share of library size, the no-normal RDR
+- RDR_YLABEL: the axis label that share is drawn under
 - plot_pseudobulk_tracks: those tracks, one page per dataset and one row per track
 """
 
@@ -39,6 +41,89 @@ from plot_utils import (
 )
 
 
+SPOT_ASSAYS = ("VISIUM", "VISIUM3prime")
+
+
+def plot_observation_count_qc(
+    sample_df,
+    snp_totals,
+    unit_totals,
+    observation_ids,
+    unit_type: str,
+    out_file: str | None = None,
+    pdf: PdfPages | None = None,
+    sample_id: str = "",
+    dpi: int = 150,
+):
+    """Unit-level count QC for one single-cell assay: one page per dataset, 1 x 2.
+
+    Left  - total native counts per cell/spot (RNA UMIs, scATAC fragments) over that
+      assay's own unit, the counts a bb sums.
+    Right - total SNP-covered counts per cell/spot, the subset that carries an allele
+      and so the only counts BAF is estimated from.
+
+    Both panels annotate mean and median over that dataset's observations. This is the
+    un-binned level, so the pages do not depend on ``min_snp_reads``.
+
+    Args:
+        sample_df: ``sample_ids.tsv`` for this assay, one row per dataset; row order
+            defines the page order and indexes *observation_ids*.
+        snp_totals, unit_totals: Per-observation column sums, length n_observations.
+        observation_ids: Length-n_observations index of each column into *sample_df*.
+        unit_type: Name of the native unit, ``"gene"`` or ``"window"``.
+        out_file: Output PDF path; used only when *pdf* is None.
+        pdf: External ``PdfPages``; pages are appended and the caller closes it.
+        sample_id: Sample/patient id, opening every page super-title.
+        dpi: Raster resolution of the saved pages.
+    """
+    logging.info(
+        f"QC analysis - plot unit-level count histograms ({len(sample_df)} datasets)"
+    )
+    observation_ids = np.asarray(observation_ids)
+    _own_pdf = pdf is None
+    pdf_pages = PdfPages(out_file) if _own_pdf else pdf
+    for i, row in enumerate(sample_df.itertuples(index=False)):
+        cols = np.flatnonzero(observation_ids == i)
+        noun = "spots" if row.assay_type in SPOT_ASSAYS else "cells"
+        native = "fragments" if unit_type == "window" else "UMIs"
+        fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+        _hist_with_stats(
+            axes[0],
+            unit_totals[cols],
+            f"total {native} per {noun[:-1]}",
+            ylabel=f"# {noun}",
+            sci_x=True,
+        )
+        _hist_with_stats(
+            axes[1],
+            snp_totals[cols],
+            f"SNP-covered {native} per {noun[:-1]}",
+            ylabel=f"# {noun}",
+            sci_x=True,
+        )
+        label = (
+            f"{row.dataset_id} ({row.assay_type} {str(row.sample_type)[:1].upper()})"
+        )
+        fig.suptitle(
+            f"{sample_id} - {label}, {len(cols)} {noun}"
+            if sample_id
+            else f"{label}, {len(cols)} {noun}",
+            fontsize=11,
+            fontweight="bold",
+        )
+        fig.tight_layout()
+        pdf_pages.savefig(fig, dpi=dpi)
+        plt.close(fig)
+
+    if _own_pdf:
+        pdf_pages.close()
+        logging.info(f"saved unit-level count QC to {out_file}")
+
+
+# key order fixes the stack order: non-LOH below, clonal LOH above
+LOH_HIST_COLORS = {"non-LOH": "tab:blue", "clonal LOH": "tab:green"}
+
+
 def plot_segmentation_qc(
     seg_df: pd.DataFrame,
     sample_df: pd.DataFrame,
@@ -52,15 +137,16 @@ def plot_segmentation_qc(
     dpi: int = 150,
     is_loh=None,
 ):
-    """Two-page segmentation QC histograms for combine_counts output.
+    """Segmentation QC histograms for combine_counts output.
 
-    Page 1 — segment length (kbp) over all segments, split non-LOH / clonal-LOH when
-      *is_loh* is given, since the two are binned on different criteria.
-    Page 2 — one row per dataset_id, four histograms of raw counts: native counts,
-      read starts, B-allele counts, total-allele counts. The count axes use scientific
-      notation (matplotlib's offset multiplier) rather than a scaled axis label.
-      Each row is labelled ``{dataset_id}\\n{assay_type} {T|N}`` on the rotated row axis;
-      the patient id is the page super-title.
+    Page 1 — segment length (kbp) over all segments on one axes. When *is_loh* is given
+      the bars stack non-LOH over clonal-LOH, since the two are binned on different
+      criteria; the mean and median stay over all segments.
+    Pages 2+ — one page per dataset_id, a 2 x 2 grid of raw-count histograms: native
+      counts, read starts, B-allele counts, total-allele counts, stacked by LOH state
+      on the same rule. The count axes use scientific notation (matplotlib's offset
+      multiplier) rather than a scaled axis label. The page super-title is
+      ``{sample_id} - {dataset_id} ({assay_type} {T|N})``.
 
     Parameters
     ----------
@@ -85,26 +171,19 @@ def plot_segmentation_qc(
 
     # ---- page 1: segment length ----
     lengths_kbp = (seg_df["END"].to_numpy() - seg_df["START"].to_numpy()) / 1000.0
-
-    if is_loh is None:
-        panels = [(lengths_kbp, "Segment length")]
-    else:
+    groups = None
+    if is_loh is not None:
         is_loh = np.asarray(is_loh, dtype=bool)
-        panels = [
-            (
-                lengths_kbp[~is_loh],
-                f"Segment length, non-LOH (n={int((~is_loh).sum())})",
-            ),
-            (
-                lengths_kbp[is_loh],
-                f"Segment length, clonal LOH (n={int(is_loh.sum())})",
-            ),
-        ]
-    fig1, axes1 = plt.subplots(
-        1, len(panels), figsize=(5.5 * len(panels), 4), squeeze=False
+        groups = np.where(is_loh, "clonal LOH", "non-LOH")
+
+    fig1, ax1 = plt.subplots(1, 1, figsize=(5.5, 4))
+    _hist_with_stats(
+        ax1,
+        lengths_kbp,
+        "segment length (kbp)",
+        groups=groups,
+        group_colors=LOH_HIST_COLORS,
     )
-    for ax1, (vals, header) in zip(axes1[0], panels):
-        _hist_with_stats(ax1, vals, "segment length (kbp)", header)
     fig1.suptitle(
         f"Segmentation QC — {len(seg_df)} segments", fontsize=11, fontweight="bold"
     )
@@ -112,62 +191,38 @@ def plot_segmentation_qc(
     pdf_pages.savefig(fig1, dpi=dpi)
     plt.close(fig1)
 
-    # ---- page 2: per-dataset_id count histograms ----
-    fig2, axes = plt.subplots(
-        nrows=max(n_datasets, 1),
-        ncols=4,
-        figsize=(20, 3 * max(n_datasets, 1)),
-        squeeze=False,
-    )
+    # ---- one page per dataset_id: raw-count histograms, 2 x 2 ----
+    panels = [
+        ("aligned bases", x_count_mat),
+        ("read-start count", rd_count_mat),
+        ("B-allele count", b_count_mat),
+        ("total allele count", tot_count_mat),
+    ]
     for ri in range(n_datasets):
         row = sample_df.iloc[ri]
-        # shown once per row as a bold vertical "row super-title"
-        row_label = (
-            f"{row.get('dataset_id', '')}\n{row.get('assay_type', '')} "
-            f"{str(row.get('sample_type', ''))[:1].upper()}"
+        label = (
+            f"{row.get('dataset_id', '')} "
+            f"({row.get('assay_type', '')} "
+            f"{str(row.get('sample_type', ''))[:1].upper()})"
         )
-        _hist_with_stats(
-            axes[ri, 0], dense_observation(x_count_mat, ri), "aligned bases", sci_x=True
-        )
-        _hist_with_stats(
-            axes[ri, 1],
-            dense_observation(rd_count_mat, ri),
-            "read-start count",
-            sci_x=True,
-        )
-        _hist_with_stats(
-            axes[ri, 2],
-            dense_observation(b_count_mat, ri),
-            "B-allele count",
-            sci_x=True,
-        )
-        _hist_with_stats(
-            axes[ri, 3],
-            dense_observation(tot_count_mat, ri),
-            "total allele count",
-            sci_x=True,
-        )
-        axes[ri, 0].annotate(
-            row_label,
-            xy=(0, 0.5),
-            xytext=(-axes[ri, 0].yaxis.labelpad - 22, 0),
-            xycoords=axes[ri, 0].yaxis.label,
-            textcoords="offset points",
-            ha="right",
-            va="center",
-            rotation=90,
+        fig2, axes = plt.subplots(nrows=2, ncols=2, figsize=(11, 8))
+        for ax, (xlabel, mat) in zip(axes.ravel(), panels):
+            _hist_with_stats(
+                ax,
+                dense_observation(mat, ri),
+                xlabel,
+                sci_x=True,
+                groups=groups,
+                group_colors=LOH_HIST_COLORS,
+            )
+        fig2.suptitle(
+            f"{sample_id} - {label}" if sample_id else label,
+            fontsize=11,
             fontweight="bold",
-            fontsize=9,
         )
-    fig2.suptitle(
-        f"{sample_id} - per-dataset counts" if sample_id else "per-dataset counts",
-        fontsize=11,
-        fontweight="bold",
-    )
-    fig2.tight_layout()
-    fig2.subplots_adjust(left=0.18)
-    pdf_pages.savefig(fig2, dpi=dpi)
-    plt.close(fig2)
+        fig2.tight_layout()
+        pdf_pages.savefig(fig2, dpi=dpi)
+        plt.close(fig2)
 
     if _own_pdf:
         pdf_pages.close()
@@ -426,6 +481,10 @@ def plot_rdr_baf_2d(
         plt.close(grid.figure)
     if _own_pdf:
         pdf_pages.close()
+
+
+# the pseudobulk RDR is a share of library size, not a ratio to a reference column
+RDR_YLABEL = r"$\sum_i X_{i,g}/\sum_i T_i$"
 
 
 def compute_pseudobulk_rdr(x_mtx, cell_dataset_ids, n_datasets):
